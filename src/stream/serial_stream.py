@@ -69,7 +69,7 @@ class SerialStream(Thread, Stream):
         """
         return self.buffer.pop(number_of_samples)
 
-    def close(self) -> NoReturn:
+    def stop(self) -> NoReturn:
         """
         Stops the stream from aquiring data
         """
