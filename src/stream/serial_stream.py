@@ -11,7 +11,7 @@ ns_per_second: int = 1000000000
 
 
 class SerialStream(Thread, Stream):
-    """ Streams data from a serial connection
+    """Streams data from a serial connection
 
     Parameters:
         serial_connection[Serial]: A connector to the serial device
@@ -19,23 +19,23 @@ class SerialStream(Thread, Stream):
         buffer_size[int]: The size to set the buffer
     """
 
-    def __init__(self, serial_connection: Serial, sample_rate: int, buffer_size: int = 1024):
+    def __init__(
+        self, serial_connection: Serial, sample_rate: int, buffer_size: int = 1024
+    ):
         Thread.__init__(self, daemon=True)
         self.serial_connection = serial_connection
 
         self.buffer: Fifo = Fifo(buffer_size)
-        self.ns_per_sample: int = 1 / (sample_rate*2) * ns_per_second
+        self.ns_per_sample: int = 1 / (sample_rate * 2) * ns_per_second
 
     def run(self) -> NoReturn:
-        """ Starts the data acquisition from the given com port"""
+        """Starts the data acquisition from the given com port"""
         self.thread_running: bool = True
         while self.thread_running:
             start: int = time.time_ns()
             sample: str = self.serial_connection.readline()
             if sample != "":
-                split_sample: [str] = [
-                        string_to_float(x) for x in sample.split(',')
-                    ]
+                split_sample: [str] = [string_to_float(x) for x in sample.split(",")]
                 self.buffer.push(split_sample)
 
             time_diff: int = time.time_ns() - start

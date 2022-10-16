@@ -1,5 +1,5 @@
 def string_to_float(string: str) -> float:
-    """ Safely convers a string to a float
+    """Safely convers a string to a float
 
     Parameters:
         string (str): The string to convert
@@ -7,7 +7,7 @@ def string_to_float(string: str) -> float:
     Returns:
         float: A float representation of the string if possible, 0.0 otherwise
     """
-    if string == '' or string is None:
+    if string == "" or string is None:
         return 0.0
 
     try:
@@ -17,7 +17,7 @@ def string_to_float(string: str) -> float:
 
 
 def string_to_int(string: str) -> int:
-    """ Safely convers a string to an int
+    """Safely convers a string to an int
 
     Parameters:
         string (str): The string to convert
@@ -25,7 +25,7 @@ def string_to_int(string: str) -> int:
     Returns:
         int: An int representation of the string if possible, 0 otherwise
     """
-    if string == '' or string is None:
+    if string == "" or string is None:
         return 0
 
     try:

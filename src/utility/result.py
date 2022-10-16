@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Generic, NoReturn, TypeVar
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class Result(Generic[T]):

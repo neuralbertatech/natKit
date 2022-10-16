@@ -1,8 +1,15 @@
 from __future__ import annotations
 from src.board.board import Board
 from src.connector.serial import Serial
-from src.core.argument_parser import get_channels, get_baud_rate, get_com_port, get_in_file,\
-                                     get_out_file, is_simulate_command, is_connect_command
+from src.core.argument_parser import (
+    get_channels,
+    get_baud_rate,
+    get_com_port,
+    get_in_file,
+    get_out_file,
+    is_simulate_command,
+    is_connect_command,
+)
 from src.utility.result import Result
 from src.utility.type_conversion import string_to_int
 from src.stream.file_stream import FileStream
@@ -21,12 +28,18 @@ class ExgPill(Board):
     An implementation of Board for the Exg-Pill Bio Amp from UpsideDown Labs
     """
 
-    def __init__(self, in_stream: Stream, out_stream: Stream,
-                 number_of_channels: int = 5, sample_rate: int = 125) -> NoReturn:
+    def __init__(
+        self,
+        in_stream: Stream,
+        out_stream: Stream,
+        number_of_channels: int = 5,
+        sample_rate: int = 125,
+    ) -> NoReturn:
         self.number_of_channels: np.array = np.array([number_of_channels + 1])
         self.sample_rate: int = sample_rate
         self.exg_channels: np.array = np.array(
-                [x+1 for x in range(number_of_channels)])
+            [x + 1 for x in range(number_of_channels)]
+        )
         self.description: str = "UpsideDown Labs EXG Pill"
         self.in_stream = in_stream
         self.out_stream = out_stream
@@ -38,14 +51,14 @@ class ExgPill(Board):
 
         out_file: str = get_out_file(args)
         if out_file.success:
-            out_stream = FileStream(out_file.value, 'w')
+            out_stream = FileStream(out_file.value, "w")
 
         in_file: str = get_in_file(args)
         sample_rate: int = 0
         if is_simulate_command(args) and in_file.success:
-            in_stream = FileStream(in_file.value, 'r')
+            in_stream = FileStream(in_file.value, "r")
         elif is_connect_command:
-            com_port: str = 'COM6'
+            com_port: str = "COM6"
             baud_rate: int = 115200
             sample_rate = 125
             buffer_size: int = 1024
@@ -85,15 +98,17 @@ class ExgPill(Board):
         formatted_data: np.array = np.array([])
         if len(data.shape) == 1:
             size: int = 1
-            new_data = [[x for x in range(size)], *[[x] for x in data], [0 for x in range(size)]]
+            new_data = [
+                [x for x in range(size)],
+                *[[x] for x in data],
+                [0 for x in range(size)],
+            ]
             formatted_data = np.array(new_data)
         else:
             size: int = data.shape[1]
-            formatted_data: np.array = np.array([
-                    np.arange(size),
-                    *data,
-                    np.zeros(size)
-                ])
+            formatted_data: np.array = np.array(
+                [np.arange(size), *data, np.zeros(size)]
+            )
         return formatted_data
 
     def start(self):

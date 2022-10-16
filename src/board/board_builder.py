@@ -27,4 +27,4 @@ class BoardBuilder:
                 return ExgPill.create(self.args)
 
             case _:
-                print('TODO: Handle BoardBuilder.build')
+                print("TODO: Handle BoardBuilder.build")
