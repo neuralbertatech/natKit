@@ -9,10 +9,10 @@ class BoardType(Enum):
 
 
 BOARD_TYPE_MAP = {
-        'exg-pill': BoardType.EXG_PILL,
-        'muse-s': BoardType.MUSE_S,
-        'muse-2': BoardType.MUSE_2,
-    }
+    "exg-pill": BoardType.EXG_PILL,
+    "muse-s": BoardType.MUSE_S,
+    "muse-2": BoardType.MUSE_2,
+}
 
 
 def get_supported_boards() -> [str]:

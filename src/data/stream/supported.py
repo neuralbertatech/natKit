@@ -9,10 +9,10 @@ class StreamType(Enum):
 
 
 STREAM_TYPE_MAP = {
-        'std': StreamType.STD,
-        'file': StreamType.FILE,
-        'serial': StreamType.SERIAL,
-    }
+    "std": StreamType.STD,
+    "file": StreamType.FILE,
+    "serial": StreamType.SERIAL,
+}
 
 
 def get_supported_streams() -> [str]:

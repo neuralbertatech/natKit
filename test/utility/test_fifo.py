@@ -37,9 +37,7 @@ class TestFifo(unittest.TestCase):
             self.fifo.push(x)
 
         data: [int] = self.fifo.pop()
-        expected: [int] = [
-                0, 1, 2, 3, 4, 5, 6, 7
-            ]
+        expected: [int] = [0, 1, 2, 3, 4, 5, 6, 7]
         assert_array_equal(data, expected)
 
     def test_filling_buffer_pop_all_manual(self) -> NoReturn:
@@ -47,9 +45,7 @@ class TestFifo(unittest.TestCase):
             self.fifo.push(x)
 
         data: [int] = self.fifo.pop(self.buffer_size)
-        expected: [int] = [
-                0, 1, 2, 3, 4, 5, 6, 7
-            ]
+        expected: [int] = [0, 1, 2, 3, 4, 5, 6, 7]
         assert_array_equal(data, expected)
 
     def test_overfilling_buffer_pop_all_automatic(self) -> NoReturn:
@@ -57,9 +53,7 @@ class TestFifo(unittest.TestCase):
             self.fifo.push(x)
 
         data: [int] = self.fifo.pop()
-        expected: [int] = [
-                1, 2, 3, 4, 5, 6, 7, 8
-            ]
+        expected: [int] = [1, 2, 3, 4, 5, 6, 7, 8]
         assert_array_equal(data, expected)
 
     def test_overfilling_buffer_pop_all_manual(self) -> NoReturn:
@@ -67,9 +61,7 @@ class TestFifo(unittest.TestCase):
             self.fifo.push(x)
 
         data: [int] = self.fifo.pop(self.buffer_size)
-        expected: [int] = [
-                1, 2, 3, 4, 5, 6, 7, 8
-            ]
+        expected: [int] = [1, 2, 3, 4, 5, 6, 7, 8]
         assert_array_equal(data, expected)
 
     def test_empty_pop_initail(self) -> NoReturn:
@@ -105,5 +97,5 @@ class TestFifo(unittest.TestCase):
         assert_array_equal(data, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

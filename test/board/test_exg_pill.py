@@ -12,12 +12,10 @@ class TestExgPill(unittest.TestCase):
         self.mock_in_stream = Mock()
         self.mock_out_stream = Mock()
         self.exg_pill: ExgPill = ExgPill(self.mock_in_stream, self.mock_out_stream)
-        self.sample_data: np.array = np.array([
-                [0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13, 14]
-            ])
-        self.sample_data_point: np.array = np.array([
-                0, 1, 2, 3, 4
-            ])
+        self.sample_data: np.array = np.array(
+            [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13, 14]]
+        )
+        self.sample_data_point: np.array = np.array([0, 1, 2, 3, 4])
 
     def test_start(self) -> NoReturn:
         self.exg_pill.start()
@@ -32,15 +30,17 @@ class TestExgPill(unittest.TestCase):
         data_received: np.array = self.exg_pill.get_new_data()
 
         self.mock_in_stream.read.assert_called_once()
-        expected: np.array = np.array([
+        expected: np.array = np.array(
+            [
                 np.array([0]),
                 np.array([0]),
                 np.array([1]),
                 np.array([2]),
                 np.array([3]),
                 np.array([4]),
-                np.array([0])
-            ])
+                np.array([0]),
+            ]
+        )
         assert_array_equal(data_received, expected)
 
     def test_get_new_data_empty(self) -> NoReturn:
@@ -56,15 +56,17 @@ class TestExgPill(unittest.TestCase):
         data_received: np.array = self.exg_pill.get_data_quantity(3)
 
         self.mock_in_stream.read.assert_called_once()
-        expected: np.array = np.array([
+        expected: np.array = np.array(
+            [
                 np.array([0]),
                 np.array([0]),
                 np.array([1]),
                 np.array([2]),
                 np.array([3]),
                 np.array([4]),
-                np.array([0])
-            ])
+                np.array([0]),
+            ]
+        )
         assert_array_equal(data_received, expected)
 
     def test_get_data_quantity_empty(self) -> NoReturn:
@@ -74,7 +76,6 @@ class TestExgPill(unittest.TestCase):
         self.mock_in_stream.read.assert_called_once()
         expected: np.array = np.array([])
         assert_array_equal(data_received, expected)
-
 
     def test_get_exg_channels(self) -> NoReturn:
         data_received: np.array = self.exg_pill.get_exg_channels()
@@ -90,8 +91,10 @@ class TestExgPill(unittest.TestCase):
         self.assertEqual(self.exg_pill.get_sampling_rate(), 125)
 
     def test_get_board_description(self) -> NoReturn:
-        self.assertEqual(self.exg_pill.get_board_description(), "UpsideDown Labs EXG Pill")
+        self.assertEqual(
+            self.exg_pill.get_board_description(), "UpsideDown Labs EXG Pill"
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

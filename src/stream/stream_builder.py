@@ -27,8 +27,8 @@ class StreamBuilder:
         self.stream_type = get_stream_type(self.stream)
         self.com_port = self.args.com_port if self.args.com_port is not None else None
         self.number_of_channels = (
-                self.args.channels if self.args.channels is not None else None
-            )
+            self.args.channels if self.args.channels is not None else None
+        )
 
     def _set_stream_defaults(self) -> NoReturn:
         if self.stream_type is None:
@@ -39,16 +39,16 @@ class StreamBuilder:
                 pass
 
             case StreamType.SERIAL:
-                self.com_port = 'COM4' if self.com_port is None else self.com_port
+                self.com_port = "COM4" if self.com_port is None else self.com_port
                 self.number_of_channels = (
-                        5 if self.number_of_channels is None else self.number_of_channels
-                    )
+                    5 if self.number_of_channels is None else self.number_of_channels
+                )
 
             case StreamType.STD:
                 pass
 
             case _:
-                print('TODO: Handle StreamBuilder._set_stream_defaults')
+                print("TODO: Handle StreamBuilder._set_stream_defaults")
 
     @staticmethod
     def create(args: argparse.Namespace) -> StreamBuilder:
@@ -71,4 +71,4 @@ class StreamBuilder:
                 return StdStream()
 
             case _:
-                print('TODO: Handle BoardBuilder.build')
+                print("TODO: Handle BoardBuilder.build")

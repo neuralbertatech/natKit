@@ -3,7 +3,7 @@ from src.stream.stream import Stream
 
 
 class FileStream(Stream):
-    def __init__(self, file_name: str, options: str = 'r') -> NoReturn:
+    def __init__(self, file_name: str, options: str = "r") -> NoReturn:
         self.file = open(file_name, options)
 
     def read(self) -> str:
