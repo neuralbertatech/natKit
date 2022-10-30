@@ -45,6 +45,7 @@ def parse() -> argparse.Namespace:
     connectParser.add_argument(
         "--output", help="Output stream to file", type=pathlib.Path, metavar="File"
     )
+    connectParser.add_argument("--graph-output", help="Graph the output stream")
 
     simulateParser = commandParser.add_parser(
         "simulate", help="Simulate data from a given board"

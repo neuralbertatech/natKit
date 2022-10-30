@@ -2,8 +2,11 @@ from typing import NoReturn
 from src.stream.stream import Stream
 
 
-class StdStream(Stream):
+class StdStream(Stream[str]):
     def __init__(self) -> NoReturn:
+        pass
+
+    def open(self) -> NoReturn:
         pass
 
     def read(self) -> str:

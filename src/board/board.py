@@ -9,25 +9,25 @@ class Board:
     """
 
     def start(self) -> NoReturn:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def stop(self) -> NoReturn:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_new_data(self) -> np.array:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_data_quantity(self, number_of_point: int) -> np.array:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_exg_channels(self) -> np.array:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_marker_channels(self) -> np.array:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_sampling_rate(self) -> int:
-        pass
+        assert 0, "Abstract function not implemented!"
 
     def get_board_description(self) -> str:
-        pass
+        assert 0, "Abstract function not implemented!"

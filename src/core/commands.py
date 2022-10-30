@@ -1,6 +1,8 @@
 from src.board.board_builder import BoardBuilder
 from src.board.board import Board
+from src.gui.window.graph import GraphWindow
 from typing import NoReturn
+from PyQt5.QtWidgets import QApplication
 
 import argparse
 import time
@@ -29,3 +31,11 @@ def handle_command(args: argparse.Namespace) -> NoReturn:
 #
 # def handle_simulate(args: argparse.Namespace) -> NoReturn:
 #     print("simulate")
+
+
+def handle_graph(args: argparse.Namespace) -> NoReturn:
+    app = QApplication()
+    window = GraphWindow()
+    window.show()
+
+    app.exec()
