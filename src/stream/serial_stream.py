@@ -3,14 +3,14 @@ from src.stream.stream import Stream
 from src.utility.fifo import Fifo
 from src.utility.type_conversion import string_to_float
 from threading import Thread
-from typing import NoReturn
+from typing import NoReturn, List
 
 import time
 
 ns_per_second: int = 1000000000
 
 
-class SerialStream(Thread, Stream):
+class SerialStream(Thread, Stream[List[int]]):
     """Streams data from a serial connection
 
     Parameters:
@@ -27,6 +27,9 @@ class SerialStream(Thread, Stream):
 
         self.buffer: Fifo = Fifo(buffer_size)
         self.ns_per_sample: int = 1 / (sample_rate * 2) * ns_per_second
+
+    def open(self) -> NoReturn:
+        pass
 
     def run(self) -> NoReturn:
         """Starts the data acquisition from the given com port"""
