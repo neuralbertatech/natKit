@@ -1,6 +1,6 @@
 from src.board.board_builder import BoardBuilder
 from src.board.board import Board
-from src.gui.window.graph import GraphWindow
+from src.gui.window.window import Window
 from typing import NoReturn
 from PyQt5.QtWidgets import QApplication
 
@@ -35,7 +35,7 @@ def handle_command(args: argparse.Namespace) -> NoReturn:
 
 def handle_graph(args: argparse.Namespace) -> NoReturn:
     app = QApplication()
-    window = GraphWindow()
+    window = Window()
     window.show()
 
     app.exec()
