@@ -28,3 +28,5 @@ class BoardBuilder:
 
             case _:
                 print("TODO: Handle BoardBuilder.build")
+                print("Error, terminating")
+                exit(1)

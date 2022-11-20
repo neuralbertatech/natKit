@@ -81,7 +81,6 @@ def get_baud_rate(args: argparse.Namespace) -> Result[str]:
 
 
 def get_board(args: argparse.Namespace) -> Result[str]:
-    arg = args.board
     arg = vars(args).get("board")
     if arg is None:
         return DEFAULT_ARGS["board"]

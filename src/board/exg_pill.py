@@ -115,8 +115,8 @@ class ExgPill(Board):
         """
         Start the data aquasition
         """
-        self.in_stream.start()
-        self.out_stream.start()
+        self.in_stream.open()
+        self.out_stream.open()
 
     def stop(self) -> NoReturn:
         """
