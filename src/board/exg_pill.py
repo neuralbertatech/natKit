@@ -7,11 +7,14 @@ from src.core.argument_parser import (
     get_com_port,
     get_in_file,
     get_out_file,
+    is_gui_enabled,
     is_simulate_command,
     is_connect_command,
 )
+from src.utility.fifo import Fifo
 from src.utility.result import Result
 from src.utility.type_conversion import string_to_int
+from src.stream.data_stream import DataStream
 from src.stream.file_stream import FileStream
 from src.stream.serial_stream import SerialStream
 from src.stream.std_stream import StdStream
@@ -52,6 +55,9 @@ class ExgPill(Board):
         out_file: str = get_out_file(args)
         if out_file.success:
             out_stream = FileStream(out_file.value, "w")
+        elif is_gui_enabled(args):
+            print("GUII")
+            out_stream = DataStream(Fifo())
 
         in_file: str = get_in_file(args)
         sample_rate: int = 0

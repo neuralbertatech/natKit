@@ -10,7 +10,7 @@ class Fifo(Generic[T]):
 
     def __init__(self, buffer_size: int = 1024) -> NoReturn:
         self.buffer_size: int = buffer_size + 1
-        self.ring_buffer: List[T] = [None for i in range(self.buffer_size)]
+        self.ring_buffer: List[T] = [0 for i in range(self.buffer_size)]
         self.buffer_lock: Lock = Lock()
         self.buffer_current_index: int = 0
         self.buffer_last_read_index: int = 0
@@ -38,7 +38,7 @@ class Fifo(Generic[T]):
             ]
 
     def __add_data_to_buffer(self, data: List[T]) -> NoReturn:
-        for datum, i in enumerate(data):
+        for i, datum in enumerate(data):
             self.ring_buffer[self.buffer_current_index + i] = datum
 
         filled_buffer = False

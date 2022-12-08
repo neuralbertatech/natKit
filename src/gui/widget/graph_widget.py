@@ -33,12 +33,15 @@ class GraphWidget(Widget):
             plot.showAxis("bottom", False)
             self.plot_data.append(plot.plot())
 
-    def __setup_layout(self):
-        widgets = [self.graphLabel, self, self.graphWidget]
+    def get_layout(self):
+        print("Setup Layout")
+        widgets = [self.graphLabel, self.graphWidget]
         layout = QVBoxLayout()
         for widget in widgets:
+            print("Adding widget")
             layout.addWidget(widget)
-        self.setLayout(layout)
+        print("Finished Setup Layout")
+        return layout
 
     def start(self):
         self.timer.start()
@@ -47,7 +50,7 @@ class GraphWidget(Widget):
         self.timer.stop()
 
     def on_tick(self):
-        self.stream.write(int(random.random() * 100))  # TODO: Delete me
+        # self.stream.write(int(random.random() * 100))  # TODO: Delete me
         data = self.stream.read()
         if data is not None:
             self.data_buffer.push(data)
