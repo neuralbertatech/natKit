@@ -10,6 +10,7 @@ class Window(QMainWindow):
         self.setWindowTitle(title)
         self.setCentralWidget(widget)
         self.widgets = [widget]
+        widget.setLayout(widget.get_layout())
 
     def set_widget(self, widget: Widget) -> NoReturn:
         self.setCentralWidget(widget)

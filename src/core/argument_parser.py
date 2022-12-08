@@ -35,6 +35,11 @@ def parse() -> argparse.Namespace:
         type=int,
         metavar="Channels",
     )
+    parser.add_argument(
+        "--gui",
+        help="Display information in a GUI",
+        action="store_true",
+    )
 
     connectParser = commandParser.add_parser(
         "connect", help="Connect to a board to stream data"
@@ -70,6 +75,10 @@ def is_simulate_command(args: argparse.Namespace) -> bool:
 
 def is_connect_command(args: argparse.Namespace) -> bool:
     return args.command == "connect"
+
+
+def is_gui_enabled(args: argparse.Namespace) -> bool:
+    return args.gui
 
 
 def get_baud_rate(args: argparse.Namespace) -> Result[str]:
