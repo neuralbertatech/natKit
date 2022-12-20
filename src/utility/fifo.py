@@ -26,7 +26,7 @@ class Fifo(Generic[T]):
             )
 
     def __get_amt_from_buffer(self, amt: int) -> List[T]:
-        if amt > self.buffer_size - self.buffer_last_read_index:
+        if amt > (self.buffer_size - self.buffer_last_read_index):
             overflow: int = amt - (self.buffer_size - self.buffer_last_read_index)
             return (
                 self.ring_buffer[self.buffer_last_read_index :]
@@ -38,11 +38,13 @@ class Fifo(Generic[T]):
             ]
 
     def __add_data_to_buffer(self, data: List[T]) -> NoReturn:
+        # Add data to the buffer
         for i, datum in enumerate(data):
-            self.ring_buffer[self.buffer_current_index + i] = datum
+            self.ring_buffer[(self.buffer_current_index + i) % self.buffer_size] = datum
 
+        # Readjust ring buffer pointers
         filled_buffer = False
-        if self.buffer_last_read_index < self.buffer_current_index:
+        if self.buffer_last_read_index <= self.buffer_current_index:
             if (
                 len(data)
                 >= (self.buffer_last_read_index + self.buffer_size)
@@ -52,6 +54,7 @@ class Fifo(Generic[T]):
         else:
             if len(data) >= self.buffer_last_read_index - self.buffer_current_index:
                 filled_buffer = True
+
         if filled_buffer:
             self.buffer_last_read_index = (
                 self.buffer_current_index + len(data) + 1
@@ -75,6 +78,9 @@ class Fifo(Generic[T]):
         self.buffer_lock.acquire()
         if amt is None:
             amt = self.__get_num_items_in_buffer()
+        else:
+            amt = min(amt, self.__get_num_items_in_buffer())
+
         ret_data: List[T] = self.__get_amt_from_buffer(amt)
         self.buffer_last_read_index = (
             self.buffer_last_read_index + amt
