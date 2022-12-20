@@ -19,7 +19,7 @@ class TestExgPill(unittest.TestCase):
 
     def test_start(self) -> NoReturn:
         self.exg_pill.start()
-        self.mock_in_stream.start.assert_called_once()
+        self.mock_in_stream.open.assert_called_once()
 
     def test_stop(self) -> NoReturn:
         self.exg_pill.stop()
