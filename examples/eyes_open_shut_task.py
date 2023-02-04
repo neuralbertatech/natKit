@@ -7,7 +7,7 @@ def main():
 
     stimulus1 = (
         natKit.stimulus_builder()
-        .set_trigger_number(1)
+        .set_trigger_channel(1)
         .set_durration(Seconds(3))
         .set_appearance_weighting(1)
         .set_prompt(
@@ -23,7 +23,7 @@ def main():
     )
     stimulus2 = (
         natKit.stimulus_builder()
-        .set_trigger_number(1)
+        .set_trigger_channel(1)
         .set_durration(Seconds(3))
         .set_appearance_weighting(1)
         .set_prompt(

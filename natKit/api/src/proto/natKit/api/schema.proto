@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+enum ChannelType {
+  DATA = 0;
+  TRIGGER = 1;
+}
+
+message Data {
+  repeated int32 data = 1;
+}
+
+message Meta {
+  string name = 1;
+  int32 numberOfChannels = 2;
+}
