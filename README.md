@@ -56,7 +56,7 @@ docker compose up -d
 
 Now to get started go to the bin/ folder and run some scripts, for example:
 ```sh
-python ./bin/muse2-producer.py &
+python ./bin/muse-2-producer.py &
 python ./bin/stream-visulizer-gui.py
 ```
 
