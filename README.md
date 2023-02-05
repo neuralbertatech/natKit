@@ -29,7 +29,7 @@ python -m venv <Environment-Name>  # For example  $ python -m venv .venv
 ```
 
 Activate the virtual environment and install the dependencies (Platform-Specific):
-#### MacOs and Linux
+#### MacOS and Linux
 ```sh
 source ./<Environment-Name>/bin/activate  # source ./.venv/bin/activate
 pip install -r requirements.txt
