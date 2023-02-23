@@ -1,39 +1,68 @@
+version: '3.5'
+
 services:
-  kafka:
-    ports:
-      - 29092:29092
-      - 29093:29093
-    image: confluentinc/cp-kafka:latest
+  natkit-v0-zookeeper:
+    image: confluentinc/cp-zookeeper:4.1.1
+    hostname: natkit-v0-zookeeper
+    ports: 
+    - 32181:32181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 32181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    networks:
+      - natkit-v0-kafka-network
+
+  natkit-v0-kafka:
+    image: confluentinc/cp-kafka:4.1.1
+    hostname: natkit-v0-kafka
+    ports: 
+    - 29092:29092
+    - 29093:29093
+    depends_on:
+    - natkit-v0-zookeeper
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+      KAFKA_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
 
       KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,PLAINTEXT_DIFFERENT_HOST://:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://127.0.0.1:29094,PLAINTEXT_DIFFERENT_HOST://perrin.selk.io:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:9092,PLAINTEXT_HOST://127.0.0.1:29092,PLAINTEXT_DIFFERENT_HOST://perrin.selk.io:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_DIFFERENT_HOST:PLAINTEXT
-
-        #KAFKA_LISTENERS: EXTERNAL_SAME_HOST://:29092,EXTERNAL_DIFFERENT_HOST://:29093,INTERNAL://:9092
-        #KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL_SAME_HOST://localhost:29092,EXTERNAL_DIFFERENT_HOST://10.26.0.214:29093
-        #KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL_SAME_HOST:PLAINTEXT,EXTERNAL_DIFFERENT_HOST:PLAINTEXT
-
-        #KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092
-        #KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://127.0.0.1:29094
-        #KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1   
     networks:
-      - kafka_network
-    depends_on:
-      - zookeeper
-  zookeeper:
+      - natkit-v0-kafka-network
+
+  natkit-v0-schema-registry:
+    image: confluentinc/cp-schema-registry:4.1.1
+    hostname: natkit-v0-schema-registry
     ports:
-      - 32181:2181
+    - 38081:38081
+    depends_on:
+    - natkit-v0-kafka
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    image: confluentinc/cp-zookeeper:latest
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: natkit-v0-zookeeper:32181
+      SCHEMA_REGISTRY_HOST_NAME: natkit-v0-schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
+      SCHEMA_REGISTRY_DEBUG: "true"
     networks:
-      - kafka_network
+      - natkit-v0-kafka-network
+
+  natkit-v0-kafka-rest:
+    image: confluentinc/cp-kafka-rest:4.1.1
+    hostname: natkit-v0-kafka-rest
+    ports:
+    - 38082:38082
+    depends_on:
+      - natkit-v0-schema-registry
+    environment:
+      KAFKA_REST_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
+      KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
+      KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
+      KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
+    networks:
+      - natkit-v0-kafka-network
+
 networks:
-  kafka_network:
+  natkit-v0-kafka-network:
     external: false

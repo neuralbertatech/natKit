@@ -18,7 +18,7 @@ class TopicManager:
         self.host = host
         self.port = port
         if self.host is None:
-            self.host = os.environ.get("NATKIT_SERVER", "localhost")
+            self.host = os.environ.get("NATKIT_SERVER_ADDRESS", "localhost")
         if self.port is None:
             self.port = os.environ.get("NATKIT_SERVER_PORT", "29092")
         self.broker = "{}:{}".format(self.host, self.port)
