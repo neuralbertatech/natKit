@@ -25,12 +25,21 @@ def read_stream():
     if selection >= len(streams):
         return
 
+    for i, stream in enumerate(streams):
+        if i != selection:
+            stream.close()
+
     stream = streams[selection]
-    while True:
-        data = stream.read_data()
-        if data is not None:
-            print(data)
-        time.sleep(0.001)
+    try:
+        while True:
+            data = stream.read_data()
+            if data is not None:
+                print(data)
+            time.sleep(0.001)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stream.close()
 
 
 if __name__ == "__main__":

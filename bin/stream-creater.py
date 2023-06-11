@@ -18,11 +18,14 @@ def create_stream():
 
     name = input("Enter name for new string: ")
     encoder = CsvEncoder
-    stream = manager.create_stream(name, encoder, SimpleMessageSchema, encoder, BasicMetaInfoSchema)
+    stream = manager.create_stream(
+        name, encoder, SimpleMessageSchema, encoder, BasicMetaInfoSchema
+    )
     time.sleep(5)
     stream.write_meta(BasicMetaInfoSchema(name))
-    time.sleep(5)
+    time.sleep(1)
     print("Done")
+    stream.close()
 
 
 if __name__ == "__main__":
