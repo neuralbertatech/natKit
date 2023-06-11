@@ -15,17 +15,21 @@ class BasicMetaInfoSchemaTest(unittest.TestCase):
         encoder = CsvEncoder()
         original_message = BasicMetaInfoSchema("MyName")
         serialized_message = original_message.serialize(encoder)
-        deserialized_message = BasicMetaInfoSchema.deserialize(encoder, serialized_message)
+        deserialized_message = BasicMetaInfoSchema.deserialize(
+            encoder, serialized_message
+        )
         self.assertTrue(isinstance(serialized_message, bytes))
-        self.assertEqual(original_message.name, deserialized_message.name)
+        self.assertEqual(original_message.stream_name, deserialized_message.stream_name)
 
     def test_basic_meta_info_schema_with_comma(self) -> NoReturn:
         encoder = CsvEncoder()
         original_message = BasicMetaInfoSchema("My,Name")
         serialized_message = original_message.serialize(encoder)
-        deserialized_message = BasicMetaInfoSchema.deserialize(encoder, serialized_message)
+        deserialized_message = BasicMetaInfoSchema.deserialize(
+            encoder, serialized_message
+        )
         self.assertTrue(isinstance(serialized_message, bytes))
-        self.assertEqual(original_message.name, deserialized_message.name)
+        self.assertEqual(original_message.stream_name, deserialized_message.stream_name)
 
 
 if __name__ == "__main__":
