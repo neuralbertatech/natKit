@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import os
 import sys
@@ -13,7 +13,7 @@ from natKit.api import SimpleMessageSchema
 from natKit.common.kafka import KafkaManager
 
 
-def read_stream():
+def write_stream():
     manager = KafkaManager.create()
     streams = manager.find_streams()
 
@@ -27,11 +27,10 @@ def read_stream():
 
     stream = streams[selection]
     while True:
-        data = stream.read_data()
-        if data is not None:
-            print(data)
-        time.sleep(0.001)
+        data_to_write = input("> ")
+        message = SimpleMessageSchema(data_to_write)
+        stream.write_data(message)
 
 
 if __name__ == "__main__":
-    read_stream()
+    write_stream()

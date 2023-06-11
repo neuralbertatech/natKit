@@ -1,11 +1,29 @@
-from confluent_kafka import Consumer, Producer, TopicPartition
+from confluent_kafka import Consumer
+from confluent_kafka import Producer
+from confluent_kafka import TopicPartition
+
+from dataclasses import dataclass
+
 from enum import Enum
+
 from multiprocessing import Process
+
+from natKit.api import Encoding
+from natKit.api import SchemaRegistry
+from natKit.api import Serializer
 from natKit.common.util import Fifo
+
 from threading import Thread
+
+from time import sleep
+
+from typing import List
 from typing import NoReturn
 
+from random import randint
+
 import re
+import sys
 
 
 class TopicType(Enum):
@@ -14,22 +32,36 @@ class TopicType(Enum):
     DATA = 2
 
 
+@dataclass
 class TopicName:
+    id: int
+    type: TopicType
+    topic_string: str
+
     def __init__(
         self,
-        id: int = None,
-        type: TopicType = TopicType.UNKNOWN,
+        id: int,
+        type: TopicType,
+        encoder_name: str,
+        schema_name: str,
         topic_string: str = None,
     ):
         self.id = id
         self.type = type
+        self.encoder_name = encoder_name
+        self.schema_name = schema_name
         self.topic_string = topic_string
+
+        if self.id is None:
+            self.id = randint(1, 2**31)
+
+        # TODO This check is pretty clumsy and should be removed
         if self.topic_string is None:
             self.topic_string = TopicName.topic_name_to_topic_string(self)
 
     def __str__(self):
-        return 'Topic: [id: {}, type: {}, topic_string: "{}"]'.format(
-            self.id, self.type, self.topic_string
+        return 'Topic: [id: {}, type: {}, topic_string: "{}", encoder_name: "{}", schema_name: "{}"]'.format(
+            self.id, self.type, self.topic_string, self.encoder_name, self.schema_name
         )
 
     @staticmethod
@@ -43,23 +75,42 @@ class TopicName:
             print(topic)
             assert 0, "Missing Enum type!"
 
-        return "{}-{}".format(topic_type_string, topic.id)
+        return "{}-{}-{}-{}".format(topic_type_string, topic.id, topic.encoder_name, topic.schema_name)
 
     @staticmethod
     def parse_from_topic_string(topic_string: str):
         topic_id = None
         topic_type = TopicType.UNKNOWN
-        # TODO: Regex is not needed, remove
-        match_meta = re.match("meta-([0-9]+)", topic_string)
-        match_data = re.match("data-([0-9]+)", topic_string)
-        if match_meta:
-            topic_id = match_meta.group(1)
-            topic_type = TopicType.META
-        elif match_data:
-            topic_id = match_data.group(1)
-            topic_type = TopicType.DATA
+        topic_encoding = Encoding.RAW
+        topic_schema = None
 
-        return TopicName(id=topic_id, type=topic_type, topic_string=topic_string)
+        split_topic_string = topic_string.split("-")
+        assert len(split_topic_string) == 4, "Invalid topic string {}".format(topic_string)
+
+        topic_id = int(split_topic_string[1])
+        topic_type_string = split_topic_string[0]
+        topic_encoding = split_topic_string[2]
+        topic_schema = split_topic_string[3]
+        if topic_type_string == "meta":
+            topic_type = TopicType.META
+        elif topic_type_string == "data":
+            topic_type = TopicType.DATA
+        else:
+            assert 0, 'Invalid topic type "{}"'.format(topic_type_string)
+
+        return TopicName(id=topic_id, type=topic_type, topic_string=topic_string, encoder_name=topic_encoding, schema_name=topic_schema)
+
+
+class PartitionMetadata:
+    def __init__(self):
+        pass
+
+
+class TopicMetadata:
+    def __init__(self, topic_name: str, partition_metadata: List[PartitionMetadata], error) -> NoReturn:
+        self.topic_name = topic_name
+        self.partition_metadata = partition_metadata
+        self.error = error
 
 
 class Topic(Thread):

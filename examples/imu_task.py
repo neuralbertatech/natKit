@@ -1,5 +1,13 @@
 import natKit
 
+# TODO:
+#  * Add inter-block break option
+#  * Add file saving
+#  * Add stream merging
+
+# Post MVP:
+#  * Way to deal with firewall
+#  * RDMS
 
 def main():
     muse_connection = natKit.connect("Arduino-Nano-BLE33", natKit.connection.Serial())

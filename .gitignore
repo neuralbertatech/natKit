@@ -141,3 +141,6 @@ nathacks_env/
 
 # Pytype
 .pytype
+
+client.env
+server.env

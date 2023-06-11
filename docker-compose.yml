@@ -2,7 +2,7 @@ version: '3.5'
 
 services:
   natkit-v0-zookeeper:
-    image: confluentinc/cp-zookeeper:4.1.1
+    image: confluentinc/cp-zookeeper:7.0.7
     hostname: natkit-v0-zookeeper
     ports: 
     - 32181:32181
@@ -14,13 +14,15 @@ services:
       - natkit-v0-kafka-network
 
   natkit-v0-kafka:
-    image: confluentinc/cp-kafka:4.1.1
+    image: confluentinc/cp-kafka:7.0.7
     hostname: natkit-v0-kafka
     ports: 
     - 29092:29092
     - 29093:29093
     depends_on:
     - natkit-v0-zookeeper
+    env_file:
+      - server.env
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -28,13 +30,13 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
 
       KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,PLAINTEXT_DIFFERENT_HOST://:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:9092,PLAINTEXT_HOST://127.0.0.1:29092,PLAINTEXT_DIFFERENT_HOST://perrin.selk.io:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:9092,PLAINTEXT_HOST://127.0.0.1:29092,PLAINTEXT_DIFFERENT_HOST://${NATKIT_HOSTNAME}:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_DIFFERENT_HOST:PLAINTEXT
     networks:
       - natkit-v0-kafka-network
 
   natkit-v0-schema-registry:
-    image: confluentinc/cp-schema-registry:4.1.1
+    image: confluentinc/cp-schema-registry:7.0.7
     hostname: natkit-v0-schema-registry
     ports:
     - 38081:38081
@@ -45,11 +47,13 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: natkit-v0-schema-registry
       SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
       SCHEMA_REGISTRY_DEBUG: "true"
+      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:9092
     networks:
       - natkit-v0-kafka-network
 
   natkit-v0-kafka-rest:
-    image: confluentinc/cp-kafka-rest:4.1.1
+    image: confluentinc/cp-kafka-rest:7.0.7
     hostname: natkit-v0-kafka-rest
     ports:
     - 38082:38082
@@ -60,6 +64,7 @@ services:
       KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
       KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
       KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
+      KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:9092
     networks:
       - natkit-v0-kafka-network
 

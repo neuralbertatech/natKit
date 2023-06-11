@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MetaSchema",
+  "description": "A data structure that describes how a stream will encode data",
+  "type": "object",
+  "properties": {
+    "name": {
+      "description": "Name of the strea",
+      "type": "string"
+    },
+    "data_schema": {
+      "description": "The schema used to encode the data stream",
+      "type": "string"
+    }
+  },
+  "required": [ "name", "data_schema" ]
+}
