@@ -28,3 +28,7 @@ add_subproject_src_to_path(
         "server",
     ]
 )
+
+from natKit.common.util import global_variables
+
+global_variables.register("PROJECT_ROOT", PROJECT_ROOT)
