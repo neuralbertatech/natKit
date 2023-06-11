@@ -13,19 +13,19 @@ from PyQt6.QtWidgets import QVBoxLayout
 from PyQt6.QtWidgets import QWidget
 
 from natKit.client.gui.pyqt6 import StreamGraph
-from natKit.common.kafka import TopicManager
+from natKit.common.kafka import KafkaManager
 
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super(MainWindow, self).__init__(parent)
 
-        self.topic_manager = TopicManager()
+        self.manager = KafkaManager()
 
         combobox = QComboBox()
 
-        self.streams = self.topic_manager.find_all_streams()
-        self.stream_names = [str(stream) for stream in self.streams]
+        self.streams = self.manager.find_streams()
+        self.stream_names = [stream.get_name() for stream in self.streams]
         combobox.addItems(self.stream_names)
         combobox.currentTextChanged.connect(self.stream_selected)
 

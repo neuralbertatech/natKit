@@ -13,7 +13,13 @@ from typing import NoReturn
 
 
 class TopicConnection(Thread):
-    def __init__(self, topic_name: TopicName, consumer: Consumer, producer: Producer, message_callback: Callable[[bytes], NoReturn]):
+    def __init__(
+        self,
+        topic_name: TopicName,
+        consumer: Consumer,
+        producer: Producer,
+        message_callback: Callable[[bytes], NoReturn],
+    ):
         super().__init__()
 
         self.topic_name = topic_name
@@ -26,8 +32,18 @@ class TopicConnection(Thread):
         self.start()
 
     @staticmethod
-    def create_from_config(topic_name: TopicName, consumer_config: dict, producer_config: dict, message_callback: Callable[[bytes], NoReturn]):
-        return TopicConnection(topic_name, Consumer(consumer_config), Producer(producer_config), message_callback)
+    def create_from_config(
+        topic_name: TopicName,
+        consumer_config: dict,
+        producer_config: dict,
+        message_callback: Callable[[bytes], NoReturn],
+    ):
+        return TopicConnection(
+            topic_name,
+            Consumer(consumer_config),
+            Producer(producer_config),
+            message_callback,
+        )
 
     def run(self):
         while True:
@@ -35,6 +51,7 @@ class TopicConnection(Thread):
             if not self._do_read_data:
                 break
             sleep(0.001)
+        self.producer.flush()
 
     def stop(self):
         self._do_read_data = False
