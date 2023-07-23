@@ -1,4 +1,5 @@
 import os
+import sys
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -6,16 +7,16 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 def add_subproject_src_to_path(subprojects):
     for subproject in subprojects:
-        __path__.append(
-            os.path.join(PROJECT_ROOT, subproject, "src", "python", "natKit")
-        )
+        path = os.path.join(PROJECT_ROOT, subproject, "src", "python", "natKit")
+        __path__.append(path)
+        # sys.path.append(path)
 
 
 def add_subproject_build_to_path(subprojects):
     for subproject in subprojects:
-        __path__.append(
-            os.path.join(PROJECT_ROOT, subproject, "build", "python", "natKit")
-        )
+        path = os.path.join(PROJECT_ROOT, subproject, "build", "python", "natKit")
+        __path__.append(path)
+        # sys.path.append(path)
 
 
 add_subproject_build_to_path(["api"])

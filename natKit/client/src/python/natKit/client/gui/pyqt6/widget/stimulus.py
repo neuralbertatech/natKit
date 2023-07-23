@@ -4,7 +4,7 @@ from natKit.client.gui.pyqt6.event import DurationEvent
 from natKit.client.gui.pyqt6.event import Event
 from natKit.client.gui.pyqt6.event import OneShotEvent
 from natKit.client.gui.pyqt6.event import Trigger
-from natKit.common.kafka import TopicManager
+from natKit.common.kafka import KafkaManager
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets
@@ -42,7 +42,7 @@ class Stimulus(QtWidgets.QWidget):
         self.events = events
         self.duration_events = duration_events
         self.finished = False
-        self.topic_manager = TopicManager()
+        self.kafa_manager = KafkaManager.create()
         self.stream = None
 
         if duration is None:

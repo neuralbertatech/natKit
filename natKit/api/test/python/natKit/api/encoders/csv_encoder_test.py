@@ -9,8 +9,8 @@ from numpy.testing import assert_array_equal
 from typing import NoReturn
 
 
-class EncoderTest(unittest.TestCase):
-    def test_csv_encoding(self) -> NoReturn:
+class CsvEncoderTest(unittest.TestCase):
+    def test_array_of_strings(self) -> NoReturn:
         original_message = ["Hi", "There", "World"]
         encoded_message = CsvEncoder.encode(original_message)
         decoded_message = CsvEncoder.decode(encoded_message)

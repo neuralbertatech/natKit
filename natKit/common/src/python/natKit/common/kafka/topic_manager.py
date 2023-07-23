@@ -4,6 +4,8 @@ import os
 import random
 import time
 
+from concurrent.futures import ThreadPoolExecutor
+
 from confluent_kafka import Consumer
 from confluent_kafka import KafkaException
 from confluent_kafka import Producer
@@ -86,8 +88,10 @@ class KafkaManager:
 
         return topic_keys
 
-    def get_topic_connection(self, topic_string: str) -> TopicConnection:
-        return self._build_topic_connection(topic_string)
+    def get_topic_connection(
+        self, topic_string: str, callback_funciton
+    ) -> TopicConnection:
+        return self._build_topic_connection(topic_string, callback_funciton)
 
     def create_messenger(self, topic_string: str):
         topic_name = TopicName.parse_from_topic_string(topic_string)
@@ -112,13 +116,15 @@ class KafkaManager:
             sleep(0.001)
         print(futures[topic_string].exception())
 
-    def _build_topic_connection(self, topic_string: str) -> TopicConnection:
+    def _build_topic_connection(
+        self, topic_string: str, callback_function
+    ) -> TopicConnection:
         topic_name = TopicName.parse_from_topic_string(topic_string)
         consumer_conf = self._create_data_consumer_conf()
         consumer = Consumer(consumer_conf)
         producer = Producer(self.producer_conf)
         # return TopicConnection(topic_name, consumer, producer, self.registry)
-        return TopicConnection(topic_name, consumer, producer, print)
+        return TopicConnection(topic_name, consumer, producer, callback_function)
 
     def _create_data_consumer_conf(self):
         return {
@@ -151,6 +157,11 @@ class KafkaManager:
     def delete_topic(self, topic_string):
         self.admin_client.delete_topics([topic_string])
 
+    def delete_stream(self, stream):
+        stream.close()
+        topic_names = [stream.get_data_topic_string(), stream.get_meta_topic_string()]
+        self.admin_client.delete_topics(topic_names)
+
     def create_new_stream(self, meta_topic_string, data_topic_string):
         self.create_topic(meta_topic_string)
         self.create_topic(data_topic_string)
@@ -182,6 +193,31 @@ class KafkaManager:
         return self._create_stream(
             meta_topic_name.topic_string, data_topic_name.topic_string
         )
+
+    def _get_partition_size(
+        self, consumer: Consumer, topic_name: str, partition_key: int
+    ) -> int:
+        topic_partition = TopicPartition(topic_name, partition_key)
+        low_offset, high_offset = consumer.get_watermark_offsets(topic_partition)
+        partition_size = high_offset - low_offset
+        return partition_size
+
+    def get_topic_size(self, topic_name: str) -> int:
+        consumer_conf = self._create_data_consumer_conf()
+        consumer = Consumer(consumer_conf)
+        topic = consumer.list_topics(topic=topic_name)
+        partitions = topic.topics[topic_name].partitions
+        workers, max_workers = [], len(partitions) or 1
+
+        with ThreadPoolExecutor(max_workers=max_workers) as e:
+            for partition_key in list(topic.topics[topic_name].partitions.keys()):
+                job = e.submit(
+                    self._get_partition_size, consumer, topic_name, partition_key
+                )
+                workers.append(job)
+
+        topic_size = sum([w.result() for w in workers])
+        return topic_size
 
 
 # class TopicManager:
