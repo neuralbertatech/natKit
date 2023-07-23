@@ -189,11 +189,11 @@ class TaskWindowBuilder:
 
     def set_window_size(
         self,
-        as_absulute_value: Tuple[int, int] = None,
+        as_absolute_value: Tuple[int, int] = None,
         as_percent_of_current_screen: Tuple[float, float] = None,
     ) -> TaskWindowBuilder:
-        if as_absulute_value is not None:
-            self.window_size = as_absulute_value
+        if as_absolute_value is not None:
+            self.window_size = as_absolute_value
         elif as_percent_of_current_screen is not None:
             assert False, "as_percent_of_current_screen is not implemented yet"
         else:

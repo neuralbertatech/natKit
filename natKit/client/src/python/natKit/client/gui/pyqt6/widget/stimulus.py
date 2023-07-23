@@ -4,7 +4,6 @@ from natKit.client.gui.pyqt6.event import DurationEvent
 from natKit.client.gui.pyqt6.event import Event
 from natKit.client.gui.pyqt6.event import OneShotEvent
 from natKit.client.gui.pyqt6.event import Trigger
-from natKit.common.kafka import KafkaManager
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets
@@ -18,8 +17,10 @@ from typing import NoReturn
 
 class StimulusLifecyclePhase(Enum):
     PROMPT = 1
-    START = 2
-    END = 3
+    CUE_START = 2
+    CUE_END = 3
+    TRIAL_START = 4
+    TRIAL_END = 5
 
 
 class Stimulus(QtWidgets.QWidget):
@@ -28,6 +29,7 @@ class Stimulus(QtWidgets.QWidget):
         parent=None,
         name: str = "Stimulus",
         trigger: Trigger = None,
+        cue_duration: float = None,
         duration: float = None,
         prompt: str = None,
         events: List[OneShotEvent] = [],
@@ -38,11 +40,11 @@ class Stimulus(QtWidgets.QWidget):
 
         self.name = name
         self.trigger = trigger
+        self.cue_duration = cue_duration
         self.intro_prompt = prompt
         self.events = events
         self.duration_events = duration_events
         self.finished = False
-        self.kafa_manager = KafkaManager.create()
         self.stream = None
 
         if duration is None:
@@ -51,12 +53,12 @@ class Stimulus(QtWidgets.QWidget):
 
     def run(self) -> NoReturn:
         self.prompt()
-        self.start()
-
+        self.cue_start()
+        
         self.timer = QtCore.QTimer()
         self.timer.setSingleShot(True)
-        self.timer.setInterval(int(self.duration * 1000))
-        self.timer.timeout.connect(self.end)
+        self.timer.setInterval(int(self.cue_duration * 1000))
+        self.timer.timeout.connect(self.cue_end)
         self.timer.start()
 
     def prompt(self) -> NoReturn:
@@ -68,17 +70,30 @@ class Stimulus(QtWidgets.QWidget):
             prompt_box.setText(self.intro_prompt)
             prompt_box.exec()
 
-    def start(self) -> NoReturn:
+    def cue_start(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(1)
-        self._handle_one_shot_events(StimulusLifecyclePhase.START)
-        self._handle_duration_events(StimulusLifecyclePhase.START)
+        self._handle_one_shot_events(StimulusLifecyclePhase.CUE_START)
+        self._handle_duration_events(StimulusLifecyclePhase.CUE_START)
 
-    def end(self) -> NoReturn:
+    def cue_end(self) -> NoReturn:
+        if self.trigger is not None:
+            self.trigger.set_value(1)
+        self._handle_one_shot_events(StimulusLifecyclePhase.CUE_END)
+        self._handle_duration_events(StimulusLifecyclePhase.CUE_END)
+        self.on_end_cue()
+
+    def trial_start(self) -> NoReturn:
+        if self.trigger is not None:
+            self.trigger.set_value(1)
+        self._handle_one_shot_events(StimulusLifecyclePhase.START_TRIAL)
+        self._handle_duration_events(StimulusLifecyclePhase.START_TRIAL)
+
+    def trial_end(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(0)
-        self._handle_one_shot_events(StimulusLifecyclePhase.END)
-        self._handle_duration_events(StimulusLifecyclePhase.END)
+        self._handle_one_shot_events(StimulusLifecyclePhase.TRIAL_END)
+        self._handle_duration_events(StimulusLifecyclePhase.TRIAL_END)
         self.finished = True
         self.setParent(None)
 
@@ -93,11 +108,21 @@ class Stimulus(QtWidgets.QWidget):
                 event.event.start(self.layout)
             if event.end == lifecycle_phase:
                 event.event.end()
+                
+    def on_end_cue(self) -> NoReturn:
+        self.trial_start()
+
+        self.timer = QtCore.QTimer()
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(int(self.duration * 1000))
+        self.timer.timeout.connect(self.trial_end)
+        self.timer.start()
 
 
 class StimulusBuilder:
     def __init__(self) -> NoReturn:
         self.name = "Stimulus"
+        self.cue_duration = None
         self.trigger = None
         self.duration = None
         self.prompt = None
@@ -107,6 +132,7 @@ class StimulusBuilder:
     def build(self) -> Stimulus:
         return Stimulus(
             name=self.name,
+            cue_duration=self.cue_duration,
             trigger=self.trigger,
             duration=self.duration,
             prompt=self.prompt,
@@ -116,6 +142,10 @@ class StimulusBuilder:
 
     def set_name(self, name: str) -> StimulusBuilder:
         self.name = name
+        return self
+    
+    def set_cue_duration(self, cue_duration: float) -> StimulusBuilder:
+        self.cue_duration = cue_duration
         return self
 
     def set_trigger(self, trigger: Trigger) -> StimulusBuilder:

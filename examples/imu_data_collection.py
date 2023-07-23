@@ -40,20 +40,25 @@ def main():
         .set_prompt("Press space to continue")
         .set_cue_duration(2)
         .set_duration(5)
-        .add_event(at=StimulusLifecyclePhase.START, event=PlayTone("start"))
-        .add_event(at=StimulusLifecyclePhase.END, event=PlayTone("stop"))
+        .add_event(at=StimulusLifecyclePhase.TRIAL_START, event=PlayTone("start"))
+        .add_event(at=StimulusLifecyclePhase.TRIAL_END, event=PlayTone("stop"))
     )
         
     ### Tutorial ###
     
-    tutorial_pos_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE, event=PlayTone(x)).build() for x in range(6)]
-    tutorial_neg_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE, event=tone).build() for tone in neg_tones]
+    tutorial_pos_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE_START, event=PlayTone(x)).build() for x in range(6)]
+    tutorial_neg_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE_START, event=tone).build() for tone in neg_tones]
     tutorial_stim = tutorial_pos_stim + tutorial_neg_stim
 
     tutorial_block = (
         BlockBuilder()
-            .set_stimulus(tutorial_stim)
-            .set_number_of_trials(1)
+            # .set_stimulus(tutorial_stim)
+            # .set_number_of_trials(1)
+            .set_prompt("Tutorial Block starting")
+            # .start_delay(1)
+            .add_stimulus(tutorial_stim[0], 5)
+            .add_stimulus(tutorial_stim[1], 5)
+            .add_stimulus(tutorial_stim[2], 5)
             .set_inter_trial_interval(1)
     )
 
@@ -66,12 +71,18 @@ def main():
 
     ### Calibration ###
     
-    cal_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE, event=tone).set_trigger(stim).build() for tone,stim in zip(cal_tones,cal_stim_trigs)]
+    cal_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE_START, event=tone).set_trigger(stim).build() for tone,stim in zip(cal_tones,cal_stim_trigs)]
 
     cal_block = (
         BlockBuilder()
-            .set_stimulus(cal_stim)
-            .set_number_of_trials(1)
+            # .set_stimulus(cal_stim)
+            # .set_number_of_trials(1)
+            .set_prompt("Calibration Block starting")
+            .add_stimulus(cal_stim[0], 5)
+            .add_stimulus(cal_stim[1], 5)
+            .add_stimulus(cal_stim[2], 5)
+            .add_stimulus(cal_stim[3], 5)
+            .add_stimulus(cal_stim[4], 5)
             .set_inter_trial_interval(1)
     )
     
@@ -84,21 +95,32 @@ def main():
 
     ### Task ###
     
-    task_pos_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE, event=PlayTone(x)).set_trigger(pos_stim_trigs[x]).build() for x in range(6)]
-    task_neg_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE, event=tone).set_trigger(stim).build() for tone,stim in zip(neg_tones,neg_stim_trigs)]
+    task_pos_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE_START, event=PlayTone(x)).set_trigger(pos_stim_trigs[x]).build() for x in range(6)]
+    task_neg_stim = [stim_template.add_event(at=StimulusLifecyclePhase.CUE_START, event=tone).set_trigger(stim).build() for tone,stim in zip(neg_tones,neg_stim_trigs)]
 
     task_positive_block = (
         BlockBuilder()
-            .set_stimulus(task_pos_stim)
-            .set_number_of_trials(5)
+            # .set_stimulus(task_pos_stim)
+            # .set_number_of_trials(5)
+            .set_prompt("Task Block starting")
+
+            .add_stimulus(task_pos_stim[0], 5)
+            .add_stimulus(task_pos_stim[1], 5)
+            .add_stimulus(task_pos_stim[2], 5)
+            .add_stimulus(task_pos_stim[3], 5)
+            .add_stimulus(task_pos_stim[4], 5)
+            .add_stimulus(task_pos_stim[5], 5)
             .set_stimulus_ordering("random")
             .set_inter_trial_interval(1)
     )
     
     task_negative_block = (
         BlockBuilder()
-            .set_stimulus(task_neg_stim)
-            .set_number_of_trials(5)
+            # .set_stimulus(task_neg_stim)
+            # .set_number_of_trials(5)
+            .add_stimulus(task_neg_stim[0], 5)
+            .add_stimulus(task_neg_stim[1], 5)
+            .add_stimulus(task_neg_stim[2], 5)
             .set_stimulus_ordering("random")
             .set_inter_trial_interval(1)
     )
