@@ -2,6 +2,7 @@
 
 from natKit.api import CsvEncoder
 from natKit.api import Encoder
+from natKit.api import JsonEncoder
 from .schema import Schema
 
 from typing import NoReturn
@@ -10,7 +11,7 @@ from typing import Optional
 
 class SimpleMessageSchema(Schema):
     def __init__(self, message: str) -> NoReturn:
-        self.message = message
+        self.message = str(message)
 
     def __str__(self) -> str:
         return "{}: Message={}".format(self.get_name(), self.message)
@@ -20,13 +21,28 @@ class SimpleMessageSchema(Schema):
         return "SimpleMessageSchema"
 
     def serialize(self, encoder: Optional[Encoder] = None) -> bytes:
-        if isinstance(encoder, CsvEncoder) or encoder is CsvEncoder or encoder is None:
+        if encoder is None:
+            encoder = JsonEncoder()
+
+        if isinstance(encoder, CsvEncoder):
             return CsvEncoder.encode([self.message])
+        elif isinstance(encoder, JsonEncoder):
+            return JsonEncoder.encode({"message": self.message})
         else:
-            assert 0, "{} does not support {} encoding".format(SimpleMessageSchema.get_name(), encoder.get_name())
+            assert 0, "{} does not support {} encoding".format(
+                SimpleMessageSchema.get_name(), encoder.get_name()
+            )
 
     def deserialize(encoder: Encoder, msg: bytes) -> Schema:
-        if isinstance(encoder, CsvEncoder) or encoder is CsvEncoder:
+        if encoder is None:
+            encoder = JsonEncoder()
+
+        if isinstance(encoder, CsvEncoder):
             return SimpleMessageSchema(",".join(encoder.decode(msg)))
+        elif isinstance(encoder, JsonEncoder):
+            print(encoder.decode(msg))
+            return SimpleMessageSchema(encoder.decode(msg)["message"])
         else:
-            assert 0, "{} does not support {} encoding".format(SimpleMessageSchema.get_name(), encoder.get_name())
+            assert 0, "{} does not support {} encoding".format(
+                SimpleMessageSchema.get_name(), encoder.get_name()
+            )

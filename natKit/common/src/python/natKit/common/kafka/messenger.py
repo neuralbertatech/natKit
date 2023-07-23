@@ -28,16 +28,16 @@ class Messenger(Generic[T]):
         encoder: Encoder,
         schema: Schema,
     ) -> NoReturn:
-        self.topic_str = topic_name.topic_string
-        self.fifo = Fifo(4096)
-        self.topic_connection = TopicConnection.create_from_config(
+        self.topic_str: str = topic_name.topic_string
+        self.fifo: Fifo = Fifo(4096)
+        self.topic_connection: TopicConnection = TopicConnection.create_from_config(
             topic_name,
             consumer_config,
             producer_config,
             lambda msg: self.fifo.push(msg),
         )
-        self.encoder = encoder
-        self.schema = schema
+        self.encoder: Encoder = encoder
+        self.schema: Schema = schema
 
     def close(self) -> NoReturn:
         self.topic_connection.stop()
