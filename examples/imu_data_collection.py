@@ -22,6 +22,8 @@ from natKit.client.gui.pyqt6.event.PlayTone import PlayTone
 from time import sleep
 
 
+
+
 def main():
     pos_stim_num = 6
     pos_stim_trigs = [Trigger(name="1",id=1001),Trigger(name="2",id=1002),Trigger(name="3",id=1003),Trigger(name="4",id=1004),Trigger(name="5",id=1005),Trigger(name="6",id=1006)]
@@ -110,7 +112,7 @@ def main():
             .add_stimulus(task_pos_stim[3], 5)
             .add_stimulus(task_pos_stim[4], 5)
             .add_stimulus(task_pos_stim[5], 5)
-            .set_stimulus_ordering("random")
+            .set_trial_ordering("random")
             .set_inter_trial_interval(1)
     )
     
@@ -121,7 +123,7 @@ def main():
             .add_stimulus(task_neg_stim[0], 5)
             .add_stimulus(task_neg_stim[1], 5)
             .add_stimulus(task_neg_stim[2], 5)
-            .set_stimulus_ordering("random")
+            .set_trial_ordering("random")
             .set_inter_trial_interval(1)
     )
 
@@ -132,16 +134,15 @@ def main():
             .add_block(task_negative_block, 2)            
             .set_block_ordering(random=True) 
             .set_inter_block_interval(1)
+            .add_event(at.StageLifecyclePhase.STAGE_END, event=
     )
 
-    # end_stage = (       
-    # )
     
     ### Build Window ###
 
     builder = (
         MultiStageTaskWindowBuilder()
-        .set_window_size(as_absulute_value=(720, 480))
+        .set_window_size(as_absolute_value=(720, 480))
         .set_prompt("Welcome!")
         .set_stages(tutorial_stage, calibration_stage, task_stage) #, end_stage)
         .set_inter_stage_interval(1)
