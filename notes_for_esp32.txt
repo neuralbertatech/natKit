@@ -1,3 +1,0 @@
-SD Card only needs data/timestamps
-  - Toggle for onboard orientation
-
