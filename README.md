@@ -10,7 +10,6 @@ This is a collection of tools created to help jumpstart users on working with BC
 ### Requirements
 
 - [Docker](https://docs.docker.com/get-docker/)
-- [Protoc](https://grpc.io/docs/protoc-installation/)
 - [Python](https://www.python.org/downloads/) 3.9 or above
 - [virtualenv](https://docs.python.org/3/library/venv.html)
 
@@ -39,12 +38,6 @@ pip install -r requirements.txt
 ```sh
 ./<Environment-Name>/Scripts/Activate.ps1
 pip install -r requirements.txt
-```
-
-Build the Protobuf code:
-#### MacOs and Linux
-```sh
-./build.sh
 ```
 
 Start the docker server:
