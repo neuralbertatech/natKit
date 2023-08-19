@@ -17,20 +17,18 @@ services:
     image: confluentinc/cp-kafka:7.0.7
     hostname: natkit-v0-kafka
     ports: 
-    - 29092:29092
+    - 9092:9092
     - 29093:29093
     depends_on:
     - natkit-v0-zookeeper
-    env_file:
-      - server.env
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
       KAFKA_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
 
-      KAFKA_LISTENERS: PLAINTEXT://:9092,PLAINTEXT_HOST://:29092,PLAINTEXT_DIFFERENT_HOST://:29093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://127.0.0.1:29092,PLAINTEXT_DIFFERENT_HOST://${NATKIT_HOSTNAME}:29093
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,PLAINTEXT_DIFFERENT_HOST://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:29092,PLAINTEXT_HOST://127.0.0.1:9092,PLAINTEXT_DIFFERENT_HOST://${NATKIT_HOSTNAME}:29093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_DIFFERENT_HOST:PLAINTEXT
     networks:
       - natkit-v0-kafka-network
@@ -48,7 +46,7 @@ services:
       SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
       SCHEMA_REGISTRY_DEBUG: "true"
       SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:9092
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
     networks:
       - natkit-v0-kafka-network
 
@@ -64,7 +62,7 @@ services:
       KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
       KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
       KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
-      KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:9092
+      KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
     networks:
       - natkit-v0-kafka-network
 
