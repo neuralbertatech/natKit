@@ -66,3 +66,17 @@ For example if you had the server running on a machine located at `192.168.0.12`
 export NATKIT_SERVER="192.168.0.12"
 export NATKIT_SERVER_PORT="1234"
 ```
+(for windows)
+```sh
+$env:NATKIT_SERVER="192.168.0.12"
+$env:NATKIT_SERVER_PORT="1234"
+```
+
+## Troubleshooting
+
+### Execution Policy (Windows)
+
+Run the following command from Powershell (with admin privaledges)
+```sh
+Set-ExecutionPolicy -ExecutionPolicy Unrestricted
+```
