@@ -62,7 +62,7 @@ class _ImuSelectorsWidget(QtWidgets.QWidget):
     def start_query(self) -> NoReturn:
         if self.stream_names is not None:
             for i in range(len(self.combo_boxes)):
-                for j, stream in enumerate(self.streams):
+                for stream in self.streams:
                     name = stream.stream_name
                     print(name)
                     split_name = name.split('-')
@@ -70,7 +70,6 @@ class _ImuSelectorsWidget(QtWidgets.QWidget):
                         lookup_name = ""
                         if split_name[1] in imu_dict:
                             lookup_name = imu_dict[split_name[1]]
-                        # for j in range(len(imu_position_names)):
                         if lookup_name == imu_position_names[i]:
                             print("success")
                             self.combo_boxes[i].setCurrentIndex(i+1)
