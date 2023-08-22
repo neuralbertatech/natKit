@@ -7,6 +7,8 @@ from PyQt6.QtCore import pyqtSignal
 
 from natKit.client.gui.pyqt6.widget import Task, TaskBuilder, ExperimentBuilder
 from natKit.client.gui.pyqt6.window import ExperimentWindow
+from natKit.common.kafka import KafkaManager
+from natKit.api import ImuDataSchema
 
 from .imu_plot_widget import ImuPlotWidget
 from .imu_connection_widget import ImuConnectionWidget
@@ -16,6 +18,8 @@ from ..util import ImuStreams
 
 from typing import NoReturn
 
+from time import sleep
+
 
 class SetupTaskWidget(Task):
     """ """
@@ -23,8 +27,9 @@ class SetupTaskWidget(Task):
     onNext = pyqtSignal()
     onPrev = pyqtSignal()
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, kafka_manager: KafkaManager, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.kafka_manager = kafka_manager
         self.imu_streams = ImuStreams()
 
     def set_imu_streams(self, imu_streams) -> NoReturn:
@@ -59,6 +64,12 @@ class SetupTaskWidget(Task):
             self._previous_task_button, alignment=Qt.AlignmentFlag.AlignLeft
         )
 
+        self.write_to_csv_button = QPushButton(text="Write CSV")
+        self.write_to_csv_button.clicked.connect(self.write_csv)
+        button_layout.addWidget(
+            self.write_to_csv_button, alignment=Qt.AlignmentFlag.AlignCenter
+        )
+
         self._next_task_button = QPushButton(text="Data Collection ->")
         self._next_task_button.clicked.connect(lambda: self.onNext.emit())
         button_layout.addWidget(
@@ -69,13 +80,33 @@ class SetupTaskWidget(Task):
 
         self.setLayout(self.layout)
 
+    def write_csv(self):
+        streams_and_names = self.imu_streams.get_streams_and_names()
+        print("Writing to CSV...")
+        for stream, name in streams_and_names:
+            new_stream = self.kafka_manager.create_new_stream_from_stream(stream)
+            while not new_stream.stream_ready:
+                sleep(0.01)
+            sleep(0.1)
+
+            with open(name + ".csv", "w") as f:
+                f.write(ImuDataSchema.csv_header() + "\n")
+                while True:
+                    data = new_stream.read_data()
+                    if data is None:
+                        break
+                    f.write(data.to_csv() + "\n")
+        print("Finished writing to CSV")
+
 
 class SetupTaskWidgetBuilder(TaskBuilder):
     def __init__(self) -> NoReturn:
         super().__init__()
+        self.kafka_manager = None
 
     def build(self) -> Task:
         return SetupTaskWidget(
+            kafka_manager=self.kafka_manager,
             name=self.name,
             stages=self.stages,
             inter_stage_interval=self.inter_stage_interval,
@@ -84,3 +115,7 @@ class SetupTaskWidgetBuilder(TaskBuilder):
             events=self.events,
             duration_events=self.duration_events,
         )
+
+    def set_kafka_manager(self, manager: KafkaManager):
+        self.kafka_manager = manager
+        return self

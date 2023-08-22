@@ -56,3 +56,28 @@ class ImuDataSchema(Schema):
             assert 0, "{} does not support {} encoding".format(
                 ImuDataSchema.get_name(), encoder.get_name()
             )
+
+    @staticmethod
+    def csv_header() -> str:
+        header = [
+            "timestamp",
+            "data0",
+            "data1",
+            "data2",
+            "data3",
+            "data4",
+            "data5",
+            "data6",
+            "data7",
+            "data8",
+            "calibration",
+        ]
+        return ",".join(header)
+
+    def to_csv(self) -> str:
+        data = [0 for i in range(11)]
+        data[0] = str(self.timestamp)
+        for i, datum in enumerate(self.data):
+            data[i + 1] = str(datum)
+        data[10] = str(self.calibration)
+        return ",".join(data)

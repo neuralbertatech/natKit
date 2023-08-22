@@ -82,6 +82,6 @@ if __name__ == "__main__":
     builder = (
         ImuExperimentBuilder()
         .set_query_task(QueryTaskWidgetBuilder().set_kafka_manager(manager))
-        .set_setup_task(SetupTaskWidgetBuilder())
+        .set_setup_task(SetupTaskWidgetBuilder().set_kafka_manager(manager))
     )
     build_and_launch_window_single_process(builder)
