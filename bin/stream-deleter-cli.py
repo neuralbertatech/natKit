@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# © Copyright 2023, Neuralbertech Neurotechnologies Ltd. All Rights Reserved
 
 import os
 import sys

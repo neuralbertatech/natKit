@@ -4,7 +4,7 @@ import os
 import sys
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(PROJECT_ROOT, ".."))
+sys.path.append(os.path.join(PROJECT_ROOT, "../../.."))
 
 
 from natKit.client.gui.pyqt6.event import Trigger
@@ -134,21 +134,14 @@ def main():
             .add_block(task_negative_block, 2)            
             .set_block_ordering(random=True) 
             .set_inter_block_interval(1)
-            .add_event(at.StageLifecyclePhase.STAGE_END, event=
-    )
+            .add_event(at.StageLifecyclePhase.STAGE_END)
 
     
     ### Build Window ###
 
-    builder = (
-        MultiStageTaskWindowBuilder()
-        .set_window_size(as_absolute_value=(720, 480))
-        .set_prompt("Welcome!")
-        .set_stages(tutorial_stage, calibration_stage, task_stage) #, end_stage)
-        .set_inter_stage_interval(1)
-        .set_triggers(all_trigs)
-        ### Add in ending - save everything + close it down without hanging
-    )
+    builder = MultiStageTaskWindowBuilder().set_window_size(as_absolute_value=(720, 480)).set_prompt("Welcome!").set_stages(tutorial_stage, calibration_stage, task_stage).set_inter_stage_interval(1).set_triggers(all_trigs)
+    ### Add in ending - save everything + close it down without hanging
+
 
     build_and_launch_window_single_process(builder)
 

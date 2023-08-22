@@ -5,17 +5,21 @@ from PyQt6.QtWidgets import QVBoxLayout
 from PyQt6.QtCore import QSize
 
 from natKit.client.gui.pyqt6 import StreamGraph
-from natKit.common.kafka import KafkaManager
+
+from ..util import ImuStreams
 
 
 class ImuPlotWidget(QWidget):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, imu_streams: ImuStreams, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.imu_streams = imu_streams
 
-        self.manager = KafkaManager.create(host = "172.20.19.36", port = "9092")
-
-        self.streams = self.manager.find_streams()
-        self.stream_names = [stream.get_name() for stream in self.streams]
+        streams_and_names = self.imu_streams.get_streams_and_names()
+        self.streams = []
+        self.stream_names = []
+        for stream, name in streams_and_names:
+            self.streams.append(stream)
+            self.stream_names.append(name)
 
         combobox = QComboBox()
 
@@ -28,11 +32,6 @@ class ImuPlotWidget(QWidget):
         layout.addWidget(self.graph)
 
         self.setLayout(layout)
-
-        
-        
-
-        # self.setCentralWidget(container)
 
     def stream_selected(self, stream_name):
         for i, name in enumerate(self.stream_names):
