@@ -142,6 +142,11 @@ class KafkaManager:
             data_messenger=self.create_messenger(data_topic_string),
         )
 
+    def create_new_stream_from_stream(self, stream: Stream) -> Stream:
+        return self._create_stream(
+            stream.get_meta_topic_string(), stream.get_data_topic_string()
+        )
+
     def find_streams(self):
         topic_string_pairs = StreamHelper.find_topic_stream_pairs(
             self.query_topic_names()
