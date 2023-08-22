@@ -11,10 +11,14 @@ from PyQt6.QtGui import QColor
 from examples.imu_experiment.src.util import ImuConnectionStatus
 from examples.imu_experiment.src.util import Point
 
+from ..util import ImuStreams
+
 
 class StatusDrawingWidget(QWidget):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, imu_streams: ImuStreams, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.imu_streams = imu_streams
+
         self.scaling_factor = 0.012
         self.imu_connection_positions = [
             Point(20, 25),
@@ -44,7 +48,7 @@ class StatusDrawingWidget(QWidget):
                 qp,
                 position,
                 self.status_circle_radius,
-                ImuConnectionStatus.get_random_status(),
+                ImuStreams.get_connection_status(self.imu_streams.get_at_index(i)),
             )
         qp.end()
 
@@ -71,7 +75,6 @@ class StatusDrawingWidget(QWidget):
         # qp.setRenderHint(QPainter.renderHints.Antialiasing)
         qp.setPen(QPen(Qt.GlobalColor.black, 3, Qt.PenStyle.SolidLine))
         brush = QBrush()
-        print("status.get_color(): {}".format(status.get_color()))
         brush.setColor(QColor(status.get_color()))
         brush.setStyle(Qt.BrushStyle.Dense1Pattern)
         qp.setBrush(brush)
@@ -84,7 +87,7 @@ class StatusDrawingWidget(QWidget):
 
 
 class ImuConnectionWidget(QWidget):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, imu_streams: ImuStreams, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         layout = QVBoxLayout()
@@ -94,7 +97,7 @@ class ImuConnectionWidget(QWidget):
         )
         layout.addWidget(self._title_label, 0)
 
-        self._imu_connection_widget_status_drawing = StatusDrawingWidget()
+        self._imu_connection_widget_status_drawing = StatusDrawingWidget(imu_streams)
         layout.addWidget(self._imu_connection_widget_status_drawing, 5)
 
         self.setLayout(layout)

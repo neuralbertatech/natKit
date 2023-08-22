@@ -3,7 +3,8 @@ from __future__ import annotations
 from natKit.client.gui.pyqt6.event import DurationEvent
 from natKit.client.gui.pyqt6.event import Event
 from natKit.client.gui.pyqt6.event import OneShotEvent
-from natKit.client.gui.pyqt6.widget import Block
+from natKit.client.gui.pyqt6.widget import BlockBuilder
+from natKit.client.gui.pyqt6.event import Trigger
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets
@@ -29,17 +30,19 @@ class Stage(QtWidgets.QWidget):
         parent=None,
         name: str = "Stage",
         prompt: str = None,
-        blocks: List[Block] = [],
+        trigger: Trigger = None,
+        blocks: List[BlockBuilder] = [],
         inter_block_interval: float = 0.0,
         events: List[OneShotEvent] = [],
         duration_events: List[DurationEvent] = [],
     ) -> NoReturn:
-        super(Stage, self).__init__(parent)
+        super().__init__(parent)
         self.layout = QtWidgets.QVBoxLayout(self)
 
         self.name = name
         self.intro_prompt = prompt
-        self.blocks = blocks
+        self.trigger = trigger
+        self.blocks = [block.build() for block in blocks]
         self.inter_block_interval = inter_block_interval
         self.events = events
         self.duration_events = duration_events
@@ -50,13 +53,12 @@ class Stage(QtWidgets.QWidget):
     def run(self) -> NoReturn:
         self.prompt()
         self.stage_start()
-        
+
         self.timer = QtCore.QTimer()
         self.timer.setSingleShot(True)
-        self.timer.setInterval(int(self.inter_trial_interval * 1000))
+        self.timer.setInterval(int(self.inter_block_interval * 1000))
         self.timer.timeout.connect(self.run_block)
         self.timer.start()
-        
 
     def prompt(self) -> NoReturn:
         self._handle_one_shot_events(StageLifecyclePhase.PROMPT)
@@ -66,46 +68,46 @@ class Stage(QtWidgets.QWidget):
             prompt_box = QMessageBox()
             prompt_box.setText(self.intro_prompt)
             prompt_box.exec()
-     
+
     def stage_start(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(1)
-        self._handle_one_shot_events(StageLifecyclePhase.Stage_START)
-        self._handle_duration_events(StageLifecyclePhase.Stage_START)
-            
+        self._handle_one_shot_events(StageLifecyclePhase.STAGE_START)
+        self._handle_duration_events(StageLifecyclePhase.STAGE_START)
+
     def run_block(self) -> NoReturn:
         self.block_start()
         self.blocks(self.blocks_index).run()
         self.trial_end()
         self.block_index += 1
-        if self.block_index < len(self.block):
+        if self.block_index < len(self.blocks):
             self.timer = QtCore.QTimer()
             self.timer.setSingleShot(True)
             self.timer.setInterval(int(self.inter_block_interval * 1000))
             self.timer.timeout.connect(self.run_block)
             self.timer.start()
-        else: 
+        else:
             stage_end()
-        
+
     def block_start(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(1)
-        self._handle_one_shot_events(StageLifecyclePhase.START_TRIAL)
-        self._handle_duration_events(StageLifecyclePhase.START_TRIAL)
+        self._handle_one_shot_events(StageLifecyclePhase.START_BLOCK)
+        self._handle_duration_events(StageLifecyclePhase.START_BLOCK)
 
     def block_end(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(0)
-        self._handle_one_shot_events(StageLifecyclePhase.TRIAL_END)
-        self._handle_duration_events(StageLifecyclePhase.TRIAL_END)
+        self._handle_one_shot_events(StageLifecyclePhase.END_BLOCK)
+        self._handle_duration_events(StageLifecyclePhase.END_BLOCK)
         self.finished = True
         self.setParent(None)
-        
+
     def stage_end(self) -> NoReturn:
         if self.trigger is not None:
             self.trigger.set_value(1)
-        self._handle_one_shot_events(StageLifecyclePhase.Stage_END)
-        self._handle_duration_events(StageLifecyclePhase.Stage_END)
+        self._handle_one_shot_events(StageLifecyclePhase.STAGE_END)
+        self._handle_duration_events(StageLifecyclePhase.STAGE_END)
 
     def _handle_one_shot_events(self, lifecycle_phase) -> NoReturn:
         for event in self.events:
@@ -118,14 +120,15 @@ class Stage(QtWidgets.QWidget):
                 event.event.start(self.layout)
             if event.end == lifecycle_phase:
                 event.event.end()
-                
+
 
 class StageBuilder:
     def __init__(self) -> NoReturn:
         self.name = "Stage"
         self.blocks = []
-        inter_block_interval = 0.0
+        self.inter_block_interval = 0.0
         self.prompt = None
+        self.trigger = None
         self.events = []
         self.duration_events = []
 
@@ -133,8 +136,9 @@ class StageBuilder:
         return Stage(
             name=self.name,
             blocks=self.blocks,
-            inter_trial_interval=self.inter_trial_interval,
+            inter_block_interval=self.inter_block_interval,
             prompt=self.prompt,
+            trigger=self.trigger,
             events=self.events,
             duration_events=self.duration_events,
         )
@@ -146,10 +150,14 @@ class StageBuilder:
     def set_prompt(self, prompt: str) -> StageBuilder:
         self.prompt = prompt
         return self
-    
-    def add_block(self, block: Block, repetitions: int = 1) -> StageBuilder:
+
+    def set_trigger(self, trigger: Trigger) -> StageBuilder:
+        self.trigger = trigger
+        return self
+
+    def add_block(self, block: BlockBuilder, repetitions: int = 1) -> StageBuilder:
         for rep in range(repetitions):
-            self.Blocks.append(block)
+            self.blocks.append(block)
         return self
 
     def set_inter_block_interval(self, inter_block_interval: float) -> StageBuilder:
