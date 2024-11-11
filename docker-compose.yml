@@ -33,38 +33,38 @@ services:
     networks:
       - natkit-v0-kafka-network
 
-  natkit-v0-schema-registry:
-    image: confluentinc/cp-schema-registry:7.0.7
-    hostname: natkit-v0-schema-registry
-    ports:
-    - 38081:38081
-    depends_on:
-    - natkit-v0-kafka
-    environment:
-      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: natkit-v0-zookeeper:32181
-      SCHEMA_REGISTRY_HOST_NAME: natkit-v0-schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
-      SCHEMA_REGISTRY_DEBUG: "true"
-      SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
-    networks:
-      - natkit-v0-kafka-network
+  # natkit-v0-schema-registry:
+  #   image: confluentinc/cp-schema-registry:7.0.7
+  #   hostname: natkit-v0-schema-registry
+  #   ports:
+  #   - 38081:38081
+  #   depends_on:
+  #   - natkit-v0-kafka
+  #   environment:
+  #     SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: natkit-v0-zookeeper:32181
+  #     SCHEMA_REGISTRY_HOST_NAME: natkit-v0-schema-registry
+  #     SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
+  #     SCHEMA_REGISTRY_DEBUG: "true"
+  #     SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+  #     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
+  #   networks:
+  #     - natkit-v0-kafka-network
 
-  natkit-v0-kafka-rest:
-    image: confluentinc/cp-kafka-rest:7.0.7
-    hostname: natkit-v0-kafka-rest
-    ports:
-    - 38082:38082
-    depends_on:
-      - natkit-v0-schema-registry
-    environment:
-      KAFKA_REST_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
-      KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
-      KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
-      KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
-      KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
-    networks:
-      - natkit-v0-kafka-network
+  # natkit-v0-kafka-rest:
+  #   image: confluentinc/cp-kafka-rest:7.0.7
+  #   hostname: natkit-v0-kafka-rest
+  #   ports:
+  #   - 38082:38082
+  #   depends_on:
+  #     - natkit-v0-schema-registry
+  #   environment:
+  #     KAFKA_REST_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
+  #     KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
+  #     KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
+  #     KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
+  #     KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
+  #   networks:
+  #     - natkit-v0-kafka-network
 
   mosquitto:
     image: eclipse-mosquitto:2.0.18
@@ -78,6 +78,9 @@ services:
       - ./mosquitto/etc:/etc/mosquitto
       - ./mosquitto/log:/mosquitto/log
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    networks:
+      - natkit-v0-kafka-network
+
 
   ntp:
     image: cturra/ntp:latest
@@ -91,6 +94,20 @@ services:
       - TZ=America/Edmonton
 #      - NOCLIENTLOG=true
 #      - ENABLE_NTS=true
+
+
+  natkit-v0-bridge:
+    image: natnl/natkit-bridge:latest
+    container_name: natkit-v0-bridge
+    restart: always
+    environment:
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 29092
+      LIBNATKIT_MQTT_BROKER_ADDRESS: mosquitto
+      LIBNATKIT_MQTT_BROKER_PORT: 1883
+    networks:
+      - natkit-v0-kafka-network
+
 
 networks:
   natkit-v0-kafka-network:
