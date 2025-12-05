@@ -1,25 +1,36 @@
+version: '3.5'
+
 services:
+  natkit-v0-zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.7
+    hostname: natkit-v0-zookeeper
+    ports: 
+    - 32181:32181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 32181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    networks:
+      - natkit-v0-kafka-network
+
   natkit-v0-kafka:
-    image: confluentinc/cp-kafka:7.8.0
+    image: confluentinc/cp-kafka:7.0.7
     hostname: natkit-v0-kafka
     ports: 
-      - 9092:9092
-      - 9093:9093
-      - 29092:29092
-      - 29093:29093
+    - 9092:9092
+    - 29092:29092
+    - 29093:29093
+    depends_on:
+    - natkit-v0-zookeeper
     environment:
-      KAFKA_KRAFT_MODE: "true"
-      KAFKA_PROCESS_ROLES: controller,broker
-      KAFKA_NODE_ID: 1
-      KAFKA_CONTROLLER_ID: 1
-      CLUSTER_ID: ReR6t0tUSZGaK6IO8K4lwA
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@natkit-v0-kafka:9093"
-      KAFKA_LISTENERS: "DOCKER_NETWORK_LISTENER://0.0.0.0:9092,CONTROLLER_LISTENER://0.0.0.0:9093,LOCALHOST_LISTENER://0.0.0.0:29092,REMOTE_LISTENER://0.0.0.0:29093"
-      KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://10.26.0.214:29093"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER_NETWORK_LISTENER"
-      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER_LISTENER"
-      KAFKA_LOG_DIRS: "/tmp/kraft-storeage"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
+      KAFKA_BROKER_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+      KAFKA_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
+
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,PLAINTEXT_DIFFERENT_HOST://:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:29092,PLAINTEXT_HOST://127.0.0.1:9092,PLAINTEXT_DIFFERENT_HOST://localhost:29093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,PLAINTEXT_DIFFERENT_HOST:PLAINTEXT
     networks:
       - natkit-v0-kafka-network
 
@@ -57,7 +68,7 @@ services:
   #     - natkit-v0-kafka-network
 
   mosquitto:
-    image: eclipse-mosquitto:2.0.22
+    image: eclipse-mosquitto:2.0.18
     hostname: mosquitto
     container_name: mosquitto
     restart: unless-stopped
@@ -92,7 +103,7 @@ services:
     restart: always
     environment:
       LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
-      LIBNATKIT_KAFKA_BROKER_PORT: 9092
+      LIBNATKIT_KAFKA_BROKER_PORT: 29092
       LIBNATKIT_MQTT_BROKER_ADDRESS: mosquitto
       LIBNATKIT_MQTT_BROKER_PORT: 1883
     networks:
@@ -101,16 +112,16 @@ services:
       - natkit-v0-kafka
       - mosquitto
 
-  # natkit-v0-backend:
-  #   image: natnl/natkit-backend:latest
-  #   container_name: natkit-v0-backend
-  #   restart: always
-  #   volumes:
-  #     - ./natkit-backend/log:/logs
-  #   networks:
-  #     - natkit-v0-kafka-network
-  #   depends_on:
-  #     - natkit-v0-kafka
+  natkit-v0-backend:
+    image: natnl/natkit-backend:latest
+    container_name: natkit-v0-backend
+    restart: always
+    volumes:
+      - ./natkit-backend/log:/logs
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-kafka
 
 
 networks:
