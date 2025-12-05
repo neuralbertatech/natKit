@@ -130,6 +130,7 @@ dmypy.json
 .pyre/
 
 nathacks_env/
+natKit-IMU/
 
 # Data files
 *.csv
