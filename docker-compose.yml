@@ -2,7 +2,7 @@ services:
   natkit-v0-kafka:
     image: confluentinc/cp-kafka:7.8.0
     hostname: natkit-v0-kafka
-    ports: 
+    ports:
       - 9092:9092
       - 9093:9093
       - 29092:29092
@@ -15,10 +15,12 @@ services:
       CLUSTER_ID: ReR6t0tUSZGaK6IO8K4lwA
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@natkit-v0-kafka:9093"
       KAFKA_LISTENERS: "DOCKER_NETWORK_LISTENER://0.0.0.0:9092,CONTROLLER_LISTENER://0.0.0.0:9093,LOCALHOST_LISTENER://0.0.0.0:29092,REMOTE_LISTENER://0.0.0.0:29093"
-      KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://10.26.0.214:29093"
+      # For remote access, set NATKIT_HOST_IP environment variable before running docker-compose
+      # Example: NATKIT_HOST_IP=192.168.1.100 docker-compose up -d
+      KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://${NATKIT_HOST_IP:-127.0.0.1}:29093"
       KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER_NETWORK_LISTENER"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER_LISTENER"
-      KAFKA_LOG_DIRS: "/tmp/kraft-storeage"
+      KAFKA_LOG_DIRS: "/tmp/kraft-storage"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
     networks:
       - natkit-v0-kafka-network
@@ -71,7 +73,6 @@ services:
     networks:
       - natkit-v0-kafka-network
 
-
   ntp:
     image: cturra/ntp:latest
     container_name: ntp
@@ -82,9 +83,8 @@ services:
       - NTP_SERVERS=subitaneous.cpsc.ucalgary.ca
       - LOG_LEVEL=0
       - TZ=America/Edmonton
-#      - NOCLIENTLOG=true
-#      - ENABLE_NTS=true
-
+  #      - NOCLIENTLOG=true
+  #      - ENABLE_NTS=true
 
   natkit-v0-bridge:
     image: natnl/natkit-bridge:latest
@@ -111,7 +111,6 @@ services:
   #     - natkit-v0-kafka-network
   #   depends_on:
   #     - natkit-v0-kafka
-
 
 networks:
   natkit-v0-kafka-network:
