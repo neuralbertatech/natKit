@@ -32,7 +32,7 @@ void MuseDataBuffer::unlock() {
 }
 
 void MuseDataBuffer::addEegData(uint64_t timestamp, uint16_t sequence,
-                                 muse_eeg_channel_t channel, const float samples[EEG_SAMPLES_PER_PACKET]) {
+                                 uint8_t channel, const float samples[EEG_SAMPLES_PER_PACKET]) {
     lock();
 
     // If this is a new sequence, finalize the previous sample if we had any data
@@ -45,21 +45,21 @@ void MuseDataBuffer::addEegData(uint64_t timestamp, uint16_t sequence,
     currentSample_.eeg_sequence = sequence;
     currentEegSequence_ = sequence;
 
-    // Copy data to appropriate channel
+    // Copy data to appropriate channel (channel: 0=TP9, 1=AF7, 2=AF8, 3=TP10)
     switch (channel) {
-        case MUSE_EEG_TP9:
+        case 0:  // TP9
             memcpy(currentSample_.tp9, samples, sizeof(currentSample_.tp9));
             eegChannelsMask_ |= 0x01;
             break;
-        case MUSE_EEG_AF7:
+        case 1:  // AF7
             memcpy(currentSample_.af7, samples, sizeof(currentSample_.af7));
             eegChannelsMask_ |= 0x02;
             break;
-        case MUSE_EEG_AF8:
+        case 2:  // AF8
             memcpy(currentSample_.af8, samples, sizeof(currentSample_.af8));
             eegChannelsMask_ |= 0x04;
             break;
-        case MUSE_EEG_TP10:
+        case 3:  // TP10
             memcpy(currentSample_.tp10, samples, sizeof(currentSample_.tp10));
             eegChannelsMask_ |= 0x08;
             break;
@@ -77,17 +77,17 @@ void MuseDataBuffer::addEegData(uint64_t timestamp, uint16_t sequence,
     unlock();
 }
 
-void MuseDataBuffer::addAccelData(uint64_t timestamp, const muse_accel_data_t* data) {
+void MuseDataBuffer::addAccelData(uint64_t timestamp, uint16_t sequence, const float samples[MOTION_SAMPLES][3]) {
     lock();
 
     // Update current sample with accel data
     currentSample_.setTime(timestamp);
-    currentSample_.motion_sequence = data->sequence;
+    currentSample_.motion_sequence = sequence;
 
     for (int i = 0; i < MOTION_SAMPLES; ++i) {
-        currentSample_.accel[i][0] = data->x[i];
-        currentSample_.accel[i][1] = data->y[i];
-        currentSample_.accel[i][2] = data->z[i];
+        currentSample_.accel[i][0] = samples[i][0];
+        currentSample_.accel[i][1] = samples[i][1];
+        currentSample_.accel[i][2] = samples[i][2];
     }
 
     currentSample_.has_data |= HAS_ACCEL;
@@ -95,17 +95,17 @@ void MuseDataBuffer::addAccelData(uint64_t timestamp, const muse_accel_data_t* d
     unlock();
 }
 
-void MuseDataBuffer::addGyroData(uint64_t timestamp, const muse_gyro_data_t* data) {
+void MuseDataBuffer::addGyroData(uint64_t timestamp, uint16_t sequence, const float samples[MOTION_SAMPLES][3]) {
     lock();
 
     // Update current sample with gyro data
     currentSample_.setTime(timestamp);
-    currentSample_.motion_sequence = data->sequence;
+    currentSample_.motion_sequence = sequence;
 
     for (int i = 0; i < MOTION_SAMPLES; ++i) {
-        currentSample_.gyro[i][0] = data->x[i];
-        currentSample_.gyro[i][1] = data->y[i];
-        currentSample_.gyro[i][2] = data->z[i];
+        currentSample_.gyro[i][0] = samples[i][0];
+        currentSample_.gyro[i][1] = samples[i][1];
+        currentSample_.gyro[i][2] = samples[i][2];
     }
 
     currentSample_.has_data |= HAS_GYRO;
