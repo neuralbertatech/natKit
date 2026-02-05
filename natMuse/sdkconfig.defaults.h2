@@ -1,0 +1,55 @@
+# ESP32-H2 Configuration for natMuse BLE Controller
+# This chip handles only BLE communication with the Muse headband
+
+# Partition table - use larger single app partition
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# Flash size - 4MB standard
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# ============================================
+# Bluetooth Configuration
+# ============================================
+
+# Enable Bluetooth
+CONFIG_BT_ENABLED=y
+
+# Use NimBLE stack (lighter than Bluedroid, sufficient for BLE-only)
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# NimBLE configuration for Muse connection
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_BONDS=1
+CONFIG_BT_NIMBLE_MAX_CCCDS=8
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+
+# Increase attribute data length for Muse packets (20 bytes)
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256
+
+# Enable GATT client
+CONFIG_BT_NIMBLE_GATT_CLI_ENABLED=y
+
+# Enable GAP and GATT services
+CONFIG_BT_NIMBLE_GAP_DEVICE_NAME_MAX_LEN=31
+CONFIG_BT_NIMBLE_SVC_GAP_ENABLED=y
+CONFIG_BT_NIMBLE_SVC_GATT_ENABLED=y
+
+# Logging - warnings only
+CONFIG_BT_NIMBLE_LOG_LEVEL=1
+
+# Memory optimization
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=y
+
+# ============================================
+# WiFi - DISABLED (S3 handles WiFi)
+# ============================================
+CONFIG_ESP_WIFI_ENABLED=n
+
+# ============================================
+# SPI Configuration
+# ============================================
+# Using SPI2 (HSPI) as master
+CONFIG_SPI_MASTER_IN_IRAM=y

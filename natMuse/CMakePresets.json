@@ -1,0 +1,39 @@
+{
+    "version": 4,
+    "configurePresets": [
+        {
+            "name": "h2",
+            "displayName": "ESP32-H2 (BLE Controller)",
+            "description": "Build for ESP32-H2 - handles BLE connection to Muse headband",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build_h2",
+            "cacheVariables": {
+                "IDF_TARGET": "esp32h2",
+                "SDKCONFIG_DEFAULTS": "${sourceDir}/sdkconfig.defaults.h2",
+                "NATMUSE_TARGET": "h2"
+            }
+        },
+        {
+            "name": "s3",
+            "displayName": "ESP32-S3 (WiFi Controller)",
+            "description": "Build for ESP32-S3 - handles WiFi/MQTT data transmission",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build_s3",
+            "cacheVariables": {
+                "IDF_TARGET": "esp32s3",
+                "SDKCONFIG_DEFAULTS": "${sourceDir}/sdkconfig.defaults.s3",
+                "NATMUSE_TARGET": "s3"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "h2",
+            "configurePreset": "h2"
+        },
+        {
+            "name": "s3",
+            "configurePreset": "s3"
+        }
+    ]
+}

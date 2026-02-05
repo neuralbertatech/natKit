@@ -8,9 +8,13 @@
 
 #include <libnatkit-core.hpp>
 
+// Only include muse_controller.h when building for original single-chip target
+// The S3 build receives data via SPI and doesn't need these types
+#if !defined(NATMUSE_TARGET_S3)
 extern "C" {
 #include "muse_controller.h"
 }
+#endif
 
 /**
  * Thread-safe buffer for collecting Muse data samples.
@@ -39,32 +43,34 @@ public:
     ~MuseDataBuffer();
 
     /**
-     * Add EEG data for a specific channel.
+     * Add EEG data for a specific channel (SPI-friendly version).
      * When all 4 channels have been received for a sequence, the sample is considered complete.
      * 
      * @param timestamp NTP-synchronized timestamp in microseconds
      * @param sequence Packet sequence number
-     * @param channel EEG channel (TP9, AF7, AF8, TP10)
+     * @param channel EEG channel (0-3 for TP9/AF7/AF8/TP10)
      * @param samples Array of 12 float samples
      */
     void addEegData(uint64_t timestamp, uint16_t sequence, 
-                    muse_eeg_channel_t channel, const float samples[EEG_SAMPLES_PER_PACKET]);
+                    uint8_t channel, const float samples[EEG_SAMPLES_PER_PACKET]);
 
     /**
-     * Add accelerometer data.
+     * Add accelerometer data (SPI-friendly version).
      * 
      * @param timestamp NTP-synchronized timestamp in microseconds
-     * @param data Accelerometer data structure
+     * @param sequence Motion sequence number
+     * @param samples Array of 3 samples × (x, y, z)
      */
-    void addAccelData(uint64_t timestamp, const muse_accel_data_t* data);
+    void addAccelData(uint64_t timestamp, uint16_t sequence, const float samples[MOTION_SAMPLES][3]);
 
     /**
-     * Add gyroscope data.
+     * Add gyroscope data (SPI-friendly version).
      * 
      * @param timestamp NTP-synchronized timestamp in microseconds
-     * @param data Gyroscope data structure
+     * @param sequence Motion sequence number
+     * @param samples Array of 3 samples × (x, y, z)
      */
-    void addGyroData(uint64_t timestamp, const muse_gyro_data_t* data);
+    void addGyroData(uint64_t timestamp, uint16_t sequence, const float samples[MOTION_SAMPLES][3]);
 
     /**
      * Check if buffer is full and ready for transmission.

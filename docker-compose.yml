@@ -67,9 +67,9 @@ services:
       - "1883:1883"
       - "9001:9001"
     volumes:
-      - ./mosquitto/etc:/etc/mosquitto
-      - ./mosquitto/log:/mosquitto/log
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/etc:/etc/mosquitto:Z
+      - ./mosquitto/log:/mosquitto/log:Z
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:Z
     networks:
       - natkit-v0-kafka-network
 
@@ -101,16 +101,16 @@ services:
       - natkit-v0-kafka
       - mosquitto
 
-  # natkit-v0-backend:
-  #   image: natnl/natkit-backend:latest
-  #   container_name: natkit-v0-backend
-  #   restart: always
-  #   volumes:
-  #     - ./natkit-backend/log:/logs
-  #   networks:
-  #     - natkit-v0-kafka-network
-  #   depends_on:
-  #     - natkit-v0-kafka
+  natkit-v0-backend:
+    image: natnl/natkit-backend:latest
+    container_name: natkit-v0-backend
+    restart: always
+    volumes:
+      - ./natkit-backend/log:/logs:Z
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-kafka
 
 networks:
   natkit-v0-kafka-network:
