@@ -1,5 +1,6 @@
 <script lang="ts">
     import { Button } from "$lib/components/ui/button";
+    import { onMount } from "svelte";
     import { SvelteMap } from "svelte/reactivity";
     import {
         SensorPosition,
@@ -71,8 +72,53 @@
         else return CalibrationStatus.Unknown;
     }
 
-    // Get the minimum (worst) calibration status for overall display
-    function getMinCalibrationStatus(
+    function parseSensorAccuracies(raw_accuracy: unknown): SensorAccuracies {
+        if (
+            typeof raw_accuracy === "object" &&
+            raw_accuracy !== null &&
+            "accelerometer" in raw_accuracy &&
+            "gyroscope" in raw_accuracy &&
+            "rotation" in raw_accuracy
+        ) {
+            const accuracy_data = raw_accuracy as {
+                accelerometer: number;
+                gyroscope: number;
+                rotation: number;
+            };
+            return {
+                accelerometer: accuracy_int_to_calibration_status(
+                    Number(accuracy_data.accelerometer ?? 0),
+                ),
+                gyroscope: accuracy_int_to_calibration_status(
+                    Number(accuracy_data.gyroscope ?? 0),
+                ),
+                rotation: accuracy_int_to_calibration_status(
+                    Number(accuracy_data.rotation ?? 0),
+                ),
+            };
+        }
+
+        // Backward-compatible parsing for packed bitfield format:
+        // bits 5-4 accel, 3-2 gyro, 1-0 rotation (e.g. 63 => 3,3,3)
+        const packed = Number(raw_accuracy);
+        if (Number.isFinite(packed)) {
+            return {
+                accelerometer: accuracy_int_to_calibration_status(
+                    (packed >> 4) & 0b11,
+                ),
+                gyroscope: accuracy_int_to_calibration_status(
+                    (packed >> 2) & 0b11,
+                ),
+                rotation: accuracy_int_to_calibration_status(packed & 0b11),
+            };
+        }
+
+        return { ...defaultAccuracies };
+    }
+
+    // Get the maximum (best) calibration status for overall display.
+    // This matches "ready" logic below (any component reaches High).
+    function getBestCalibrationStatus(
         accuracies: SensorAccuracies,
     ): CalibrationStatus {
         const values = [
@@ -80,58 +126,45 @@
             accuracies.gyroscope,
             accuracies.rotation,
         ];
-        // Filter out Unknown values for minimum calculation
+        // Filter out Unknown values for best-value calculation
         const knownValues = values.filter(
             (v) => v !== CalibrationStatus.Unknown,
         );
         if (knownValues.length === 0) return CalibrationStatus.Unknown;
-        return Math.min(...knownValues) as CalibrationStatus;
+        return Math.max(...knownValues) as CalibrationStatus;
     }
 
     // Poll for calibration status
-    setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
-            .then((response) =>
-                response
-                    .json()
-                    .then((json) => {
-                        let accuracies = json["accuracies"];
-                        for (let id in accuracies) {
-                            let accuracy_data = accuracies[id];
-                            let id_num = Number(id);
-                            if (stream_position_mapping.has(id_num)) {
-                                let position =
-                                    stream_position_mapping.get(id_num)!;
-                                let sensorAccuracies: SensorAccuracies = {
-                                    accelerometer:
-                                        accuracy_int_to_calibration_status(
-                                            Number(
-                                                accuracy_data.accelerometer ??
-                                                    0,
-                                            ),
-                                        ),
-                                    gyroscope:
-                                        accuracy_int_to_calibration_status(
-                                            Number(
-                                                accuracy_data.gyroscope ?? 0,
-                                            ),
-                                        ),
-                                    rotation:
-                                        accuracy_int_to_calibration_status(
-                                            Number(accuracy_data.rotation ?? 0),
-                                        ),
-                                };
-                                calibration_statuses.set(
-                                    position,
-                                    sensorAccuracies,
-                                );
+    onMount(() => {
+        const interval = setInterval(async function () {
+            fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
+                .then((response) =>
+                    response
+                        .json()
+                        .then((json) => {
+                            let accuracies = json["accuracies"];
+                            for (let id in accuracies) {
+                                let accuracy_data = accuracies[id];
+                                let id_num = Number(id);
+                                if (stream_position_mapping.has(id_num)) {
+                                    let position =
+                                        stream_position_mapping.get(id_num)!;
+                                    let sensorAccuracies: SensorAccuracies =
+                                        parseSensorAccuracies(accuracy_data);
+                                    calibration_statuses.set(
+                                        position,
+                                        sensorAccuracies,
+                                    );
+                                }
                             }
-                        }
-                    })
-                    .catch((err) => console.error(err)),
-            )
-            .catch((err) => console.error(err));
-    }, 1000);
+                        })
+                        .catch((err) => console.error(err)),
+                )
+                .catch((err) => console.error(err));
+        }, 1000);
+
+        return () => clearInterval(interval);
+    });
 
     // Check if all sensors have at least one component with high calibration
     let all_calibrated = $derived(
@@ -155,13 +188,13 @@
         return calibration_statuses.get(pos) ?? { ...defaultAccuracies };
     }
 
-    // Get the overall (minimum) status for dot display on body diagram
+    // Get the overall (best) status for dot display on body diagram
     function getOverallStatusForPosition(
         pos: SensorPosition,
     ): CalibrationStatus {
         const accuracies = calibration_statuses.get(pos);
         if (!accuracies) return CalibrationStatus.Unknown;
-        return getMinCalibrationStatus(accuracies);
+        return getBestCalibrationStatus(accuracies);
     }
 </script>
 
