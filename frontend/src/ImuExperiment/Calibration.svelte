@@ -1,19 +1,17 @@
 <script lang="ts">
     import Button from "../lib/components/ui/button/button.svelte";
-    import { getContext } from "svelte";
+    import { onMount } from "svelte";
     import { SvelteMap } from "svelte/reactivity";
-    import {
-        SensorPosition,
-        CalibrationStatus,
-        sensor_position_to_string,
-        parse_sensor_position_from_string,
-    } from "./util";
+    import { SensorPosition, CalibrationStatus } from "./util";
     const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
     let {
         stream_position_mapping,
-    }: { stream_position_mapping: SvelteMap<number, SensorPosition> } =
-        $props();
+        onStart = () => {},
+    }: {
+        stream_position_mapping: SvelteMap<number, SensorPosition>;
+        onStart: () => void;
+    } = $props();
 
     let calibration_statuses: Map<SensorPosition, CalibrationStatus> = $state(
         new SvelteMap([
@@ -26,6 +24,9 @@
             [SensorPosition.Trunk, CalibrationStatus.Unknown],
         ]),
     );
+    let start_in_progress = $state(false);
+    let start_error = $state("");
+    let start_success_message = $state("");
 
     function calibration_status_to_color(
         status: CalibrationStatus | undefined,
@@ -51,7 +52,6 @@
     function accuracy_int_to_calibration_status(
         val: number,
     ): CalibrationStatus {
-        console.log("Foo", val);
         if (val === 0) {
             return CalibrationStatus.Unreliable;
         } else if (val === 1) {
@@ -65,40 +65,106 @@
         }
     }
 
-    //let stream_position_mapping_context: Map<number, SensorPosition> = getContext("stream_position_mapping");
-    //console.log("read stream thing ", stream_position_mapping);
-    setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
-            .then((response) =>
-                response
-                    .json()
-                    .then((json) => {
-                        console.log(json);
-                        let accuracies = json["accuracies"];
-                        for (let id in accuracies) {
-                            let accuracy_value = Number(accuracies[id]);
-                            let id_num = Number(id);
-                            if (stream_position_mapping.has(id_num)) {
-                                let position =
-                                    stream_position_mapping.get(id_num)!;
-                                let accuracy =
-                                    accuracy_int_to_calibration_status(
-                                        accuracy_value,
-                                    );
-                                calibration_statuses.set(position, accuracy);
-                                console.log(
-                                    position,
-                                    accuracy,
-                                    accuracy_value,
-                                    calibration_statuses,
-                                );
+    function min_calibration_status(
+        statuses: CalibrationStatus[],
+    ): CalibrationStatus {
+        const known = statuses.filter((s) => s !== CalibrationStatus.Unknown);
+        if (known.length === 0) {
+            return CalibrationStatus.Unknown;
+        }
+        return Math.min(...known) as CalibrationStatus;
+    }
+
+    function extract_display_status_for_stream(raw_accuracy: unknown) {
+        if (
+            typeof raw_accuracy === "object" &&
+            raw_accuracy !== null &&
+            "accelerometer" in raw_accuracy &&
+            "gyroscope" in raw_accuracy &&
+            "rotation" in raw_accuracy
+        ) {
+            const accuracy_data = raw_accuracy as {
+                accelerometer: number;
+                gyroscope: number;
+                rotation: number;
+            };
+            return min_calibration_status([
+                accuracy_int_to_calibration_status(
+                    Number(accuracy_data.accelerometer ?? 0),
+                ),
+                accuracy_int_to_calibration_status(
+                    Number(accuracy_data.gyroscope ?? 0),
+                ),
+                accuracy_int_to_calibration_status(
+                    Number(accuracy_data.rotation ?? 0),
+                ),
+            ]);
+        }
+
+        return accuracy_int_to_calibration_status(Number(raw_accuracy));
+    }
+
+    onMount(() => {
+        const interval = setInterval(async function () {
+            fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
+                .then((response) =>
+                    response
+                        .json()
+                        .then((json) => {
+                            let accuracies = json["accuracies"];
+                            for (let id in accuracies) {
+                                let id_num = Number(id);
+                                if (stream_position_mapping.has(id_num)) {
+                                    let position =
+                                        stream_position_mapping.get(id_num)!;
+                                    let status =
+                                        extract_display_status_for_stream(
+                                            accuracies[id],
+                                        );
+                                    calibration_statuses.set(position, status);
+                                }
                             }
-                        }
-                    })
-                    .catch((err) => console.error(err)),
-            )
-            .catch((err) => console.error(err));
-    }, 1000);
+                        })
+                        .catch((err) => console.error(err)),
+                )
+                .catch((err) => console.error(err));
+        }, 1000);
+
+        return () => clearInterval(interval);
+    });
+
+    async function start_calibration() {
+        if (start_in_progress) {
+            return;
+        }
+
+        start_in_progress = true;
+        start_error = "";
+        start_success_message = "";
+        try {
+            const response = await fetch(
+                `${PUBLIC_BACKEND_URL}/api/start_calibration`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-type": "application/json; charset=UTF-8",
+                    },
+                },
+            );
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const response_json = await response.json();
+            start_success_message =
+                response_json?.message ?? "Calibration started";
+            onStart();
+        } catch (err) {
+            console.error(err);
+            start_error = "Failed to start calibration";
+        } finally {
+            start_in_progress = false;
+        }
+    }
 
     $inspect(stream_position_mapping);
 </script>
@@ -328,8 +394,18 @@
     </div>
 
     <div class="start-button">
-        <Button>Start</Button>
+        <Button
+            onclick={start_calibration}
+            disabled={start_in_progress || stream_position_mapping.size === 0}
+            >{start_in_progress ? "Starting..." : "Start"}</Button
+        >
     </div>
+    {#if start_error}
+        <p class="start-status error">{start_error}</p>
+    {/if}
+    {#if start_success_message}
+        <p class="start-status success">{start_success_message}</p>
+    {/if}
 </div>
 
 <style>
@@ -385,6 +461,19 @@
     div.start-button {
         align-content: center;
         margin: 1em;
+    }
+
+    .start-status {
+        margin: 0.5em 1em 0;
+        font-size: 0.9em;
+    }
+
+    .start-status.error {
+        color: #c62828;
+    }
+
+    .start-status.success {
+        color: #2e7d32;
     }
 
     div.vertical-line {
