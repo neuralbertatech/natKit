@@ -7,3 +7,6 @@
 [submodule "libnatkit"]
 	path = libnatkit
 	url = https://github.com/neuralbertatech/libnatkit
+[submodule "natKit-IMU"]
+	path = natKit-IMU
+	url = https://github.com/neuralbertatech/natKit-IMU
