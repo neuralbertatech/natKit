@@ -17,7 +17,6 @@
     import { RefreshCw } from "lucide-svelte";
     import { setContext } from "svelte";
     import { SvelteMap } from "svelte/reactivity";
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
     let {
         swtichToCalibrationTab = () => {},
@@ -90,7 +89,7 @@
     async function get_streams() {
         searching_for_streams = true;
         console.log("Querying Streams");
-        fetch(`${PUBLIC_BACKEND_URL}/api/get_all_streams`, {
+        fetch(`/api/get_all_streams`, {
             mode: "cors",
             method: "GET",
         })
@@ -154,7 +153,7 @@
     }
 
     async function set_streams() {
-        fetch(`${PUBLIC_BACKEND_URL}/api/set_streams`, {
+        fetch(`/api/set_streams`, {
             //mode: "cors",
             method: "POST",
             body: JSON.stringify({
@@ -164,7 +163,7 @@
                 "Content-type": "application/json; charset=UTF-8",
             },
         }).then((_response) => {
-            fetch(`${PUBLIC_BACKEND_URL}/api/start_calibration`, {
+            fetch(`/api/start_calibration`, {
                 mode: "cors",
                 method: "POST",
             }).then((_inner_response) => {

@@ -8,9 +8,13 @@
         type SessionData,
         type MarkerType,
     } from "./types";
-    import { ADL_TASKS, REST_PERIOD_SECONDS, COUNTDOWN_SECONDS, formatDuration, calculateTotalDuration } from "./tasks";
-
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+    import {
+        ADL_TASKS,
+        REST_PERIOD_SECONDS,
+        COUNTDOWN_SECONDS,
+        formatDuration,
+        calculateTotalDuration,
+    } from "./tasks";
 
     let {
         stream_position_mapping,
@@ -21,9 +25,9 @@
     } = $props();
 
     // Experiment state
-    type ExperimentState = 'ready' | 'countdown' | 'task' | 'rest' | 'complete';
+    type ExperimentState = "ready" | "countdown" | "task" | "rest" | "complete";
 
-    let experimentState: ExperimentState = $state('ready');
+    let experimentState: ExperimentState = $state("ready");
     let currentTaskIndex = $state(0);
     let countdown = $state(COUNTDOWN_SECONDS);
     let taskTimeRemaining = $state(0);
@@ -34,16 +38,18 @@
 
     // Current task derived
     let currentTask = $derived(ADL_TASKS[currentTaskIndex]);
-    let progress = $derived(Math.round((currentTaskIndex / ADL_TASKS.length) * 100));
+    let progress = $derived(
+        Math.round((currentTaskIndex / ADL_TASKS.length) * 100),
+    );
     let totalDuration = $derived(calculateTotalDuration(ADL_TASKS));
 
     // Insert marker into the recording
-    async function insertMarker(markerType: MarkerType, taskId: string = '') {
+    async function insertMarker(markerType: MarkerType, taskId: string = "") {
         const timestamp = Date.now();
         try {
-            await fetch(`${PUBLIC_BACKEND_URL}/api/insert_marker`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            await fetch(`/api/insert_marker`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     marker_type: markerType,
                     task_id: taskId,
@@ -53,7 +59,7 @@
             });
             console.log(`Marker inserted: ${markerType} ${taskId}`);
         } catch (err) {
-            console.error('Failed to insert marker:', err);
+            console.error("Failed to insert marker:", err);
         }
     }
 
@@ -62,23 +68,24 @@
         // Build stream position mapping for the backend
         const mappingObj: Record<string, string> = {};
         stream_position_mapping.forEach((position, streamId) => {
-            mappingObj[streamId.toString()] = sensor_position_to_string(position);
+            mappingObj[streamId.toString()] =
+                sensor_position_to_string(position);
         });
 
         try {
-            const response = await fetch(`${PUBLIC_BACKEND_URL}/api/start_recording`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            const response = await fetch(`/api/start_recording`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     stream_position_mapping: mappingObj,
                 }),
             });
             const data = await response.json();
             sessionId = data.session_id;
-            console.log('Recording started:', sessionId);
+            console.log("Recording started:", sessionId);
             return true;
         } catch (err) {
-            console.error('Failed to start recording:', err);
+            console.error("Failed to start recording:", err);
             return false;
         }
     }
@@ -86,22 +93,22 @@
     // Stop the recording session
     async function stopRecording() {
         try {
-            await fetch(`${PUBLIC_BACKEND_URL}/api/stop_recording`, {
-                method: 'POST',
+            await fetch(`/api/stop_recording`, {
+                method: "POST",
             });
-            console.log('Recording stopped');
+            console.log("Recording stopped");
         } catch (err) {
-            console.error('Failed to stop recording:', err);
+            console.error("Failed to stop recording:", err);
         }
     }
 
     // Get session data for export
     async function getSessionData(): Promise<SessionData | null> {
         try {
-            const response = await fetch(`${PUBLIC_BACKEND_URL}/api/get_session_data`);
+            const response = await fetch(`/api/get_session_data`);
             return await response.json();
         } catch (err) {
-            console.error('Failed to get session data:', err);
+            console.error("Failed to get session data:", err);
             return null;
         }
     }
@@ -110,12 +117,12 @@
     async function startExperiment() {
         const success = await startRecording();
         if (!success) {
-            alert('Failed to start recording. Please try again.');
+            alert("Failed to start recording. Please try again.");
             return;
         }
 
-        await insertMarker('session_start');
-        experimentState = 'countdown';
+        await insertMarker("session_start");
+        experimentState = "countdown";
         countdown = COUNTDOWN_SECONDS;
         currentTaskIndex = 0;
         startTimer();
@@ -126,24 +133,24 @@
         if (isPaused) return;
 
         switch (experimentState) {
-            case 'countdown':
+            case "countdown":
                 countdown--;
                 if (countdown <= 0) {
                     // Start the task
-                    experimentState = 'task';
+                    experimentState = "task";
                     taskTimeRemaining = currentTask.duration_seconds;
-                    insertMarker('task_start', currentTask.id);
+                    insertMarker("task_start", currentTask.id);
                 }
                 break;
 
-            case 'task':
+            case "task":
                 taskTimeRemaining--;
                 if (taskTimeRemaining <= 0) {
-                    insertMarker('task_end', currentTask.id);
+                    insertMarker("task_end", currentTask.id);
 
                     if (currentTaskIndex < ADL_TASKS.length - 1) {
                         // Move to rest period
-                        experimentState = 'rest';
+                        experimentState = "rest";
                         restTimeRemaining = REST_PERIOD_SECONDS;
                     } else {
                         // Experiment complete
@@ -152,12 +159,12 @@
                 }
                 break;
 
-            case 'rest':
+            case "rest":
                 restTimeRemaining--;
                 if (restTimeRemaining <= 0) {
                     // Move to next task
                     currentTaskIndex++;
-                    experimentState = 'countdown';
+                    experimentState = "countdown";
                     countdown = COUNTDOWN_SECONDS;
                 }
                 break;
@@ -186,9 +193,9 @@
     // Finish the experiment
     async function finishExperiment() {
         stopTimer();
-        await insertMarker('session_end');
+        await insertMarker("session_end");
         await stopRecording();
-        experimentState = 'complete';
+        experimentState = "complete";
 
         const data = await getSessionData();
         if (data) {
@@ -203,12 +210,15 @@
 </script>
 
 <div class="task-runner">
-    {#if experimentState === 'ready'}
+    {#if experimentState === "ready"}
         <div class="ready-screen">
             <h2><b>Ready to Start ADL Experiment</b></h2>
             <div class="experiment-info">
                 <p><strong>Tasks:</strong> {ADL_TASKS.length}</p>
-                <p><strong>Estimated Duration:</strong> {formatDuration(totalDuration)}</p>
+                <p>
+                    <strong>Estimated Duration:</strong>
+                    {formatDuration(totalDuration)}
+                </p>
             </div>
             <div class="task-preview">
                 <h3>Tasks to Perform:</h3>
@@ -219,35 +229,46 @@
                 </ol>
             </div>
             <div class="start-section">
-                <p>When you click Start, the experiment will begin. Follow the on-screen instructions for each task.</p>
-                <Button size="lg" onclick={startExperiment}>Start Experiment</Button>
+                <p>
+                    When you click Start, the experiment will begin. Follow the
+                    on-screen instructions for each task.
+                </p>
+                <Button size="lg" onclick={startExperiment}
+                    >Start Experiment</Button
+                >
             </div>
         </div>
-    {:else if experimentState === 'countdown'}
+    {:else if experimentState === "countdown"}
         <div class="countdown-screen">
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {progress}%"></div>
             </div>
-            <p class="progress-text">Task {currentTaskIndex + 1} of {ADL_TASKS.length}</p>
+            <p class="progress-text">
+                Task {currentTaskIndex + 1} of {ADL_TASKS.length}
+            </p>
 
             <div class="countdown-display">
                 <p class="get-ready">Get Ready!</p>
-                <p class="next-task">Next: <strong>{currentTask.name}</strong></p>
+                <p class="next-task">
+                    Next: <strong>{currentTask.name}</strong>
+                </p>
                 <div class="countdown-number">{countdown}</div>
             </div>
 
             <div class="controls">
                 <Button variant="outline" onclick={togglePause}>
-                    {isPaused ? 'Resume' : 'Pause'}
+                    {isPaused ? "Resume" : "Pause"}
                 </Button>
             </div>
         </div>
-    {:else if experimentState === 'task'}
+    {:else if experimentState === "task"}
         <div class="task-screen">
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {progress}%"></div>
             </div>
-            <p class="progress-text">Task {currentTaskIndex + 1} of {ADL_TASKS.length}</p>
+            <p class="progress-text">
+                Task {currentTaskIndex + 1} of {ADL_TASKS.length}
+            </p>
 
             <div class="task-display">
                 <h2 class="task-name">{currentTask.name}</h2>
@@ -258,30 +279,36 @@
 
             <div class="controls">
                 <Button variant="outline" onclick={togglePause}>
-                    {isPaused ? 'Resume' : 'Pause'}
+                    {isPaused ? "Resume" : "Pause"}
                 </Button>
             </div>
         </div>
-    {:else if experimentState === 'rest'}
+    {:else if experimentState === "rest"}
         <div class="rest-screen">
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {progress}%"></div>
             </div>
-            <p class="progress-text">Task {currentTaskIndex + 1} of {ADL_TASKS.length} completed</p>
+            <p class="progress-text">
+                Task {currentTaskIndex + 1} of {ADL_TASKS.length} completed
+            </p>
 
             <div class="rest-display">
                 <p class="rest-message">Rest</p>
                 <div class="rest-timer">{restTimeRemaining}</div>
-                <p class="next-up">Next up: <strong>{ADL_TASKS[currentTaskIndex + 1]?.name}</strong></p>
+                <p class="next-up">
+                    Next up: <strong
+                        >{ADL_TASKS[currentTaskIndex + 1]?.name}</strong
+                    >
+                </p>
             </div>
 
             <div class="controls">
                 <Button variant="outline" onclick={togglePause}>
-                    {isPaused ? 'Resume' : 'Pause'}
+                    {isPaused ? "Resume" : "Pause"}
                 </Button>
             </div>
         </div>
-    {:else if experimentState === 'complete'}
+    {:else if experimentState === "complete"}
         <div class="complete-screen">
             <h2><b>Experiment Complete!</b></h2>
             <p>All {ADL_TASKS.length} tasks have been completed.</p>
@@ -289,7 +316,7 @@
         </div>
     {/if}
 
-    {#if isPaused && experimentState !== 'ready' && experimentState !== 'complete'}
+    {#if isPaused && experimentState !== "ready" && experimentState !== "complete"}
         <div class="pause-overlay">
             <div class="pause-message">
                 <h2>PAUSED</h2>
@@ -371,7 +398,7 @@
 
     .progress-fill {
         height: 100%;
-        background-color: #4CAF50;
+        background-color: #4caf50;
         transition: width 0.3s ease;
     }
 
@@ -405,7 +432,7 @@
     .countdown-number {
         font-size: 8em;
         font-weight: bold;
-        color: #2196F3;
+        color: #2196f3;
         line-height: 1;
     }
 
@@ -436,7 +463,7 @@
     .task-timer {
         font-size: 6em;
         font-weight: bold;
-        color: #4CAF50;
+        color: #4caf50;
         line-height: 1;
     }
 
@@ -483,7 +510,7 @@
     }
 
     .complete-screen h2 {
-        color: #4CAF50;
+        color: #4caf50;
         margin-bottom: 1em;
     }
 

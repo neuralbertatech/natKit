@@ -115,6 +115,17 @@ services:
     depends_on:
       - natkit-v0-kafka
 
+  natkit-v0-frontend:
+    image: natnl/natkit-frontend:latest
+    container_name: natkit-v0-frontend
+    restart: always
+    ports:
+      - "8080:80"
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-backend
+
 networks:
   natkit-v0-kafka-network:
     external: false
