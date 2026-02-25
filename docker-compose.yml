@@ -101,16 +101,19 @@ services:
       - natkit-v0-kafka
       - mosquitto
 
-  #natkit-v0-backend:
-  #  image: docker.io/natnl/natkit-backend:latest
-  #  container_name: natkit-v0-backend
-  #  restart: always
-  #  volumes:
-  #    - ./natkit-backend/log:/logs:Z
-  #  networks:
-  #    - natkit-v0-kafka-network
-  #  depends_on:
-  #    - natkit-v0-kafka
+  natkit-v0-backend:
+    image: docker.io/natnl/natkit-backend:latest
+    container_name: natkit-v0-backend
+    restart: always
+    environment:
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 9092
+    volumes:
+      - ./natkit-backend/log:/logs:Z
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-kafka
 
 networks:
   natkit-v0-kafka-network:
