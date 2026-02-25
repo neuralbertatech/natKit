@@ -6,7 +6,7 @@ import path from "path";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const backendTarget =
-    env.VITE_DEV_BACKEND_URL || env.VITE_BACKEND_URL || "http://localhost:7409";
+    env.VITE_DEV_BACKEND_URL || env.VITE_BACKEND_URL || "http://127.0.0.1:7409";
   const wsTarget = backendTarget.replace(/^http/, "ws");
 
   return {

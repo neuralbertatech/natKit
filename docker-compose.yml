@@ -108,6 +108,8 @@ services:
     environment:
       LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
       LIBNATKIT_KAFKA_BROKER_PORT: 9092
+    ports:
+      - "7409:7409"
     volumes:
       - ./natkit-backend/log:/logs:Z
     networks:
