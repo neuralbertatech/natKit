@@ -9,7 +9,6 @@
         sensor_position_to_string,
         parse_sensor_position_from_string,
     } from "./util";
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
     const brokerConnectionTab = "broker-connection";
     const streamSelectionTab = "stream-selection";
@@ -29,9 +28,9 @@
     let backendConnected = $state(false);
     let brokerConnected = $state(false);
     setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/heartbeat`)
+        fetch(`/api/heartbeat`)
             .then((response) => {
-                console.log("Backend connected")
+                console.log("Backend connected");
                 backendConnected = true;
             })
             .catch((err) => {
@@ -41,7 +40,7 @@
     }, 1000);
 
     setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/is_connected_to_broker`)
+        fetch(`/api/is_connected_to_broker`)
             .then((response) => (brokerConnected = true))
             .catch((err) => (brokerConnected = false));
     }, 1000);

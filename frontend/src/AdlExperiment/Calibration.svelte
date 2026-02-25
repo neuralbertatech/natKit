@@ -9,8 +9,6 @@
         REQUIRED_SENSOR_POSITIONS,
     } from "./types";
 
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
     let {
         stream_position_mapping,
         onReady = (ready: boolean) => {},
@@ -137,7 +135,7 @@
     // Poll for calibration status
     onMount(() => {
         const interval = setInterval(async function () {
-            fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
+            fetch(`/api/get_accuracies`)
                 .then((response) =>
                     response
                         .json()

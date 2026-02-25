@@ -13,8 +13,6 @@
         type ExperimentPhase,
     } from "./types";
 
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
     // Tab/phase constants
     const connectionTab = "connection";
     const streamSelectionTab = "stream-selection";
@@ -34,7 +32,7 @@
 
     // Connection status polling
     setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/heartbeat`)
+        fetch(`/api/heartbeat`)
             .then((response) => {
                 backendConnected = true;
             })
@@ -45,7 +43,7 @@
     }, 1000);
 
     setInterval(async function () {
-        fetch(`${PUBLIC_BACKEND_URL}/api/is_connected_to_broker`)
+        fetch(`/api/is_connected_to_broker`)
             .then((response) => (brokerConnected = true))
             .catch((err) => (brokerConnected = false));
     }, 1000);

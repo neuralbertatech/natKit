@@ -15,10 +15,11 @@
         ErrorMessage,
     } from "./types";
 
-    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-    const WS_URL =
-        BACKEND_URL.replace("http://", "ws://").replace("https://", "wss://") +
-        "/ws/stream_viewer";
+    function getWebSocketUrl(): string {
+        const wsProtocol =
+            window.location.protocol === "https:" ? "wss:" : "ws:";
+        return `${wsProtocol}//${window.location.host}/ws/stream_viewer`;
+    }
 
     // Connection state
     let connectionState = $state<ConnectionState>("disconnected");
@@ -44,7 +45,7 @@
     let wsManager: StreamViewerWebSocket | null = null;
 
     onMount(() => {
-        wsManager = new StreamViewerWebSocket(WS_URL, {
+        wsManager = new StreamViewerWebSocket(getWebSocketUrl(), {
             onConnectionChange: (state) => {
                 connectionState = state;
                 if (state === "connected") {

@@ -19,8 +19,6 @@
         type Topic,
     } from "./types";
 
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
     let {
         stream_position_mapping,
         onContinue = () => {},
@@ -45,7 +43,7 @@
     async function get_streams() {
         searching_for_streams = true;
         console.log("Querying Streams");
-        fetch(`${PUBLIC_BACKEND_URL}/api/get_all_streams`, {
+        fetch(`/api/get_all_streams`, {
             mode: "cors",
             method: "GET",
         })
@@ -109,7 +107,7 @@
 
     async function submitStreams() {
         // Send selected streams to backend
-        fetch(`${PUBLIC_BACKEND_URL}/api/set_streams`, {
+        fetch(`/api/set_streams`, {
             method: "POST",
             body: JSON.stringify({
                 stream_ids: get_stream_ids(),
@@ -118,7 +116,7 @@
                 "Content-type": "application/json; charset=UTF-8",
             },
         }).then((_response) => {
-            fetch(`${PUBLIC_BACKEND_URL}/api/start_calibration`, {
+            fetch(`/api/start_calibration`, {
                 mode: "cors",
                 method: "POST",
             }).then((_inner_response) => {

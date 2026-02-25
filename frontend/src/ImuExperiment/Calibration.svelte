@@ -3,7 +3,6 @@
     import { onMount } from "svelte";
     import { SvelteMap } from "svelte/reactivity";
     import { SensorPosition, CalibrationStatus } from "./util";
-    const PUBLIC_BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
     let {
         stream_position_mapping,
@@ -106,7 +105,7 @@
 
     onMount(() => {
         const interval = setInterval(async function () {
-            fetch(`${PUBLIC_BACKEND_URL}/api/get_accuracies`)
+            fetch(`/api/get_accuracies`)
                 .then((response) =>
                     response
                         .json()
@@ -142,15 +141,12 @@
         start_error = "";
         start_success_message = "";
         try {
-            const response = await fetch(
-                `${PUBLIC_BACKEND_URL}/api/start_calibration`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-type": "application/json; charset=UTF-8",
-                    },
+            const response = await fetch(`/api/start_calibration`, {
+                method: "POST",
+                headers: {
+                    "Content-type": "application/json; charset=UTF-8",
                 },
-            );
+            });
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
