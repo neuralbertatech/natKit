@@ -8,7 +8,6 @@
     import DataExport from "./DataExport.svelte";
     import {
         SensorPosition,
-        REQUIRED_SENSOR_POSITIONS,
         type SessionData,
         type ExperimentPhase,
     } from "./types";
@@ -56,6 +55,10 @@
     }
 
     function switchToCalibration() {
+        if (stream_position_mapping.size === 0) {
+            currentTab = streamSelectionTab;
+            return;
+        }
         if (currentTab !== calibrationTab) {
             currentTab = calibrationTab;
         }
@@ -98,15 +101,13 @@
                         <Tabs.Trigger value={streamSelectionTab}>
                             Stream Selection
                         </Tabs.Trigger>
-                        {#if stream_position_mapping.size === REQUIRED_SENSOR_POSITIONS.length}
+                        {#if stream_position_mapping.size > 0}
                             <Tabs.Trigger value={calibrationTab}>
                                 Calibration
                             </Tabs.Trigger>
-                            {#if calibrationReady}
-                                <Tabs.Trigger value={experimentTab}>
-                                    Experiment
-                                </Tabs.Trigger>
-                            {/if}
+                            <Tabs.Trigger value={experimentTab}>
+                                Experiment
+                            </Tabs.Trigger>
                         {/if}
                         {#if sessionData !== null}
                             <Tabs.Trigger value={exportTab}>
@@ -132,7 +133,7 @@
                         />
                     </Tabs.Content>
 
-                    {#if stream_position_mapping.size === REQUIRED_SENSOR_POSITIONS.length}
+                    {#if stream_position_mapping.size > 0}
                         <Tabs.Content value={calibrationTab}>
                             <Calibration
                                 {stream_position_mapping}
@@ -141,14 +142,12 @@
                             />
                         </Tabs.Content>
 
-                        {#if calibrationReady}
-                            <Tabs.Content value={experimentTab}>
-                                <TaskRunner
-                                    {stream_position_mapping}
-                                    onComplete={switchToExport}
-                                />
-                            </Tabs.Content>
-                        {/if}
+                        <Tabs.Content value={experimentTab}>
+                            <TaskRunner
+                                {stream_position_mapping}
+                                onComplete={switchToExport}
+                            />
+                        </Tabs.Content>
                     {/if}
 
                     {#if sessionData !== null}

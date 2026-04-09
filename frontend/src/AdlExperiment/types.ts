@@ -51,6 +51,12 @@ export interface ImuSample {
   timestamp: number;
   stream_id: number;
   sensor_position: string;
+  calibration_status_accelerometer: number;
+  calibration_status_gyroscope: number;
+  calibration_status_rotation: number;
+  has_data_accelerometer: boolean;
+  has_data_gyroscope: boolean;
+  has_data_rotation: boolean;
   quat_i: number;
   quat_j: number;
   quat_k: number;
@@ -180,7 +186,7 @@ export const ALL_SENSOR_POSITIONS: SensorPosition[] = [
 export const TEST_SENSOR_POSITIONS: SensorPosition[] = [SensorPosition.Trunk];
 
 // Set to true to enable test mode with reduced sensor requirements
-export const TEST_MODE = true;
+export const TEST_MODE = false;
 
 // Required sensor positions - uses test subset or full set based on TEST_MODE
 export const REQUIRED_SENSOR_POSITIONS: SensorPosition[] = TEST_MODE

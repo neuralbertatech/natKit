@@ -42,6 +42,12 @@
         ),
     );
 
+    let selected_positions = $derived(
+        REQUIRED_SENSOR_POSITIONS.filter((requiredPos) =>
+            Array.from(stream_position_mapping.values()).includes(requiredPos),
+        ),
+    );
+
     function calibration_status_to_color(
         status: CalibrationStatus | undefined,
     ): string {
@@ -114,22 +120,41 @@
         return { ...defaultAccuracies };
     }
 
-    // Get the maximum (best) calibration status for overall display.
-    // This matches "ready" logic below (any component reaches High).
-    function getBestCalibrationStatus(
+    function calibrationStatusSeverity(status: CalibrationStatus): number {
+        switch (status) {
+            case CalibrationStatus.Unknown:
+                return 0;
+            case CalibrationStatus.Unreliable:
+                return 1;
+            case CalibrationStatus.Low:
+                return 2;
+            case CalibrationStatus.Medium:
+                return 3;
+            case CalibrationStatus.High:
+                return 4;
+        }
+    }
+
+    // Get the worst calibration status for overall display.
+    // Explicit severity mapping avoids relying on enum numeric ordering.
+    function getOverallCalibrationStatus(
         accuracies: SensorAccuracies,
     ): CalibrationStatus {
-        const values = [
+        const values: CalibrationStatus[] = [
             accuracies.accelerometer,
             accuracies.gyroscope,
             accuracies.rotation,
         ];
-        // Filter out Unknown values for best-value calculation
-        const knownValues = values.filter(
-            (v) => v !== CalibrationStatus.Unknown,
-        );
-        if (knownValues.length === 0) return CalibrationStatus.Unknown;
-        return Math.max(...knownValues) as CalibrationStatus;
+        let worst = values[0];
+        for (const value of values.slice(1)) {
+            if (
+                calibrationStatusSeverity(value) <
+                calibrationStatusSeverity(worst)
+            ) {
+                worst = value;
+            }
+        }
+        return worst;
     }
 
     // Poll for calibration status
@@ -164,17 +189,14 @@
         return () => clearInterval(interval);
     });
 
-    // Check if all sensors have at least one component with high calibration
+    // Check if all selected sensors are fully high-calibrated.
     let all_calibrated = $derived(
-        REQUIRED_SENSOR_POSITIONS.every((pos) => {
-            const accuracies = calibration_statuses.get(pos);
-            if (!accuracies) return false;
-            return (
-                accuracies.accelerometer === CalibrationStatus.High ||
-                accuracies.gyroscope === CalibrationStatus.High ||
-                accuracies.rotation === CalibrationStatus.High
-            );
-        }),
+        selected_positions.length > 0 &&
+            selected_positions.every((pos) => {
+                return (
+                    getOverallStatusForPosition(pos) === CalibrationStatus.High
+                );
+            }),
     );
 
     // Notify parent when calibration status changes
@@ -186,21 +208,21 @@
         return calibration_statuses.get(pos) ?? { ...defaultAccuracies };
     }
 
-    // Get the overall (best) status for dot display on body diagram
+    // Get the overall (worst) status for dot display on body diagram
     function getOverallStatusForPosition(
         pos: SensorPosition,
     ): CalibrationStatus {
         const accuracies = calibration_statuses.get(pos);
         if (!accuracies) return CalibrationStatus.Unknown;
-        return getBestCalibrationStatus(accuracies);
+        return getOverallCalibrationStatus(accuracies);
     }
 </script>
 
 <div class="calibration">
     <h2><b>Sensor Calibration</b></h2>
     <p class="instructions">
-        Move each sensor in a figure-8 pattern until all indicators turn green
-        (High calibration).
+        Rotate each sensor and place it flat on each of its 6 faces for about 1
+        second per face.
     </p>
 
     <div class="body-diagram">
@@ -464,11 +486,8 @@
         <h3>Sensor Status:</h3>
         {#each REQUIRED_SENSOR_POSITIONS as pos}
             {@const accuracies = getAccuraciesForPosition(pos)}
-            {@const overallStatus = getOverallStatusForPosition(pos)}
-            {@const allHigh =
-                accuracies.accelerometer === CalibrationStatus.High &&
-                accuracies.gyroscope === CalibrationStatus.High &&
-                accuracies.rotation === CalibrationStatus.High}
+            {@const overallStatus = getOverallCalibrationStatus(accuracies)}
+            {@const allHigh = overallStatus === CalibrationStatus.High}
             <div class="status-row">
                 <span
                     class="dot small"
@@ -513,16 +532,24 @@
     </div>
 
     <div class="start-button">
-        {#if all_calibrated}
+        {#if selected_positions.length === 0}
+            <p class="waiting-message">
+                Select at least one sensor position to continue.
+            </p>
+        {:else if all_calibrated}
             <p class="ready-message">
-                All sensors calibrated! You can start the experiment.
+                All selected sensors calibrated! You can start the experiment.
             </p>
         {:else}
             <p class="waiting-message">
-                Waiting for all sensors to reach high calibration...
+                Warning: not all selected sensors are at high calibration. You
+                can still continue, but data quality may be reduced.
             </p>
         {/if}
-        <Button disabled={!all_calibrated} onclick={onStartExperiment}>
+        <Button
+            disabled={selected_positions.length === 0}
+            onclick={onStartExperiment}
+        >
             Start Experiment
         </Button>
     </div>

@@ -15,55 +15,80 @@
     // Calculate session duration
     let sessionDuration = $derived(() => {
         if (!sessionData || sessionData.markers.length < 2) return 0;
-        const startMarker = sessionData.markers.find(m => m.marker_type === 'session_start');
-        const endMarker = sessionData.markers.find(m => m.marker_type === 'session_end');
+        const startMarker = sessionData.markers.find(
+            (m) => m.marker_type === "session_start",
+        );
+        const endMarker = sessionData.markers.find(
+            (m) => m.marker_type === "session_end",
+        );
         if (startMarker && endMarker) {
-            return Math.round((endMarker.timestamp - startMarker.timestamp) / 1000);
+            return Math.round(
+                (endMarker.timestamp - startMarker.timestamp) / 1000,
+            );
         }
         return 0;
     });
 
     // Count task markers
     let taskCount = $derived(
-        sessionData.markers.filter(m => m.marker_type === 'task_start').length
+        sessionData.markers.filter((m) => m.marker_type === "task_start")
+            .length,
     );
 
     // Generate CSV content
     function generateCSV(): string {
         const headers = [
-            'timestamp',
-            'sensor_position',
-            'quat_i',
-            'quat_j',
-            'quat_k',
-            'quat_real',
-            'accel_x',
-            'accel_y',
-            'accel_z',
-            'gyro_x',
-            'gyro_y',
-            'gyro_z',
-            'gravity_x',
-            'gravity_y',
-            'gravity_z',
-            'marker_type',
-            'task_id'
+            "timestamp",
+            "sensor_position",
+            "calibration_status_accelerometer",
+            "calibration_status_gyroscope",
+            "calibration_status_rotation",
+            "has_data_accelerometer",
+            "has_data_gyroscope",
+            "has_data_rotation",
+            "quat_i",
+            "quat_j",
+            "quat_k",
+            "quat_real",
+            "accel_x",
+            "accel_y",
+            "accel_z",
+            "gyro_x",
+            "gyro_y",
+            "gyro_z",
+            "gravity_x",
+            "gravity_y",
+            "gravity_z",
+            "marker_type",
+            "task_id",
         ];
 
-        const rows: string[] = [headers.join(',')];
+        const rows: string[] = [headers.join(",")];
 
         // Combine samples and markers, sort by timestamp
-        type DataRow = { timestamp: number; type: 'sample' | 'marker'; data: ImuSample | Marker };
+        type DataRow = {
+            timestamp: number;
+            type: "sample" | "marker";
+            data: ImuSample | Marker;
+        };
         const allData: DataRow[] = [];
 
         // Add samples
         for (const sample of sessionData.samples) {
-            allData.push({ timestamp: sample.timestamp, type: 'sample', data: sample });
+            allData.push({
+                timestamp: sample.timestamp,
+                type: "sample",
+                data: sample,
+            });
         }
 
         // Add markers
         for (const marker of sessionData.markers) {
-            allData.push({ timestamp: marker.timestamp, type: 'marker', data: marker });
+            allData.push({
+                timestamp: marker.timestamp,
+                type: "marker",
+                data: marker,
+            });
         }
 
         // Sort by timestamp
@@ -71,51 +96,63 @@
 
         // Generate rows
         for (const item of allData) {
-            if (item.type === 'sample') {
+            if (item.type === "sample") {
                 const s = item.data as ImuSample;
-                rows.push([
-                    s.timestamp.toString(),
-                    s.sensor_position,
-                    s.quat_i.toString(),
-                    s.quat_j.toString(),
-                    s.quat_k.toString(),
-                    s.quat_real.toString(),
-                    s.accel_x.toString(),
-                    s.accel_y.toString(),
-                    s.accel_z.toString(),
-                    s.gyro_x.toString(),
-                    s.gyro_y.toString(),
-                    s.gyro_z.toString(),
-                    s.gravity_x.toString(),
-                    s.gravity_y.toString(),
-                    s.gravity_z.toString(),
-                    '',
-                    ''
-                ].join(','));
+                rows.push(
+                    [
+                        s.timestamp.toString(),
+                        s.sensor_position,
+                        s.calibration_status_accelerometer.toString(),
+                        s.calibration_status_gyroscope.toString(),
+                        s.calibration_status_rotation.toString(),
+                        s.has_data_accelerometer ? "1" : "0",
+                        s.has_data_gyroscope ? "1" : "0",
+                        s.has_data_rotation ? "1" : "0",
+                        s.quat_i.toString(),
+                        s.quat_j.toString(),
+                        s.quat_k.toString(),
+                        s.quat_real.toString(),
+                        s.accel_x.toString(),
+                        s.accel_y.toString(),
+                        s.accel_z.toString(),
+                        s.gyro_x.toString(),
+                        s.gyro_y.toString(),
+                        s.gyro_z.toString(),
+                        s.gravity_x.toString(),
+                        s.gravity_y.toString(),
+                        s.gravity_z.toString(),
+                        "",
+                        "",
+                    ].join(","),
+                );
             } else {
                 const m = item.data as Marker;
-                rows.push([
+                const markerRowPrefix = [
                     m.timestamp.toString(),
-                    '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-                    m.marker_type,
-                    m.task_id
-                ].join(','));
+                    ...Array(headers.length - 3).fill(""),
+                ];
+                rows.push(
+                    [...markerRowPrefix, m.marker_type, m.task_id].join(","),
+                );
             }
         }
 
-        return rows.join('\n');
+        return rows.join("\n");
     }
 
     // Download CSV file
     function downloadCSV() {
         const csv = generateCSV();
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const timestamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .slice(0, 19);
         const filename = `adl_experiment_${sessionData.session_id.slice(0, 8)}_${timestamp}.csv`;
 
-        const link = document.createElement('a');
+        const link = document.createElement("a");
         link.href = url;
         link.download = filename;
         document.body.appendChild(link);
@@ -126,25 +163,30 @@
 
     // Download markers only (for quick reference)
     function downloadMarkers() {
-        const headers = ['timestamp', 'marker_type', 'task_id'];
-        const rows: string[] = [headers.join(',')];
+        const headers = ["timestamp", "marker_type", "task_id"];
+        const rows: string[] = [headers.join(",")];
 
         for (const marker of sessionData.markers) {
-            rows.push([
-                marker.timestamp.toString(),
-                marker.marker_type,
-                marker.task_id
-            ].join(','));
+            rows.push(
+                [
+                    marker.timestamp.toString(),
+                    marker.marker_type,
+                    marker.task_id,
+                ].join(","),
+            );
         }
 
-        const csv = rows.join('\n');
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const csv = rows.join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
 
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const timestamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .slice(0, 19);
         const filename = `adl_markers_${sessionData.session_id.slice(0, 8)}_${timestamp}.csv`;
 
-        const link = document.createElement('a');
+        const link = document.createElement("a");
         link.href = url;
         link.download = filename;
         document.body.appendChild(link);
@@ -162,7 +204,9 @@
         <div class="summary-grid">
             <div class="summary-item">
                 <span class="label">Session ID</span>
-                <span class="value">{sessionData.session_id.slice(0, 8)}...</span>
+                <span class="value"
+                    >{sessionData.session_id.slice(0, 8)}...</span
+                >
             </div>
             <div class="summary-item">
                 <span class="label">Duration</span>
@@ -178,7 +222,9 @@
             </div>
             <div class="summary-item">
                 <span class="label">IMU Samples</span>
-                <span class="value">{sessionData.sample_count.toLocaleString()}</span>
+                <span class="value"
+                    >{sessionData.sample_count.toLocaleString()}</span
+                >
             </div>
         </div>
     </div>
@@ -187,8 +233,15 @@
         <h3>Marker Events</h3>
         <div class="marker-list">
             {#each sessionData.markers as marker}
-                <div class="marker-item" class:session={marker.marker_type.includes('session')} class:task-start={marker.marker_type === 'task_start'} class:task-end={marker.marker_type === 'task_end'}>
-                    <span class="marker-time">{new Date(marker.timestamp).toLocaleTimeString()}</span>
+                <div
+                    class="marker-item"
+                    class:session={marker.marker_type.includes("session")}
+                    class:task-start={marker.marker_type === "task_start"}
+                    class:task-end={marker.marker_type === "task_end"}
+                >
+                    <span class="marker-time"
+                        >{new Date(marker.timestamp).toLocaleTimeString()}</span
+                    >
                     <span class="marker-type">{marker.marker_type}</span>
                     {#if marker.task_id}
                         <span class="marker-task">{marker.task_id}</span>
@@ -211,7 +264,8 @@
             </Button>
         </div>
         <p class="export-note">
-            The full CSV contains all IMU data samples and markers sorted by timestamp.
+            The full CSV contains all IMU data samples and markers sorted by
+            timestamp.
         </p>
     </div>
 
@@ -230,7 +284,7 @@
 
     h2 {
         text-align: center;
-        color: #4CAF50;
+        color: #4caf50;
         margin-bottom: 1.5em;
     }
 
@@ -299,7 +353,7 @@
     }
 
     .marker-item.task-start {
-        border-left-color: #4CAF50;
+        border-left-color: #4caf50;
         background-color: #e8f5e9;
     }
 
