@@ -13,7 +13,6 @@
     import {
         SensorPosition,
         sensor_position_to_string,
-        parse_sensor_position_from_string,
         REQUIRED_SENSOR_POSITIONS,
         type Stream,
         type Topic,
@@ -32,6 +31,8 @@
         value: pos,
         label: sensor_position_to_string(pos),
     }));
+    const STREAM_SELECTION_CACHE_KEY =
+        "adl_experiment.stream_position_mapping.v1";
 
     // State
     let streams: Stream[] = $state([]);
@@ -39,6 +40,127 @@
     let dropdown_open: boolean[] = $state([]);
     let dropdown_values: SensorPosition[] = $state([]);
     let searching_for_streams: boolean = $state(false);
+
+    function isRequiredSensorPosition(value: number): value is SensorPosition {
+        return REQUIRED_SENSOR_POSITIONS.includes(value as SensorPosition);
+    }
+
+    function loadCachedStreamSelection(): Map<number, SensorPosition> {
+        if (typeof window === "undefined") {
+            return new Map();
+        }
+
+        const raw = window.localStorage.getItem(STREAM_SELECTION_CACHE_KEY);
+        if (raw === null) {
+            return new Map();
+        }
+
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (
+                parsed === null ||
+                typeof parsed !== "object" ||
+                Array.isArray(parsed)
+            ) {
+                return new Map();
+            }
+
+            const restored = new Map<number, SensorPosition>();
+            for (const [streamIdKey, positionValue] of Object.entries(
+                parsed as Record<string, unknown>,
+            )) {
+                const streamId = Number(streamIdKey);
+                const position = Number(positionValue);
+                if (
+                    !Number.isInteger(streamId) ||
+                    !Number.isInteger(position)
+                ) {
+                    continue;
+                }
+                if (!isRequiredSensorPosition(position)) {
+                    continue;
+                }
+                restored.set(streamId, position);
+            }
+            return restored;
+        } catch (err) {
+            console.error("Failed to parse cached stream mapping", err);
+            return new Map();
+        }
+    }
+
+    function persistCurrentStreamSelection() {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        const cachedSelection = loadCachedStreamSelection();
+        for (let i = 0; i < streams.length; ++i) {
+            cachedSelection.delete(streams[i].id);
+        }
+        for (let i = 0; i < streams.length; ++i) {
+            const position = dropdown_values[i];
+            if (position !== SensorPosition.None) {
+                cachedSelection.set(streams[i].id, position);
+            }
+        }
+
+        const serializedSelection: Record<string, SensorPosition> = {};
+        for (const [streamId, position] of cachedSelection.entries()) {
+            serializedSelection[String(streamId)] = position;
+        }
+
+        window.localStorage.setItem(
+            STREAM_SELECTION_CACHE_KEY,
+            JSON.stringify(serializedSelection),
+        );
+    }
+
+    function getRestoredSelectionMapping(): Map<number, SensorPosition> {
+        const restored = new Map<number, SensorPosition>();
+
+        for (const [streamId, position] of stream_position_mapping.entries()) {
+            if (isRequiredSensorPosition(position)) {
+                restored.set(streamId, position);
+            }
+        }
+
+        for (const [streamId, position] of loadCachedStreamSelection()) {
+            restored.set(streamId, position);
+        }
+
+        return restored;
+    }
+
+    function initializeSelectionState(nextStreams: Stream[]) {
+        const restoredSelection = getRestoredSelectionMapping();
+        const nextDropdownEnabled = new Array(nextStreams.length).fill(false);
+        const nextDropdownOpen = new Array(nextStreams.length).fill(false);
+        const nextDropdownValues = new Array(nextStreams.length).fill(
+            SensorPosition.None,
+        ) as SensorPosition[];
+        const usedPositions = new Set<SensorPosition>();
+
+        for (let i = 0; i < nextStreams.length; ++i) {
+            const streamId = nextStreams[i].id;
+            const restoredPosition = restoredSelection.get(streamId);
+            if (
+                restoredPosition === undefined ||
+                usedPositions.has(restoredPosition)
+            ) {
+                continue;
+            }
+
+            nextDropdownEnabled[i] = true;
+            nextDropdownValues[i] = restoredPosition;
+            usedPositions.add(restoredPosition);
+        }
+
+        dropdown_enabled = nextDropdownEnabled;
+        dropdown_open = nextDropdownOpen;
+        dropdown_values = nextDropdownValues;
+        persistCurrentStreamSelection();
+    }
 
     async function get_streams() {
         searching_for_streams = true;
@@ -51,7 +173,7 @@
                 response
                     .json()
                     .then((json) => {
-                        streams = [];
+                        const nextStreams: Stream[] = [];
                         for (var id in json) {
                             var value = json[id];
                             var topics_json = value["topics"];
@@ -65,21 +187,14 @@
                                         topic["serialization_type"],
                                 });
                             }
-                            streams.push({
+                            nextStreams.push({
                                 id: Number(id),
                                 name: value["name"] || "Raw Stream",
                                 topics: topics,
                             });
                         }
-                        dropdown_enabled = [
-                            ...Array(streams.length).keys(),
-                        ].map((_) => false);
-                        dropdown_open = [...Array(streams.length).keys()].map(
-                            (_) => false,
-                        );
-                        dropdown_values = [...Array(streams.length).keys()].map(
-                            (_) => SensorPosition.None,
-                        );
+                        streams = nextStreams;
+                        initializeSelectionState(nextStreams);
                         searching_for_streams = false;
                     })
                     .catch((err) => {
@@ -153,6 +268,7 @@
             dropdown_enabled[index] = false;
             dropdown_open[index] = false;
             dropdown_values[index] = SensorPosition.None;
+            persistCurrentStreamSelection();
         }
     }
 
@@ -256,13 +372,10 @@
                                             {#each sensor_positions.filter((position) => !dropdown_values.some((val) => val === position.value)) as position}
                                                 <Command.Item
                                                     value={position.label}
-                                                    onSelect={(
-                                                        currentValue: string,
-                                                    ) => {
+                                                    onSelect={() => {
                                                         dropdown_values[index] =
-                                                            parse_sensor_position_from_string(
-                                                                currentValue,
-                                                            );
+                                                            position.value;
+                                                        persistCurrentStreamSelection();
                                                         closeAndFocusTrigger(
                                                             ids.trigger,
                                                             index,
@@ -305,13 +418,11 @@
         <div class="submit-section">
             {#if !all_positions_assigned}
                 <p class="warning">
-                    Please assign all {REQUIRED_SENSOR_POSITIONS.length} sensor positions
-                    before continuing.
+                    Fewer than {REQUIRED_SENSOR_POSITIONS.length} sensor positions
+                    are assigned. You can continue, but data quality may be reduced.
                 </p>
             {/if}
-            <Button disabled={!all_positions_assigned} onclick={submitStreams}>
-                Continue to Calibration
-            </Button>
+            <Button onclick={submitStreams}>Continue to Calibration</Button>
         </div>
     {/if}
 </div>

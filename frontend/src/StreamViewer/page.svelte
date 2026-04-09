@@ -33,8 +33,12 @@
 
     // Buffered samples per stream (circular buffer, max 100 samples)
     const MAX_BUFFER_SIZE = 100;
+    const SENSOR_UNREACHABLE_TIMEOUT_MS = 3000;
+    const STATUS_REFRESH_INTERVAL_MS = 500;
     let imuBuffers = $state<Map<number, ImuSample[]>>(new Map());
     let museBuffers = $state<Map<number, MuseSample[]>>(new Map());
+    let lastReceivedAt = $state<Map<number, number>>(new Map());
+    let nowMs = $state(Date.now());
 
     // Track stream types by stream ID
     let streamTypes = $state<Map<number, "imu" | "muse">>(new Map());
@@ -43,8 +47,13 @@
     let expandedStreams = $state<Set<number>>(new Set());
 
     let wsManager: StreamViewerWebSocket | null = null;
+    let stalenessTimer: ReturnType<typeof setInterval> | null = null;
 
     onMount(() => {
+        stalenessTimer = setInterval(() => {
+            nowMs = Date.now();
+        }, STATUS_REFRESH_INTERVAL_MS);
+
         wsManager = new StreamViewerWebSocket(getWebSocketUrl(), {
             onConnectionChange: (state) => {
                 connectionState = state;
@@ -97,8 +106,17 @@
     });
 
     onDestroy(() => {
+        if (stalenessTimer !== null) {
+            clearInterval(stalenessTimer);
+        }
         wsManager?.disconnect();
     });
+
+    function markStreamDataReceived(streamId: number) {
+        const nextMap = new Map(lastReceivedAt);
+        nextMap.set(streamId, Date.now());
+        lastReceivedAt = nextMap;
+    }
 
     function addImuSampleToBuffer(streamId: number, sample: ImuSample) {
         // Track stream type
@@ -116,6 +134,7 @@
         const newMap = new Map(imuBuffers);
         newMap.set(streamId, newBuffer);
         imuBuffers = newMap;
+        markStreamDataReceived(streamId);
     }
 
     function addMuseSampleToBuffer(streamId: number, sample: MuseSample) {
@@ -134,6 +153,7 @@
         const newMap = new Map(museBuffers);
         newMap.set(streamId, newBuffer);
         museBuffers = newMap;
+        markStreamDataReceived(streamId);
     }
 
     function toggleStreamSubscription(streamId: number) {
@@ -146,6 +166,8 @@
             museBuffers = new Map(museBuffers);
             streamTypes.delete(streamId);
             streamTypes = new Map(streamTypes);
+            lastReceivedAt.delete(streamId);
+            lastReceivedAt = new Map(lastReceivedAt);
         } else {
             wsManager?.subscribe([streamId]);
         }
@@ -203,6 +225,30 @@
             case "disconnected":
                 return "status-disconnected";
         }
+    }
+
+    function isStreamUnreachable(streamId: number): boolean {
+        const streamLastSeen = lastReceivedAt.get(streamId);
+        return (
+            streamLastSeen !== undefined &&
+            nowMs - streamLastSeen >= SENSOR_UNREACHABLE_TIMEOUT_MS
+        );
+    }
+
+    function getStreamStatusClass(streamId: number, hasData: boolean): string {
+        if (!hasData) {
+            return "stream-status-nodata";
+        }
+        return isStreamUnreachable(streamId)
+            ? "stream-status-unreachable"
+            : "stream-status-live";
+    }
+
+    function getStreamStatusLabel(streamId: number, hasData: boolean): string {
+        if (!hasData) {
+            return "No Data";
+        }
+        return isStreamUnreachable(streamId) ? "Unreachable" : "Live";
     }
 
     function refreshStreams() {
@@ -298,8 +344,16 @@
                             streamType === "muse"
                                 ? museBuffer.length
                                 : imuBuffer.length}
+                        {@const hasData =
+                            latestImuSample !== undefined ||
+                            latestMuseSample !== undefined}
+                        {@const isUnreachable = isStreamUnreachable(streamId)}
 
-                        <div class="stream-data-card">
+                        <div
+                            class="stream-data-card {isUnreachable
+                                ? 'stream-data-card-unreachable'
+                                : ''}"
+                        >
                             <button
                                 class="card-header"
                                 onclick={() => toggleStreamExpanded(streamId)}
@@ -316,6 +370,16 @@
                                           ? "IMU"
                                           : "..."}</span
                                 >
+                                <span
+                                    class="stream-status-badge {getStreamStatusClass(
+                                        streamId,
+                                        hasData,
+                                    )}"
+                                    >{getStreamStatusLabel(
+                                        streamId,
+                                        hasData,
+                                    )}</span
+                                >
                                 <span class="buffer-info"
                                     >{bufferSize} samples buffered</span
                                 >
@@ -328,6 +392,14 @@
                                 {#if streamType === "muse"}
                                     {#if latestMuseSample}
                                         <div class="card-content">
+                                            {#if isUnreachable}
+                                                <p
+                                                    class="sensor-unreachable-note"
+                                                >
+                                                    Sensor may be unreachable:
+                                                    no data received for 3s+
+                                                </p>
+                                            {/if}
                                             <MuseViewer
                                                 sample={latestMuseSample}
                                                 {formatNumber}
@@ -343,6 +415,14 @@
                                 {:else if streamType === "imu"}
                                     {#if latestImuSample}
                                         <div class="card-content">
+                                            {#if isUnreachable}
+                                                <p
+                                                    class="sensor-unreachable-note"
+                                                >
+                                                    Sensor may be unreachable:
+                                                    no data received for 3s+
+                                                </p>
+                                            {/if}
                                             <!-- Accelerometer -->
                                             <div class="sensor-section">
                                                 <h4>
@@ -682,11 +762,16 @@
         overflow: hidden;
     }
 
+    .stream-data-card-unreachable {
+        border: 1px solid #f5c6cb;
+    }
+
     .card-header {
         width: 100%;
         display: flex;
-        justify-content: space-between;
+        justify-content: flex-start;
         align-items: center;
+        gap: 0.75rem;
         padding: 1rem;
         background: #f8f9fa;
         border: none;
@@ -701,6 +786,7 @@
     .stream-title {
         font-weight: 600;
         color: #1a1a2e;
+        margin-right: auto;
     }
 
     .stream-type-badge {
@@ -722,6 +808,29 @@
     }
 
     .stream-type-badge.unknown {
+        background: #f5f5f5;
+        color: #666;
+    }
+
+    .stream-status-badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+    }
+
+    .stream-status-live {
+        background: #d4edda;
+        color: #155724;
+    }
+
+    .stream-status-unreachable {
+        background: #f8d7da;
+        color: #721c24;
+    }
+
+    .stream-status-nodata {
         background: #f5f5f5;
         color: #666;
     }
@@ -817,5 +926,14 @@
     .waiting {
         color: #666;
         font-style: italic;
+    }
+
+    .sensor-unreachable-note {
+        margin: 0 0 0.75rem 0;
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        background: #fff3cd;
+        color: #856404;
+        font-size: 0.85rem;
     }
 </style>

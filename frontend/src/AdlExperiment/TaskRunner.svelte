@@ -6,6 +6,7 @@
         SensorPosition,
         sensor_position_to_string,
         type SessionData,
+        type ImuSample,
         type MarkerType,
     } from "./types";
     import {
@@ -106,7 +107,56 @@
     async function getSessionData(): Promise<SessionData | null> {
         try {
             const response = await fetch(`/api/get_session_data`);
-            return await response.json();
+            const data = await response.json();
+            if (!data || !Array.isArray(data.samples)) {
+                return data as SessionData;
+            }
+
+            const normalizedSamples: ImuSample[] = data.samples.map(
+                (sample: Partial<ImuSample>) => ({
+                    timestamp: Number(sample.timestamp ?? 0),
+                    stream_id: Number(sample.stream_id ?? 0),
+                    sensor_position: String(
+                        sample.sensor_position ?? "Unknown",
+                    ),
+                    calibration_status_accelerometer: Number(
+                        sample.calibration_status_accelerometer ?? 0,
+                    ),
+                    calibration_status_gyroscope: Number(
+                        sample.calibration_status_gyroscope ?? 0,
+                    ),
+                    calibration_status_rotation: Number(
+                        sample.calibration_status_rotation ?? 0,
+                    ),
+                    has_data_accelerometer: Boolean(
+                        sample.has_data_accelerometer ?? false,
+                    ),
+                    has_data_gyroscope: Boolean(
+                        sample.has_data_gyroscope ?? false,
+                    ),
+                    has_data_rotation: Boolean(
+                        sample.has_data_rotation ?? false,
+                    ),
+                    quat_i: Number(sample.quat_i ?? 0),
+                    quat_j: Number(sample.quat_j ?? 0),
+                    quat_k: Number(sample.quat_k ?? 0),
+                    quat_real: Number(sample.quat_real ?? 0),
+                    accel_x: Number(sample.accel_x ?? 0),
+                    accel_y: Number(sample.accel_y ?? 0),
+                    accel_z: Number(sample.accel_z ?? 0),
+                    gyro_x: Number(sample.gyro_x ?? 0),
+                    gyro_y: Number(sample.gyro_y ?? 0),
+                    gyro_z: Number(sample.gyro_z ?? 0),
+                    gravity_x: Number(sample.gravity_x ?? 0),
+                    gravity_y: Number(sample.gravity_y ?? 0),
+                    gravity_z: Number(sample.gravity_z ?? 0),
+                }),
+            );
+
+            return {
+                ...data,
+                samples: normalizedSamples,
+            } as SessionData;
         } catch (err) {
             console.error("Failed to get session data:", err);
             return null;
