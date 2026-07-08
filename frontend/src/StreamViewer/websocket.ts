@@ -5,11 +5,25 @@ import type {
   ClientAction,
   StreamListMessage,
   StatusMessage,
+  PublishResultMessage,
+  TransformCapabilitiesMessage,
+  NodeCatalogMessage,
+  EmgTransformResultMessage,
+  EmgTransformListMessage,
+  EmgTransformStoppedMessage,
   ImuDataMessage,
   ImuBulkDataMessage,
   MuseDataMessage,
   MuseBulkDataMessage,
+  EmgDataMessage,
+  TransformProvenanceMessage,
   ErrorMessage,
+  StreamGraphListMessage,
+  StreamGraphSavedMessage,
+  StreamGraphValidationMessage,
+  StreamGraphStatusMessage,
+  StreamGraphStartedMessage,
+  StreamGraphStoppedMessage,
 } from "./types";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected";
@@ -18,10 +32,24 @@ export interface StreamViewerCallbacks {
   onConnectionChange?: (state: ConnectionState) => void;
   onStreamList?: (message: StreamListMessage) => void;
   onStatus?: (message: StatusMessage) => void;
+  onPublishResult?: (message: PublishResultMessage) => void;
+  onTransformCapabilities?: (message: TransformCapabilitiesMessage) => void;
+  onNodeCatalog?: (message: NodeCatalogMessage) => void;
+  onEmgTransformResult?: (message: EmgTransformResultMessage) => void;
+  onEmgTransformList?: (message: EmgTransformListMessage) => void;
+  onEmgTransformStopped?: (message: EmgTransformStoppedMessage) => void;
   onImuData?: (message: ImuDataMessage) => void;
   onImuBulkData?: (message: ImuBulkDataMessage) => void;
   onMuseData?: (message: MuseDataMessage) => void;
   onMuseBulkData?: (message: MuseBulkDataMessage) => void;
+  onEmgData?: (message: EmgDataMessage) => void;
+  onTransformProvenance?: (message: TransformProvenanceMessage) => void;
+  onStreamGraphList?: (message: StreamGraphListMessage) => void;
+  onStreamGraphSaved?: (message: StreamGraphSavedMessage) => void;
+  onStreamGraphValidation?: (message: StreamGraphValidationMessage) => void;
+  onStreamGraphStatus?: (message: StreamGraphStatusMessage) => void;
+  onStreamGraphStarted?: (message: StreamGraphStartedMessage) => void;
+  onStreamGraphStopped?: (message: StreamGraphStoppedMessage) => void;
   onError?: (message: ErrorMessage) => void;
 }
 
@@ -129,6 +157,27 @@ export class StreamViewerWebSocket {
         case "status":
           this.callbacks.onStatus?.(message);
           break;
+        case "publish_result":
+          this.callbacks.onPublishResult?.(message);
+          break;
+        case "transform_capabilities":
+          this.callbacks.onTransformCapabilities?.(message);
+          break;
+        case "node_catalog":
+          this.callbacks.onNodeCatalog?.(message);
+          break;
+        case "transform_result":
+        case "emg_transform_result":
+          this.callbacks.onEmgTransformResult?.(message);
+          break;
+        case "transform_list":
+        case "emg_transform_list":
+          this.callbacks.onEmgTransformList?.(message);
+          break;
+        case "transform_stopped":
+        case "emg_transform_stopped":
+          this.callbacks.onEmgTransformStopped?.(message);
+          break;
         case "imu_data":
           this.callbacks.onImuData?.(message);
           break;
@@ -140,6 +189,30 @@ export class StreamViewerWebSocket {
           break;
         case "muse_bulk_data":
           this.callbacks.onMuseBulkData?.(message);
+          break;
+        case "emg_data":
+          this.callbacks.onEmgData?.(message);
+          break;
+        case "transform_provenance":
+          this.callbacks.onTransformProvenance?.(message);
+          break;
+        case "stream_graph_list":
+          this.callbacks.onStreamGraphList?.(message);
+          break;
+        case "stream_graph_saved":
+          this.callbacks.onStreamGraphSaved?.(message);
+          break;
+        case "stream_graph_validation":
+          this.callbacks.onStreamGraphValidation?.(message);
+          break;
+        case "stream_graph_status":
+          this.callbacks.onStreamGraphStatus?.(message);
+          break;
+        case "stream_graph_started":
+          this.callbacks.onStreamGraphStarted?.(message);
+          break;
+        case "stream_graph_stopped":
+          this.callbacks.onStreamGraphStopped?.(message);
           break;
         case "error":
           this.callbacks.onError?.(message);
@@ -160,11 +233,11 @@ export class StreamViewerWebSocket {
     }
   }
 
-  subscribe(streamIds: number[]): void {
+  subscribe(streamIds: string[]): void {
     this.send({ action: "subscribe", stream_ids: streamIds });
   }
 
-  unsubscribe(streamIds: number[]): void {
+  unsubscribe(streamIds: string[]): void {
     this.send({ action: "unsubscribe", stream_ids: streamIds });
   }
 
