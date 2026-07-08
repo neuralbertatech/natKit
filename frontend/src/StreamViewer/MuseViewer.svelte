@@ -191,10 +191,6 @@
 </div>
 
 <style>
-    .muse-viewer {
-        /* No wrapper styling needed - parent handles the card */
-    }
-
     .signal-status {
         display: flex;
         gap: 0.5rem;
