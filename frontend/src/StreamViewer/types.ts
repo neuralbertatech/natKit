@@ -366,9 +366,12 @@ export interface BufferedEmgSample extends EmgSample {
 }
 
 export interface EmgDataMessage extends EmgSample {
-  type: "emg_data";
+  // "frame" is the generic descriptor-driven channel-frame message (Phase 3);
+  // "emg_data" is the legacy per-sensor alias. Same payload shape.
+  type: "emg_data" | "frame";
   stream_id: string;
   encoding: EncodingInfo;
+  schema_name?: string;
 }
 
 export interface TransformProvenanceMessage {

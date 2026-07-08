@@ -76,9 +76,34 @@ Nothing committed.
   No backend changes this phase. Live run still pending (Phase 1 needs the
   backend container rebuilt for the palette).
 
-### Next: Phase 3 — sensor onboarding pipeline (descriptor-driven backend frame
-formatter replacing the dynamic_cast dispatch; collapse per-sensor wire messages
-to a generic frame/record; data-driven input-mapping registry).
+### Phase 3 — Sensor onboarding pipeline (core DONE; one sub-item deferred)
+- Backend `StreamViewerWebSocket.cpp`: new free fn `formatNormalizedFrameAsJson`
+  emits a generic `type:"frame"` channel-frame message. Added an ADDITIVE generic
+  fallback at the end of the streaming dispatch loop (after the dynamic_cast
+  chain): look up the record's descriptor via
+  `DataSchemaDescriptorRegistry::getDefault().findBySchemaName`, run the existing
+  `tryNormalizeNumericChannelFrame(record, descriptor)`, and if it matches emit
+  `frame`. So ANY record whose descriptor matches the canonical channel-frame
+  contract is projected with NO per-sensor formatter/dispatch edit. Existing
+  imu/muse/emg/signal-frame branches are UNCHANGED (compat aliases).
+- Frontend: `websocket.ts` routes `case "frame"` → `onEmgData` (alias of
+  `emg_data`); `EmgDataMessage.type` broadened to `"emg_data" | "frame"` (+ optional
+  `schema_name`). Both the StreamViewer page and VP editor share this WS, so a new
+  channel-frame sensor buffers + plots (ChannelFrameViewer via the Phase-2 registry)
+  and is band-passable (canonical_channel_frame input mapping matches its descriptor).
+- Doc: `docs/SENSOR_ONBOARDING.md` (checklist + the contract table).
+- Verified: C++ backend builds; npm run check 0 errors; vitest 21/21.
+- DEFERRED (tracked): making `getAlternateTransformInputMappings()` a
+  registrable/config-driven mapping registry (for sensors whose fields DON'T match
+  the canonical contract, e.g. Muse-style nesting). Not required by the acceptance
+  (a canonical channel-frame sensor onboards with zero code); it's a separate
+  mechanism. The zero-code path today = publish the canonical channel-frame layout.
+- NOT run end-to-end against a live new sensor (needs a running stack + a
+  registered test schema); the frame path reuses the already-exercised
+  tryNormalizeNumericChannelFrame used by the transform path.
+
+### Next: Phase 4 — first-class sessions/experiments (generic SessionProtocol,
+multi-sensor recording under one marker timeline, labeled-dataset handle).
 
 ---
 
