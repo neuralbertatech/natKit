@@ -102,8 +102,41 @@ Nothing committed.
   registered test schema); the frame path reuses the already-exercised
   tryNormalizeNumericChannelFrame used by the transform path.
 
-### Next: Phase 4 — first-class sessions/experiments (generic SessionProtocol,
-multi-sensor recording under one marker timeline, labeled-dataset handle).
+### Phase 4 — First-class multi-sensor sessions (IN PROGRESS)
+Map (from Explore): the session/marker PAYLOAD types (experiment.ts), the publish
+transport (handlePublishSessionBundle → META + MARKER topics keyed on session_id),
+the schemas (MarkerEventV1, SessionMetadataRecord), and the natVR run-discovery
+(reconstruct_session, keyed on session/cue marker types + labels) are ALREADY
+sensor-agnostic. EMG coupling is concentrated in: EMG_GESTURE_OPTIONS + the "rest"
+filler literal + protocol_id "emg-gesture-cues-v1" (experiment.ts/cues.py), the
+BufferedEmgSample-typed stream/frame wrappers, Hudgins features, and
+select_model's rest/active gesture defaults.
+
+**Slice A DONE — generic SessionProtocol model (frontend, verified):**
+- `experiment.ts`: added `SessionProtocol` (protocol_id/label/classes/rest_class/
+  repetitions/hold_s/rest_s/lead_in_s/tail_rest_s/seed) + `EMG_GESTURE_PROTOCOL`
+  (the built-in as one instance) + `buildCueScheduleForProtocol()`. Generalized
+  `buildCueSchedule` with an optional `restClass` (default "rest") so the filler
+  class is no longer hardcoded. Backward compatible — EmgExperiment.svelte
+  untouched, still works via the default.
+- Tests `experiment.test.ts` (6 cases: a generic 3-class direction protocol +
+  EMG backward-compat). vitest now 27/27; npm run check 0 errors.
+
+**Remaining Phase 4 slices (NOT done — substantial):**
+- Slice B: make "session" a first-class node kind. Backend: add to the kind
+  allow-list (StreamViewerWebSocket.cpp ~L2004) + a validation branch (inputs, no
+  output, like sink) + port normalization + a catalog entry. Frontend: a session
+  node whose inspector authors a SessionProtocol and drives recording.
+- Slice C: multi-sensor recording — the session node subscribes to N upstream
+  source streams and records them under ONE marker timeline (shared session_id;
+  runs = session lifecycle marker pairs). Simplest low-risk route: client-side
+  recorder reusing the existing publish_session_bundle path (like EmgExperiment),
+  NOT a new C++ recorder worker. Produce a labeled-dataset handle (named set of
+  runs across the subscribed streams, one label column from the cue timeline).
+- Slice D: make "training session" a first-class stored/discoverable object; natVR
+  label-field generalization (cue_gesture → configurable label field).
+
+### Next: continue Phase 4 Slice B (session node kind) or as directed.
 
 ---
 

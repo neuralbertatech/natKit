@@ -19,6 +19,10 @@ export interface EmgExperimentConfig {
     leadInS: number;
     tailRestS: number;
     seed: number;
+    // The filler/idle class used for lead-in, inter-cue rest, and tail-rest
+    // phases. Defaults to "rest" for backward compatibility; a generic
+    // SessionProtocol supplies its own (e.g. "none", "baseline"). (Phase 4.)
+    restClass?: string;
 }
 
 export interface EmgCueEvent {
@@ -50,6 +54,59 @@ export interface EmgRecordedFrame {
     cue_gesture: string | null;
     cue_prompt: string | null;
     frame: BufferedEmgSample;
+}
+
+// A generic, sensor-agnostic recording protocol (Phase 4 of the
+// visual-programming rework). Generalizes the EMG gesture experiment into a
+// reusable definition any classification task can use: an ordered class
+// vocabulary, per-class hold/rest timing, a run/repetition count, and
+// participant/protocol metadata. The cue engine (buildCueSchedule) is driven
+// from this — no gesture-specific hardcoding.
+export interface SessionProtocol {
+    protocol_id: string;
+    label: string;
+    // Ordered class vocabulary; each hold cue draws its label from here.
+    classes: string[];
+    // Filler/idle class for lead-in, inter-cue rest, and tail-rest phases.
+    rest_class: string;
+    repetitions: number;
+    hold_s: number;
+    rest_s: number;
+    lead_in_s: number;
+    tail_rest_s: number;
+    seed: number;
+}
+
+// The built-in EMG gesture protocol — the previous hardcoded experiment,
+// expressed as one SessionProtocol instance (backward compatible).
+export const EMG_GESTURE_PROTOCOL: SessionProtocol = {
+    protocol_id: "emg-gesture-cues-v1",
+    label: "EMG gestures",
+    classes: [...EMG_GESTURE_OPTIONS],
+    rest_class: "rest",
+    repetitions: 3,
+    hold_s: 3,
+    rest_s: 2,
+    lead_in_s: 3,
+    tail_rest_s: 2,
+    seed: 1,
+};
+
+// Build a cue schedule from a generic protocol. The hold cues cycle the
+// protocol's class vocabulary; lead-in/rest/tail cues use its rest_class.
+export function buildCueScheduleForProtocol(
+    protocol: SessionProtocol,
+): EmgCueEvent[] {
+    return buildCueSchedule({
+        gestures: protocol.classes,
+        repetitions: protocol.repetitions,
+        holdS: protocol.hold_s,
+        restS: protocol.rest_s,
+        leadInS: protocol.lead_in_s,
+        tailRestS: protocol.tail_rest_s,
+        seed: protocol.seed,
+        restClass: protocol.rest_class,
+    });
 }
 
 export interface SessionMetadataRecordPayload {
@@ -152,6 +209,7 @@ export function buildCueSchedule(
     if (gestures.length === 0) {
         return [];
     }
+    const restClass = config.restClass ?? "rest";
 
     let currentOffsetMs = 0;
     let cueId = 0;
@@ -162,7 +220,7 @@ export function buildCueSchedule(
             cue_id: cueId,
             rep_index: -1,
             phase: "lead_in",
-            gesture: "rest",
+            gesture: restClass,
             prompt: "Prepare",
             start_offset_ms: currentOffsetMs,
             end_offset_ms: currentOffsetMs + config.leadInS * 1000,
@@ -191,7 +249,7 @@ export function buildCueSchedule(
                     cue_id: cueId,
                     rep_index: repIndex,
                     phase: "rest",
-                    gesture: "rest",
+                    gesture: restClass,
                     prompt: "Rest",
                     start_offset_ms: currentOffsetMs,
                     end_offset_ms: currentOffsetMs + config.restS * 1000,
@@ -207,7 +265,7 @@ export function buildCueSchedule(
             cue_id: cueId,
             rep_index: config.repetitions,
             phase: "tail_rest",
-            gesture: "rest",
+            gesture: restClass,
             prompt: "Done",
             start_offset_ms: currentOffsetMs,
             end_offset_ms: currentOffsetMs + config.tailRestS * 1000,
