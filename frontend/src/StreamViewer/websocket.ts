@@ -190,6 +190,10 @@ export class StreamViewerWebSocket {
         case "muse_bulk_data":
           this.callbacks.onMuseBulkData?.(message);
           break;
+        // "frame" is the generic descriptor-driven channel-frame message
+        // (Phase 3). It has the same shape as the legacy per-sensor "emg_data"
+        // message, so it rides the same callback; "emg_data" is kept as an alias.
+        case "frame":
         case "emg_data":
           this.callbacks.onEmgData?.(message);
           break;
