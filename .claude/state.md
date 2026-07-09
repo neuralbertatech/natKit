@@ -200,9 +200,26 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
   return the composite tree (composite_id preserved) while flattened nodes stay primitive.
   npm run check 0 errors; vitest 27/27; backend builds. Test artifact: vp-composite-verify
   in the container store (ephemeral).
-**Remaining Phase 7:** Part C (param/input nodes: slider/dropdown/threshold feeding
-transform configs) + Part A (incremental reactivity: config change restarts only the
-affected downstream subgraph, debounced, live node value; run gate for ML nodes).
+**Part A DONE — incremental reactivity, live-verified:**
+- Backend `handleRestartStreamGraphNode(graph_id, node_id)` (new `restart_stream_graph_node`
+  action): in a RUNNING graph, BFS the forward edge adjacency to get node_id + descendants,
+  stop those transform/combine workers (stopGraphWorkerByOutputStreamId), then recreate
+  them in topo order from the current stored config (createTransformWorker/createCombineWorker),
+  resolving inputs from each node's stable output stream id (deterministic from
+  output_identifier). Upstream/unrelated branches untouched. Updates runtime nodeStatuses +
+  persists + pushes stream_graph_status. Guarded against concurrent stop/start via activeRunId.
+- Frontend: RestartStreamGraphNodeAction type; VP page `restartStreamGraphNode()`; editor
+  `updateTransformConfigField` → debounced (350ms) `scheduleReactiveRestart` that, only when
+  the graph run_state==="running", saves the draft then restarts just that node's subgraph —
+  no manual stop/start.
+- VERIFIED live (WS, real EMG stream): started source→highpass_iir; edited cutoff_hz →
+  restart_stream_graph_node → transform came back "live" with the same output id + "Restarted
+  with updated config.", source stayed running. npm run check 0 errors; vitest 27/27; backend
+  builds. Deferred: sampled live-value-on-node (plan nice-to-have, not in acceptance);
+  run-gate for ML train nodes (train already gated behind an explicit Submit button).
+
+**Remaining Phase 7:** Part C — param/input nodes (slider/dropdown/threshold) whose value
+feeds a downstream transform's config field; on change they drive the same reactive restart.
 
 ### LIVE VERIFICATION — Phases 1–4 confirmed against the running podman stack (2026-07-09)
 The dev stack was already rebuilt from my committed source (backend binary contains

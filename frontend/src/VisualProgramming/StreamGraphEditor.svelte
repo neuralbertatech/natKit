@@ -116,6 +116,9 @@
         listStreamGraphs: () => void;
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
+        // Phase 7: incremental reactivity — restart a node + downstream after a
+        // debounced config edit while the graph is running.
+        restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
         publishSessionBundle: (payload: SessionPublishBundleInput) => boolean;
         // Phase 5: submit a train_validate job via the backend ML proxy, and
         // surface the latest job status + resulting model path for train nodes.
@@ -150,6 +153,7 @@
         listStreamGraphs,
         requestStreamGraphStatus,
         saveStreamGraph,
+        restartStreamGraphNode,
         publishSessionBundle,
         submitTrainJob,
         trainJobStatus,
@@ -1397,6 +1401,29 @@
         sessionRecording = null;
     }
 
+    // Phase 7 incremental reactivity: when a transform config changes while the
+    // graph is RUNNING, debounce then save the new config and restart only that
+    // node's downstream subgraph — no manual stop/start. Debounced so a slider
+    // drag doesn't thrash the hot path.
+    let reactiveRestartTimer: ReturnType<typeof setTimeout> | null = null;
+    function scheduleReactiveRestart(nodeId: string | null) {
+        if (!nodeId || selectedGraphStatus?.run_state !== "running") {
+            return;
+        }
+        const graphId = draftGraph.graph_id;
+        if (!graphId) {
+            return;
+        }
+        if (reactiveRestartTimer) {
+            clearTimeout(reactiveRestartTimer);
+        }
+        reactiveRestartTimer = setTimeout(() => {
+            reactiveRestartTimer = null;
+            saveDraftGraph();
+            restartStreamGraphNode(graphId, nodeId);
+        }, 350);
+    }
+
     function updateTransformConfigField(
         field: TransformCapabilityConfigField,
         rawValue: string,
@@ -1413,6 +1440,7 @@
                 config: nextConfig,
             };
         });
+        scheduleReactiveRestart(selectedNodeId);
     }
 
     // Flatten composites into primitives for the backend (which only understands
@@ -1589,6 +1617,10 @@
         if (sessionRecordTimer) {
             clearInterval(sessionRecordTimer);
             sessionRecordTimer = null;
+        }
+        if (reactiveRestartTimer) {
+            clearTimeout(reactiveRestartTimer);
+            reactiveRestartTimer = null;
         }
     });
 
