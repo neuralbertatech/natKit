@@ -383,6 +383,72 @@
             : null,
     );
 
+    // Phase 8 (guided flows): transforms compatible with the selected node's
+    // OUTPUT descriptor — the "recommended next" nodes a user can add in one
+    // click, so a pipeline builds itself from what fits.
+    const selectedNodeOutputDescriptor = $derived(
+        getOutputDescriptorForNode(selectedNode ?? undefined, availableStreams),
+    );
+    const recommendedNextTransforms = $derived(
+        selectedNodeOutputDescriptor
+            ? transformCapabilities.filter(
+                  (capability) =>
+                      findCompatibleTransformInputMappingId(
+                          selectedNodeOutputDescriptor,
+                          capability,
+                      ) !== undefined,
+              )
+            : [],
+    );
+
+    // Phase 8 (typed connection feedback): a transient note when a just-made
+    // connection looks descriptor-incompatible.
+    let connectionMessage = $state<string | null>(null);
+
+    // Add a recommended transform downstream of the selected node and wire it up.
+    function addRecommendedTransform(kind: string) {
+        if (!selectedNode) {
+            return;
+        }
+        const capability = transformCapabilities.find(
+            (item) => item.kind === kind,
+        );
+        if (!capability) {
+            return;
+        }
+        const source = selectedNode;
+        const nextGraph = cloneGraph(draftGraph);
+        const nodeId = `transform/${sanitizeIdentifier(kind)}-${Date.now()}`;
+        nextGraph.nodes.push({
+            id: nodeId,
+            kind: "transform",
+            label: capability.label,
+            position: {
+                x: source.position.x + 260,
+                y: source.position.y,
+            },
+            transform_kind: kind,
+            input_mapping_id: capability.input_mappings[0]?.id,
+            config: buildDefaultTransformConfig(capability),
+            output_identifier: sanitizeIdentifier(
+                `${draftGraph.graph_id}-${kind}-${Date.now()}`,
+            ),
+            input_port_ids: ["input"],
+            output_port_ids: ["output"],
+        });
+        nextGraph.edges.push({
+            id: `edge-${Date.now()}`,
+            source_node_id: source.id,
+            source_port: source.output_port_ids?.[0] ?? "output",
+            target_node_id: nodeId,
+            target_port: "input",
+        });
+        selectedNodeId = nodeId;
+        selectedNodeIds = new Set([nodeId]);
+        selectedEdgeId = null;
+        markDraftChanged(nextGraph);
+    }
+
     const graphJsonPreview = $derived(JSON.stringify(draftGraph, null, 2));
     const selectedNodeRuntimeStatus = $derived(
         selectedNodeId
@@ -1191,13 +1257,22 @@
                 sourceNode,
                 availableStreams,
             );
+            const compatibleMapping = findCompatibleTransformInputMappingId(
+                sourceDescriptor,
+                capability,
+            );
+            // Typed connection feedback (Phase 8): warn if the upstream output
+            // doesn't match any of this transform's input mappings. Non-blocking
+            // — the descriptor may still be arriving — but flagged clearly.
+            if (sourceDescriptor && !compatibleMapping) {
+                connectionMessage = `⚠ ${sourceNode?.label ?? "upstream"} output may not be compatible with ${capability.label}.`;
+            } else {
+                connectionMessage = null;
+            }
             return {
                 ...node,
                 input_mapping_id:
-                    findCompatibleTransformInputMappingId(
-                        sourceDescriptor,
-                        capability,
-                    ) ?? node.input_mapping_id,
+                    compatibleMapping ?? node.input_mapping_id,
             };
         });
 
@@ -2149,6 +2224,17 @@
         </div>
 
         <div class="graph-workspace">
+            {#if connectionMessage}
+                <div class="connection-note">
+                    <span>{connectionMessage}</span>
+                    <button
+                        type="button"
+                        class="connection-note-dismiss"
+                        onclick={() => (connectionMessage = null)}
+                        aria-label="Dismiss">×</button
+                    >
+                </div>
+            {/if}
             <div
                 bind:this={canvasElement}
                 class="graph-canvas"
@@ -2361,6 +2447,11 @@
                         {/if}
 
                         {#if selectedTransformNode}
+                            {#if selectedNodeCapability}
+                                <p class="node-doc">
+                                    {selectedNodeCapability.description}
+                                </p>
+                            {/if}
                             <label>
                                 <span>Transform</span>
                                 <select
@@ -2891,6 +2982,30 @@
                                     target transform — live while the graph runs.
                                 </p>
                             {/if}
+                        {/if}
+
+                        {#if recommendedNextTransforms.length > 0}
+                            <div class="inspector-section">
+                                <p class="eyebrow">Recommended next</p>
+                                <div class="library-actions">
+                                    {#each recommendedNextTransforms.slice(0, 8) as capability}
+                                        <button
+                                            type="button"
+                                            class="graph-list-item"
+                                            title={capability.description}
+                                            onclick={() =>
+                                                addRecommendedTransform(capability.kind)}
+                                        >
+                                            <span class="graph-list-title"
+                                                >+ {capability.label}</span
+                                            >
+                                            <span class="graph-list-meta"
+                                                >{capability.kind}</span
+                                            >
+                                        </button>
+                                    {/each}
+                                </div>
+                            </div>
                         {/if}
 
                         {#if selectedNodeRuntimeStatus}
@@ -3626,6 +3741,7 @@
     }
 
     .graph-workspace {
+        position: relative;
         min-height: 0;
         display: grid;
         grid-template-columns: minmax(0, 1fr) 360px;
@@ -4017,5 +4133,40 @@
     .viewer-data-footer {
         display: flex;
         justify-content: flex-end;
+    }
+
+    /* Phase 8: inline node doc + typed connection feedback */
+    .node-doc {
+        margin: 0;
+        font-size: 0.82rem;
+        line-height: 1.4;
+        color: #9dafdf;
+    }
+
+    .connection-note {
+        position: absolute;
+        top: 0.6rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.4rem 0.7rem;
+        border-radius: 8px;
+        background: rgba(60, 45, 12, 0.96);
+        border: 1px solid rgba(214, 158, 46, 0.5);
+        color: #f4d58d;
+        font-size: 0.82rem;
+        max-width: 80%;
+    }
+
+    .connection-note-dismiss {
+        border: none;
+        background: transparent;
+        color: inherit;
+        font-size: 1rem;
+        line-height: 1;
+        cursor: pointer;
     }
 </style>

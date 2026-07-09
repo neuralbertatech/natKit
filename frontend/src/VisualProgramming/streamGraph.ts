@@ -2,6 +2,8 @@
 // stay unit-testable without a browser.
 import type {
     DataSchemaDescriptor,
+    SchemaFieldDescriptor,
+    SchemaFieldValueType,
     StreamGraphDefinition,
     TransformCapability,
 } from "../StreamViewer/types";
@@ -104,16 +106,43 @@ export function getOutputDescriptorForNode(
         )?.descriptor;
     }
     if (node.kind === "transform" || node.kind === "combine") {
+        // A transform/combine emits a canonical numeric channel frame. Return a
+        // descriptor with the actual channel-frame fields (not an empty stub) so
+        // downstream compatibility checks — descriptorSupportsNumericChannelFrames,
+        // input-mapping auto-pick, and the Phase-8 "recommended next" list —
+        // resolve correctly.
+        const field = (
+            id: string,
+            type: SchemaFieldValueType,
+            extra: Partial<SchemaFieldDescriptor> = {},
+        ): SchemaFieldDescriptor => ({
+            id,
+            label: id,
+            type,
+            optional: false,
+            ...extra,
+        });
         return {
             schema_name: "NatSignalFrameDataSchemaV1",
             descriptor_version: 1,
-            root: {
-                id: "root",
-                label: "Signal frame",
-                type: "object",
-                optional: false,
-                fields: {},
-            },
+            root: field("root", "object", {
+                fields: {
+                    device_id: field("device_id", "string"),
+                    seq_no: field("seq_no", "uint64"),
+                    device_ts_us: field("device_ts_us", "uint64"),
+                    sample_rate_hz: field("sample_rate_hz", "uint32"),
+                    channels: field("channels", "array", {
+                        items: field("channel", "object", {
+                            fields: {
+                                label: field("label", "string"),
+                                samples: field("samples", "array", {
+                                    items: field("sample", "float32"),
+                                }),
+                            },
+                        }),
+                    }),
+                },
+            }),
         };
     }
     return undefined;

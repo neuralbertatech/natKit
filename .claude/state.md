@@ -195,10 +195,20 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
 - Verified: npm run check 0 errors; vitest 28/28; Playwright — the 3 starters appear and
   loading "Filter + envelope" populates a valid source-bound Band-pass→Rectify→envelope→viewer
   board (source auto-bound to the live EMG stream, "No validation issues"). Frontend-only.
-- Remaining Phase 8 (UX polish, not acceptance-blocking): Part B recommended-next-nodes from
-  output descriptor; Part C inline docs from catalog config-field descriptions + typed
-  invalid-connection feedback. Plus starter presets for train/classify (need model_path
-  scaffolding).
+**Part B+C DONE — PHASE 8 COMPLETE.**
+- Part B (guided flows): `recommendedNextTransforms` derived from the selected node's OUTPUT
+  descriptor (getOutputDescriptorForNode → transforms whose input mapping matches);
+  "Recommended next" inspector panel with one-click `addRecommendedTransform` (adds a
+  transform downstream + wires the edge). Fixed `getOutputDescriptorForNode` (streamGraph.ts)
+  to return a REAL channel-frame descriptor for transform/combine outputs (was an empty stub)
+  so compatibility + input-mapping auto-pick + recommendations resolve.
+- Part C: inline node doc (capability.description) in the transform inspector; typed
+  invalid-connection feedback (`connectionMessage` set on a descriptor-incompatible connect,
+  shown as a dismissible note over the canvas).
+- Verified: npm run check 0 errors; vitest 28/28; Playwright — node doc shows, "Recommended
+  next" lists 8 compatible transforms. Frontend-only.
+- Deferred (documented): train/classify starter presets (need model_path scaffolding);
+  config-field-level descriptions in the backend catalog; dropdown/threshold param variants.
 
 ### Phase 7 — reactive execution + composite round-trip (IN PROGRESS)
 **Part B DONE — composite round-trip (opaque backend metadata), live-verified:**
