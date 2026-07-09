@@ -12,6 +12,7 @@ import {
     type CompositeInstanceNode,
     type CompositeTemplate,
     type EditorGraphDefinition,
+    type ParamNode,
 } from "./composites";
 
 function sourceNode(id: string, streamId = "stream-a"): StreamGraphNode {
@@ -327,5 +328,35 @@ describe("export / import", () => {
     it("reports invalid JSON", () => {
         const { errors } = parseCompositeExportFile("{not json");
         expect(errors.length).toBeGreaterThan(0);
+    });
+});
+
+describe("flattenGraph param nodes (Phase 7)", () => {
+    it("drops editor-only param nodes and their binding edges", () => {
+        const param: ParamNode = {
+            id: "param/1",
+            kind: "param",
+            label: "Cutoff",
+            position: { x: 0, y: 0 },
+            value: 30,
+            min: 0,
+            max: 100,
+            step: 1,
+            target_node_id: "tf",
+            target_field: "cutoff_hz",
+            output_port_ids: ["value"],
+        };
+        const graph = baseGraph(
+            [sourceNode("src"), transformNode("tf", "tf-out"), param],
+            [
+                edge("e1", "src", "data", "tf", "input"),
+                edge("e2", "param/1", "value", "tf", "input"),
+            ],
+        );
+        const { graph: flat } = flattenGraph(graph, () => undefined);
+        expect(flat.nodes.some((n) => n.kind === "param")).toBe(false);
+        expect(flat.nodes.map((n) => n.id).sort()).toEqual(["src", "tf"]);
+        expect(flat.edges).toHaveLength(1);
+        expect(flat.edges[0].id).toBe("e1");
     });
 });
