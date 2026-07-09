@@ -186,6 +186,20 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
   so far (type-check + unit tests + build + smoke-compiles), same live-stack
   constraint as the rest.
 
+### Phase 8 — beginner UX (Part A DONE: starter templates)
+- New `starterTemplates.ts`: `STARTER_TEMPLATES` presets ("View a stream", "Filter +
+  envelope" = bandpass→rectify→lowpass_envelope→viewer, "Record a session" = source→session
+  with a 2-class protocol). Each `build(sourceStreamId)` returns a fresh EditorGraphDefinition.
+- Editor: `loadStarterTemplate` (loads a preset as a new board, auto-binding the source to
+  the first available stream) + a "Starter templates" sidebar group.
+- Verified: npm run check 0 errors; vitest 28/28; Playwright — the 3 starters appear and
+  loading "Filter + envelope" populates a valid source-bound Band-pass→Rectify→envelope→viewer
+  board (source auto-bound to the live EMG stream, "No validation issues"). Frontend-only.
+- Remaining Phase 8 (UX polish, not acceptance-blocking): Part B recommended-next-nodes from
+  output descriptor; Part C inline docs from catalog config-field descriptions + typed
+  invalid-connection feedback. Plus starter presets for train/classify (need model_path
+  scaffolding).
+
 ### Phase 7 — reactive execution + composite round-trip (IN PROGRESS)
 **Part B DONE — composite round-trip (opaque backend metadata), live-verified:**
 - Backend `StreamGraphDefinition` gained `nlohmann::json editorMetadata` (default null);

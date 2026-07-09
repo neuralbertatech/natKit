@@ -354,7 +354,7 @@ describe("flattenGraph param nodes (Phase 7)", () => {
             ],
         );
         const { graph: flat } = flattenGraph(graph, () => undefined);
-        expect(flat.nodes.some((n) => n.kind === "param")).toBe(false);
+        // The param node (and its binding edge) are gone; only primitives remain.
         expect(flat.nodes.map((n) => n.id).sort()).toEqual(["src", "tf"]);
         expect(flat.edges).toHaveLength(1);
         expect(flat.edges[0].id).toBe("e1");
