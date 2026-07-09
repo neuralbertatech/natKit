@@ -466,6 +466,10 @@ export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraph
   position: StreamGraphPosition;
   input_port_ids?: string[];
   output_port_ids?: string[];
+  // Optional editor-only manual size overrides (from the resize handle). Persist
+  // via editor_metadata; the backend ignores them.
+  width?: number;
+  height?: number;
 }
 
 export interface StreamGraphSourceNode extends StreamGraphBaseNode<"stream_source"> {
@@ -485,6 +489,10 @@ export interface StreamGraphTransformNode extends StreamGraphBaseNode<"transform
 
 export interface StreamGraphViewerNode extends StreamGraphBaseNode<"viewer"> {
   kind: "viewer";
+  // When true the live chart renders directly on the node in the editor instead
+  // of only in the click-to-open overlay. Persists via the editor_metadata
+  // round-trip; the backend never interprets it.
+  inline_graph?: boolean;
 }
 
 export interface StreamGraphSinkNode extends StreamGraphBaseNode<"sink"> {

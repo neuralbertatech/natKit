@@ -20,6 +20,10 @@ export const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 export const NODE_WIDTH = 220;
 export const HEADER_HEIGHT = 42;
 export const PORT_ROW_HEIGHT = 28;
+// Extra height a viewer node reserves below its ports to host an inline live
+// chart. Ports are anchored to the top (see getPortPosition), so growing the
+// card downward never moves a port and edges stay attached.
+export const INLINE_GRAPH_HEIGHT = 210;
 
 export function createEmptyGraph(): StreamGraphDefinition {
     const nowUs = Date.now() * 1000;
@@ -56,7 +60,11 @@ export function getNodeHeight(node: EditorGraphNode): number {
     const inputRows = Math.max(node.input_port_ids?.length ?? 0, 0);
     const outputRows = Math.max(node.output_port_ids?.length ?? 0, 0);
     const rows = Math.max(inputRows, outputRows, 1);
-    return HEADER_HEIGHT + rows * PORT_ROW_HEIGHT + 22;
+    let height = HEADER_HEIGHT + rows * PORT_ROW_HEIGHT + 22;
+    if (node.kind === "viewer" && node.inline_graph) {
+        height += INLINE_GRAPH_HEIGHT;
+    }
+    return height;
 }
 
 export function getPortPosition(

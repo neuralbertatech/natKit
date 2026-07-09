@@ -54,6 +54,8 @@ export interface CompositeInstanceNode {
     position: StreamGraphPosition;
     input_port_ids?: string[];
     output_port_ids?: string[];
+    width?: number;
+    height?: number;
     composite_id: string;
     composite_version: 1;
     // Embedded snapshot so a graph is self-contained even without the library entry.
@@ -71,6 +73,8 @@ export interface ParamNode {
     position: StreamGraphPosition;
     input_port_ids?: string[];
     output_port_ids?: string[];
+    width?: number;
+    height?: number;
     value: number;
     min: number;
     max: number;
