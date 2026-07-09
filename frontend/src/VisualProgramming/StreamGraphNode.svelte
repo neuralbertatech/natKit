@@ -5,6 +5,7 @@
         ClipboardList,
         Cpu,
         GitBranch,
+        LineChart,
         Monitor,
         Package,
         SlidersHorizontal,
@@ -29,11 +30,16 @@
         pendingConnection: { nodeId: string; portId: string } | null;
         // Renders a viewer node's live chart on the card when inline_graph is on.
         inlineViewerChart?: Snippet<[EditorGraphNode]>;
+        // Friendly device names per stream id (from the metadata/device_id); a
+        // source node prefers this over its raw stream id.
+        streamDeviceNames?: Record<string, string>;
         // Reports each port dot's offset from the node's top-left (unscaled graph
         // px) so edges can anchor to the real dots regardless of node size.
         onPortLayout?: (nodeId: string, anchors: PortAnchor[]) => void;
         // Reports a live resize from the corner handle.
         onResize?: (nodeId: string, width: number, height: number) => void;
+        // Toggles a viewer node's inline live graph from the node card itself.
+        onToggleInlineGraph?: (nodeId: string, enabled: boolean) => void;
         onSelect: (nodeId: string, event?: MouseEvent) => void;
         onStartDrag: (event: MouseEvent, nodeId: string) => void;
         onPortClick: (
@@ -59,8 +65,10 @@
         invalid,
         pendingConnection,
         inlineViewerChart,
+        streamDeviceNames,
         onPortLayout,
         onResize,
+        onToggleInlineGraph,
         onSelect,
         onStartDrag,
         onPortClick,
@@ -87,6 +95,15 @@
         runtimeStatus?.output_stream_id
             ? String(runtimeStatus.output_stream_id)
             : null,
+    );
+
+    // A source node prefers the metadata device name (e.g. "emg01") over its raw
+    // "Stream <id>" label, falling back to the stream id when no frame has named
+    // it yet.
+    const displayLabel = $derived(
+        node.kind === "stream_source"
+            ? (streamDeviceNames?.[node.stream_id] ?? node.label)
+            : node.label,
     );
 
     let nodeEl = $state<HTMLElement | undefined>(undefined);
@@ -222,7 +239,7 @@
             {:else}
                 <GitBranch size={14} />
             {/if}
-            <span class="node-label" title={node.label}>{node.label}</span>
+            <span class="node-label" title={displayLabel}>{displayLabel}</span>
         </div>
         <div class="node-header-meta">
             {#if runtimeStatus}
@@ -283,6 +300,23 @@
                         ? `Stream ${runtimeStreamId}`
                         : "Connect an upstream stream"}</span
                 >
+                <button
+                    type="button"
+                    class="inline-graph-btn"
+                    class:active={showInlineGraph}
+                    title={showInlineGraph
+                        ? "Hide live graph on node"
+                        : "Show live graph on node"}
+                    aria-pressed={showInlineGraph}
+                    onmousedown={(event) => event.stopPropagation()}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        onToggleInlineGraph?.(node.id, !showInlineGraph);
+                    }}
+                >
+                    <LineChart size={13} />
+                    <span>{showInlineGraph ? "Graph on" : "Show graph"}</span>
+                </button>
             {:else if node.kind === "sink"}
                 <span>Terminal node</span>
                 <span
@@ -420,6 +454,26 @@
         border-top: 1px solid rgba(122, 148, 255, 0.16);
         background: rgba(6, 10, 20, 0.6);
         cursor: default;
+    }
+
+    .inline-graph-btn {
+        margin-top: 0.35rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.18rem 0.5rem;
+        border-radius: 999px;
+        border: 1px solid rgba(122, 148, 255, 0.28);
+        background: rgba(20, 28, 48, 0.9);
+        color: #aebbe4;
+        font-size: 0.7rem;
+        cursor: pointer;
+    }
+
+    .inline-graph-btn.active {
+        background: rgba(76, 161, 255, 0.22);
+        border-color: rgba(76, 161, 255, 0.5);
+        color: #cfe2ff;
     }
 
     .node-resize-handle {
