@@ -39,6 +39,10 @@
     import NodeConfigFields from "../StreamViewer/NodeConfigFields.svelte";
     import { chooseViewerRenderer } from "../StreamViewer/viewerRegistry";
     import {
+        STARTER_TEMPLATES,
+        type StarterTemplate,
+    } from "./starterTemplates";
+    import {
         buildCueScheduleForProtocol,
         scheduleDurationMs,
         activeCueAtElapsedMs,
@@ -486,6 +490,26 @@
             }
         }
         draftGraph = createEmptyGraph();
+        selectedGraphId = draftGraph.graph_id;
+        draftGraphLoadedKey = selectedGraphId;
+        graphDirty = true;
+        selectedNodeId = null;
+        selectedNodeIds = new Set();
+        selectedEdgeId = null;
+        pendingConnection = null;
+    }
+
+    // Phase 8: load a starter preset as a new board, binding its source to the
+    // first available stream (the user can rebind in the inspector).
+    function loadStarterTemplate(template: StarterTemplate) {
+        if (graphDirty) {
+            const shouldDiscard = window.confirm("Discard unsaved graph edits?");
+            if (!shouldDiscard) {
+                return;
+            }
+        }
+        const firstStreamId = availableStreams[0]?.streamId ?? null;
+        draftGraph = template.build(firstStreamId);
         selectedGraphId = draftGraph.graph_id;
         draftGraphLoadedKey = selectedGraphId;
         graphDirty = true;
@@ -1867,6 +1891,23 @@
                     </button>
                 {/each}
             {/if}
+        </div>
+
+        <div class="library-group">
+            <span class="library-title">Starter templates</span>
+            <div class="library-actions">
+                {#each STARTER_TEMPLATES as template}
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        title={template.description}
+                        onclick={() => loadStarterTemplate(template)}
+                    >
+                        <span class="graph-list-title">{template.label}</span>
+                        <span class="graph-list-meta">{template.description}</span>
+                    </button>
+                {/each}
+            </div>
         </div>
 
         <div class="summary-card">
