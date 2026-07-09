@@ -35,6 +35,9 @@ export interface StreamViewerCallbacks {
   onPublishResult?: (message: PublishResultMessage) => void;
   onTransformCapabilities?: (message: TransformCapabilitiesMessage) => void;
   onNodeCatalog?: (message: NodeCatalogMessage) => void;
+  // A control-plane message proxied by the backend (Phase 5). The inner
+  // MlControlPlaneMessage is passed through untyped (see types.ts).
+  onMlControlPlane?: (message: unknown) => void;
   onEmgTransformResult?: (message: EmgTransformResultMessage) => void;
   onEmgTransformList?: (message: EmgTransformListMessage) => void;
   onEmgTransformStopped?: (message: EmgTransformStoppedMessage) => void;
@@ -166,6 +169,9 @@ export class StreamViewerWebSocket {
         case "node_catalog":
           this.callbacks.onNodeCatalog?.(message);
           break;
+        case "ml_control_plane":
+          this.callbacks.onMlControlPlane?.(message.message);
+          break;
         case "transform_result":
         case "emg_transform_result":
           this.callbacks.onEmgTransformResult?.(message);
@@ -235,6 +241,13 @@ export class StreamViewerWebSocket {
     } else {
       console.warn("WebSocket not connected, cannot send:", action);
     }
+  }
+
+  // Forward an ML control-plane action to the backend proxy (Phase 5). The
+  // backend relays it to the control plane and re-broadcasts responses as
+  // "ml_control_plane" messages (→ onMlControlPlane).
+  sendMlAction(action: unknown): void {
+    this.send({ action: "ml_proxy", message: action });
   }
 
   subscribe(streamIds: string[]): void {

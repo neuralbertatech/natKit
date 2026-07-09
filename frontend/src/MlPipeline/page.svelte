@@ -8,7 +8,7 @@
     ThreadSlotSummary,
     WorkerSummary,
   } from "./types";
-  import { MlControlPlaneWebSocket, type ConnectionState } from "./websocket";
+  import { ProxiedMlControlPlane, type ConnectionState } from "./websocket";
   import { StreamViewerWebSocket } from "../StreamViewer/websocket";
   import type {
     DataSchemaDescriptor,
@@ -55,12 +55,6 @@
       detail: "Nonlinear tree ensemble that can fit more complex patterns at higher runtime cost.",
     },
   };
-
-  function defaultControlPlaneUrl(): string {
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const host = window.location.hostname || "127.0.0.1";
-    return `${protocol}://${host}:8786`;
-  }
 
   function defaultStreamViewerUrl(): string {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -134,7 +128,6 @@
     return next;
   }
 
-  let controlPlaneUrl = $state(defaultControlPlaneUrl());
   let broker = $state("");
   let principalId = $state("default");
   let defaultPrincipalId = "default";
@@ -179,7 +172,7 @@
   let adminSelectedSlotAccessMode = $state<"shared" | "dedicated">("shared");
   let adminSelectedSlotDedicatedUsername = $state("");
 
-  let wsManager: MlControlPlaneWebSocket | null = null;
+  let wsManager: ProxiedMlControlPlane | null = null;
   let descriptorWsManager: StreamViewerWebSocket | null = null;
   let descriptorSubscribedStreamId: string | null = null;
 
@@ -677,8 +670,11 @@
   }
 
   function connect(): void {
-    wsManager?.disconnect();
-    wsManager = new MlControlPlaneWebSocket(controlPlaneUrl, {
+    // Phase 5, decision #3: the control plane is reached through the backend's
+    // /ws/stream_viewer proxy (descriptorWsManager), not a direct :8786 socket.
+    wsManager = new ProxiedMlControlPlane(
+      (action) => descriptorWsManager?.sendMlAction(action),
+      {
       onConnectionChange: (state) => {
         connectionState = state;
         if (state === "connected") {
@@ -690,8 +686,8 @@
       onHello: (message) => {
         if (message.service !== "natkit-ml-control-plane") {
           latestError =
-            `Connected to incompatible service "${message.service}" at ${controlPlaneUrl}. ` +
-            "The ML Pipeline worker-slot UI requires libnatkit/scripts/natkit_ml_control_plane.py.";
+            `Backend proxied an incompatible service "${message.service}". ` +
+            "The ML Pipeline requires libnatkit/scripts/natkit_ml_control_plane.py behind the backend.";
           latestInfo = "";
           return;
         }
@@ -779,12 +775,15 @@
         latestError = message.message;
       },
     });
-    wsManager.connect();
   }
 
   onMount(() => {
+    connect();
     descriptorWsManager = new StreamViewerWebSocket(defaultStreamViewerUrl(), {
       onConnectionChange: (state) => {
+        // This one connection carries both stream descriptors and the ML
+        // control-plane proxy (Phase 5), so it also drives the ML UI's state.
+        wsManager?.setConnectionState(state);
         if (state === "connected") {
           descriptorWsManager?.requestStreamList();
           syncDescriptorSubscription();
@@ -799,12 +798,14 @@
           descriptorPreview = message;
         }
       },
+      onMlControlPlane: (message: unknown) => {
+        wsManager?.handleMessage(message);
+      },
       onError: (message: StreamViewerErrorMessage) => {
         latestError = message.message;
       },
     });
     descriptorWsManager.connect();
-    connect();
     return () => {
       wsManager?.disconnect();
       descriptorWsManager?.disconnect();
@@ -829,10 +830,6 @@
   </header>
 
   <section class="control-band">
-    <div class="field">
-      <label for="control-plane-url">Control Plane URL</label>
-      <input id="control-plane-url" bind:value={controlPlaneUrl} />
-    </div>
     <div class="field">
       <label for="broker">Kafka Broker</label>
       <input id="broker" bind:value={broker} />
