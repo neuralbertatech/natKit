@@ -186,6 +186,32 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
   so far (type-check + unit tests + build + smoke-compiles), same live-stack
   constraint as the rest.
 
+### LIVE VERIFICATION — Phases 1–4 confirmed against the running podman stack (2026-07-09)
+The dev stack was already rebuilt from my committed source (backend binary contains
+all my Phase 1/4 strings). Verified two ways:
+- **Backend protocol** (WS client run inside the ml-control-plane container, reaching
+  ws://natkit-v0-backend:7409/ws/stream_viewer with the admin session cookie from the
+  shared auth DB): `list_node_catalog` returns 20 node types across all 6 kinds incl.
+  `session` (category=session, runner=frontend, variadic, 0 outputs); a transform→session
+  graph SAVES (session config.protocol round-trips: classes ["a","b","c"]) and VALIDATES
+  clean. Live EMG stream = 3ch×50 samples, ExgPillEmgDataSchemaV1, descriptor present.
+- **Frontend visual** (Playwright/chromium headless at http://localhost:8080, admin
+  cookie): VP palette is fully catalog-driven — Utility (Combine/Viewer/Sink/Session) +
+  all transforms + live stream, no console errors. Adding a Session node shows the full
+  protocol-authoring inspector (Protocol name/id, Classes, Rest class, Repetitions,
+  Hold/Rest/Lead-in/Tail, Participant, Notes) + "Record session" button, and renders
+  on-canvas with ports + "N classes" meta. Stream Viewer subscribed to the EMG stream →
+  descriptor-driven registry picked the WAVEFORM renderer (1 Chart.js canvas, live
+  rolling trace) + the SchemaDescriptorInspector header. Screenshots: /tmp/vp-session.png,
+  /tmp/sv-viewer.png.
+- Phase 3 generic `frame`: the EMG stream uses the concrete emg_data path (matches its
+  dynamic_cast branch, as designed); the generic `frame` fallback only fires for a NEW
+  unmatched schema (not observable live without registering a synthetic sensor schema) —
+  verified by build + the shared tryNormalizeNumericChannelFrame logic.
+- Test artifact: a `vp-verify` graph persisted in the backend CONTAINER's
+  /libnatkit/data/stream_graphs.json (no delete action exists; not bind-mounted → vanishes
+  on container recreate). Harmless; left in place (didn't restart the user's backend).
+
 ### Next: Phase 5 — ML nodes on the canvas (train node, classify node, model
 artifacts, and the control-plane→backend WS proxy [decision #3]). LARGE; the
 control-plane proxy is a real refactor. Phase 6 (script nodes) deferred by design;
