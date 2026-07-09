@@ -186,6 +186,24 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
   so far (type-check + unit tests + build + smoke-compiles), same live-stack
   constraint as the rest.
 
+### Phase 7 — reactive execution + composite round-trip (IN PROGRESS)
+**Part B DONE — composite round-trip (opaque backend metadata), live-verified:**
+- Backend `StreamGraphDefinition` gained `nlohmann::json editorMetadata` (default null);
+  to_json emits `editor_metadata` when non-null, from_json reads it verbatim — round-trips
+  through save/persist/list with zero interpretation. The executed graph is still the
+  flattened `nodes`/`edges`.
+- Frontend: `StreamGraphDefinition.editor_metadata?: unknown` (types.ts). `saveDraftGraph`
+  attaches the unflattened editor tree (stripped of any nested editor_metadata) to the
+  flattened graph; `resolveDraftForGraph` falls back to `backendGraph.editor_metadata`
+  when localStorage is absent → a composite graph reloads from the backend alone.
+- Verified live (WS client): saved a graph with editor_metadata → save reply + list both
+  return the composite tree (composite_id preserved) while flattened nodes stay primitive.
+  npm run check 0 errors; vitest 27/27; backend builds. Test artifact: vp-composite-verify
+  in the container store (ephemeral).
+**Remaining Phase 7:** Part C (param/input nodes: slider/dropdown/threshold feeding
+transform configs) + Part A (incremental reactivity: config change restarts only the
+affected downstream subgraph, debounced, live node value; run gate for ML nodes).
+
 ### LIVE VERIFICATION — Phases 1–4 confirmed against the running podman stack (2026-07-09)
 The dev stack was already rebuilt from my committed source (backend binary contains
 all my Phase 1/4 strings). Verified two ways:

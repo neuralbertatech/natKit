@@ -553,6 +553,11 @@ export interface StreamGraphDefinition {
   nodes: StreamGraphNode[];
   edges: StreamGraphEdge[];
   notes?: string[];
+  // Opaque frontend-only metadata (Phase 7): the unflattened composite editor
+  // tree (an EditorGraphDefinition). The backend stores + returns it verbatim so
+  // a composite graph reloads from the backend alone; typed `unknown` here to
+  // avoid a dependency cycle with the editor's composite types.
+  editor_metadata?: unknown;
 }
 
 export interface StreamGraphDiagnostic {

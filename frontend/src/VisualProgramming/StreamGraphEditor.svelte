@@ -258,6 +258,14 @@
         if (editorGraph) {
             return cloneGraph(editorGraph);
         }
+        // Fall back to the backend-persisted composite tree (Phase 7) so a graph
+        // saved elsewhere still reloads with its composites intact — no local
+        // copy required. Only the flattened primitives remain otherwise.
+        if (backendGraph.editor_metadata) {
+            return cloneGraph(
+                backendGraph.editor_metadata as EditorGraphDefinition,
+            );
+        }
         return cloneGraph(backendGraph) as EditorGraphDefinition;
     }
 
@@ -1421,8 +1429,14 @@
 
     function saveDraftGraph() {
         // Persist the editor version (with composites collapsed) locally first.
-        saveEditorGraph($state.snapshot(draftGraph) as EditorGraphDefinition);
+        const editorSnapshot = $state.snapshot(draftGraph) as EditorGraphDefinition;
+        saveEditorGraph(editorSnapshot);
         const flattened = flattenedForBackend();
+        // Round-trip the composite tree through the backend (Phase 7): attach the
+        // unflattened editor graph as opaque metadata, stripping any nested
+        // editor_metadata so it doesn't grow on every save.
+        const { editor_metadata: _nested, ...editorTree } = editorSnapshot;
+        flattened.editor_metadata = editorTree;
         const sent = saveStreamGraph(flattened);
         if (sent) {
             graphDirty = false;
