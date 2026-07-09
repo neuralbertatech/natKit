@@ -98,6 +98,96 @@
     // viewer nodes share a stream without one closing another's feed.
     let liveStreams = $state<Record<string, LiveStreamData>>({});
     const streamRefCounts = new Map<string, number>();
+
+    // Ingest is decoupled from render: incoming frames accumulate in a plain
+    // (non-reactive) per-stream buffer and are flushed into the reactive
+    // liveStreams at a capped rate. A viewer's chart therefore redraws a few
+    // times a second regardless of the stream's frame rate or how many viewers
+    // are open, which is what keeps several heavy inline charts responsive.
+    const LIVE_FLUSH_INTERVAL_MS = 200;
+    interface PendingSamples {
+        emg: BufferedEmgSample[];
+        muse: MuseSample[];
+        imu: ImuSample[];
+    }
+    const pendingByStream = new Map<string, PendingSamples>();
+    let liveFlushTimer: ReturnType<typeof setInterval> | null = null;
+
+    function pendingFor(streamId: string): PendingSamples {
+        let pending = pendingByStream.get(streamId);
+        if (!pending) {
+            pending = { emg: [], muse: [], imu: [] };
+            pendingByStream.set(streamId, pending);
+        }
+        return pending;
+    }
+
+    function ensureLiveFlushTimer() {
+        if (liveFlushTimer !== null) return;
+        liveFlushTimer = setInterval(flushLiveStreams, LIVE_FLUSH_INTERVAL_MS);
+    }
+
+    function trimEmg(buffer: BufferedEmgSample[]): BufferedEmgSample[] {
+        const maxHistoryMs = 20000;
+        let retainedDurationMs = 0;
+        let startIndex = buffer.length;
+        while (startIndex > 0) {
+            retainedDurationMs += buffer[startIndex - 1].frame_duration_ms;
+            if (retainedDurationMs > maxHistoryMs && startIndex < buffer.length) {
+                break;
+            }
+            startIndex -= 1;
+        }
+        return buffer.slice(startIndex);
+    }
+
+    function trimBounded<T>(buffer: T[]): T[] {
+        return buffer.length > MAX_LIVE_BUFFER_SIZE
+            ? buffer.slice(-MAX_LIVE_BUFFER_SIZE)
+            : buffer;
+    }
+
+    // Merge each stream's pending frames into its reactive buffer, mutating that
+    // one key in place (never replacing the whole liveStreams object — that would
+    // invalidate every stream's readers and re-render every viewer's chart).
+    function flushLiveStreams() {
+        for (const [streamId, pending] of pendingByStream) {
+            const current = liveStreams[streamId];
+            if (!current) {
+                pendingByStream.delete(streamId);
+                continue;
+            }
+            if (!pending.emg.length && !pending.muse.length && !pending.imu.length) {
+                continue;
+            }
+            let next: LiveStreamData = current;
+            if (pending.emg.length) {
+                next = {
+                    ...next,
+                    streamType: "emg",
+                    emgSamples: trimEmg([...next.emgSamples, ...pending.emg]),
+                };
+                pending.emg.length = 0;
+            }
+            if (pending.muse.length) {
+                next = {
+                    ...next,
+                    streamType: "muse",
+                    museSamples: trimBounded([...next.museSamples, ...pending.muse]),
+                };
+                pending.muse.length = 0;
+            }
+            if (pending.imu.length) {
+                next = {
+                    ...next,
+                    streamType: "imu",
+                    imuSamples: trimBounded([...next.imuSamples, ...pending.imu]),
+                };
+                pending.imu.length = 0;
+            }
+            liveStreams[streamId] = next;
+        }
+    }
     // Friendly device name per stream (latest device_id seen). Persists beyond a
     // subscription so a source node can be briefly "sniffed" for its name and
     // then released without losing the label.
@@ -148,41 +238,16 @@
         return undefined;
     }
 
-    // Frame appenders write into the buffer for their own stream (only if it is
-    // currently subscribed), producing a new liveStreams object so Svelte tracks
-    // the update. deviceName captures the frame's device_id for a friendly label.
+    // Frame appenders only push into the non-reactive pending buffer (cheap); the
+    // flush timer merges them into the reactive state at a capped rate.
     function addLiveImuSample(streamId: string, sample: ImuSample) {
-        const current = liveStreams[streamId];
-        if (!current) return;
-        const nextBuffer = [...current.imuSamples, sample];
-        liveStreams = {
-            ...liveStreams,
-            [streamId]: {
-                ...current,
-                streamType: "imu",
-                imuSamples:
-                    nextBuffer.length > MAX_LIVE_BUFFER_SIZE
-                        ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
-                        : nextBuffer,
-            },
-        };
+        if (!streamRefCounts.has(streamId)) return;
+        pendingFor(streamId).imu.push(sample);
     }
 
     function addLiveMuseSample(streamId: string, sample: MuseSample) {
-        const current = liveStreams[streamId];
-        if (!current) return;
-        const nextBuffer = [...current.museSamples, sample];
-        liveStreams = {
-            ...liveStreams,
-            [streamId]: {
-                ...current,
-                streamType: "muse",
-                museSamples:
-                    nextBuffer.length > MAX_LIVE_BUFFER_SIZE
-                        ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
-                        : nextBuffer,
-            },
-        };
+        if (!streamRefCounts.has(streamId)) return;
+        pendingFor(streamId).muse.push(sample);
     }
 
     function addLiveEmgSample(
@@ -190,41 +255,20 @@
         sample: BufferedEmgSample,
         deviceId?: string,
     ) {
+        // Device name is a one-off, so update it immediately (cheap, rare).
         if (deviceId && streamDeviceNames[streamId] !== deviceId) {
-            streamDeviceNames = { ...streamDeviceNames, [streamId]: deviceId };
+            streamDeviceNames[streamId] = deviceId;
         }
-        const current = liveStreams[streamId];
-        if (!current) return;
-        const nextBuffer = [...current.emgSamples, sample];
-        const maxHistoryMs = 20000;
-        let retainedDurationMs = 0;
-        let startIndex = nextBuffer.length;
-        while (startIndex > 0) {
-            retainedDurationMs += nextBuffer[startIndex - 1].frame_duration_ms;
-            if (
-                retainedDurationMs > maxHistoryMs &&
-                startIndex < nextBuffer.length
-            ) {
-                break;
-            }
-            startIndex -= 1;
-        }
-        liveStreams = {
-            ...liveStreams,
-            [streamId]: {
-                ...current,
-                streamType: "emg",
-                emgSamples: nextBuffer.slice(startIndex),
-                deviceName: deviceId || current.deviceName,
-            },
-        };
+        if (!streamRefCounts.has(streamId)) return;
+        pendingFor(streamId).emg.push(sample);
     }
 
     function subscribeToStream(streamId: string) {
         const next = (streamRefCounts.get(streamId) ?? 0) + 1;
         streamRefCounts.set(streamId, next);
         if (next === 1) {
-            liveStreams = { ...liveStreams, [streamId]: emptyLiveStream(streamId) };
+            liveStreams[streamId] = emptyLiveStream(streamId);
+            ensureLiveFlushTimer();
             wsManager?.subscribe([streamId]);
         }
     }
@@ -236,9 +280,9 @@
             return;
         }
         streamRefCounts.delete(streamId);
+        pendingByStream.delete(streamId);
         wsManager?.unsubscribe([streamId]);
-        const { [streamId]: _removed, ...rest } = liveStreams;
-        liveStreams = rest;
+        delete liveStreams[streamId];
     }
 
     function formatNumber(num: number, decimals: number = 4): string {
@@ -586,6 +630,9 @@
     onDestroy(() => {
         if (statusTimer !== null) {
             clearInterval(statusTimer);
+        }
+        if (liveFlushTimer !== null) {
+            clearInterval(liveFlushTimer);
         }
         wsManager?.disconnect();
     });
