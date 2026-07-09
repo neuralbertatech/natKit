@@ -157,16 +157,25 @@ select_model's rest/active gesture defaults.
   asserts it starts "running" with no output stream.
 - Verified: backend builds; npm run check 0 errors; vitest 27/27; smoke compiles.
 
-**Remaining Phase 4 slices:**
-- Slice C: the client-side recorder — when the session node runs its protocol,
-  subscribe to its upstream source streams, drive the cue timeline, and publish
-  the session bundle (metadata + cue/lifecycle markers) via the existing
-  publish_session_bundle. Multi-sensor = the session's N inputs recorded under one
-  session_id/marker timeline → one labeled dataset (device_ids spans sensors).
-- Slice D: first-class stored/discoverable training sessions + natVR label-field
-  generalization (cue_gesture → configurable).
+**Slice C DONE — client-side multi-sensor recorder (frontend-only, verified):**
+- VP `page.svelte`: `publishSessionBundle()` forwards the bundle over the backend
+  WS (mirrors saveStreamGraph); passed to the editor.
+- `StreamGraphEditor.svelte`: `resolveSessionInputStreamIds` (stream_source →
+  stream_id; transform/combine → runtime output_stream_id), `startSessionRecording`
+  / `tickSessionRecording` / `finishSessionRecording`. On Record: generate a
+  session_id from the protocol_id, publish a start bundle (metadata + session
+  lifecycle start marker, device_ids = all resolved streams), run the cue timeline
+  on a 100ms tick showing elapsed + active cue, and on completion/stop publish the
+  cue markers (clipped to end) + a session end marker. One session_id spans every
+  recorded stream → one labeled dataset. Record/Stop control + live cue display in
+  the session inspector. Verified: npm run check 0 errors; vitest 27/27.
 
-### Next: Phase 4 Slice C (client-side multi-sensor recorder) or as directed.
+**Remaining Phase 4 slice:**
+- Slice D: natVR label-field generalization (featurize/features `cue_gesture` →
+  configurable label field; select_model rest/active gesture defaults) so a
+  non-gesture protocol trains; + optionally surface stored sessions.
+
+### Next: Phase 4 Slice D (natVR label generalization).
 
 ---
 
