@@ -65,6 +65,10 @@
                 config_fields: entry.config_fields,
             })),
     );
+    // Phase 5: latest ML train-job status + resulting model path (proxied from
+    // the control plane over the same connection).
+    let trainJobStatus = $state<string | null>(null);
+    let trainModelPath = $state<string | null>(null);
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
@@ -250,6 +254,57 @@
         return true;
     }
 
+    // Track proxied ML control-plane messages for the train node (Phase 5).
+    function handleMlControlPlaneMessage(message: unknown): void {
+        const msg = message as {
+            type?: string;
+            status?: string;
+            message?: string;
+            error?: string;
+            job_id?: string;
+            report?: { model_path?: string | null } | null;
+        };
+        if (msg.type === "job_accepted") {
+            trainJobStatus = `queued (${msg.job_id ?? "job"})`;
+        } else if (msg.type === "job_status") {
+            trainJobStatus = `${msg.status ?? "?"}: ${msg.message ?? ""}`.trim();
+            if (msg.status === "completed" && msg.report?.model_path) {
+                trainModelPath = msg.report.model_path;
+            }
+        } else if (msg.type === "error") {
+            trainJobStatus = `error: ${msg.error ?? msg.message ?? "unknown"}`;
+        }
+    }
+
+    // Submit a train_validate job through the backend ML proxy (Phase 5).
+    function submitTrainJob(config: import(
+        "../StreamViewer/types"
+    ).TrainNodeConfig): void {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return;
+        }
+        trainModelPath = null;
+        trainJobStatus = "submitting…";
+        wsManager.sendMlAction({
+            action: "start_train_validate_job",
+            request_id: crypto.randomUUID(),
+            train_runs: config.train_runs,
+            eval_runs: config.eval_runs,
+            families: config.families,
+            ...(config.selected_fields.length
+                ? { selected_fields: config.selected_fields }
+                : {}),
+            window_ms: config.window_ms,
+            hop_ms: config.hop_ms,
+            vote_windows: config.vote_windows,
+            confidence_threshold: config.confidence_threshold,
+            min_hold_windows: config.min_hold_windows,
+            rest_gesture: config.rest_gesture,
+            active_gesture: config.active_gesture,
+        });
+    }
+
     function validateStreamGraph(graph: StreamGraphDefinition): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
@@ -344,6 +399,9 @@
             },
             onNodeCatalog: (message: NodeCatalogMessage) => {
                 nodeCatalog = message.nodes;
+            },
+            onMlControlPlane: (message: unknown) => {
+                handleMlControlPlaneMessage(message);
             },
             onStreamGraphList: (message: StreamGraphListMessage) => {
                 streamGraphs = message.graphs;
@@ -577,6 +635,9 @@
         {requestStreamGraphStatus}
         {saveStreamGraph}
         {publishSessionBundle}
+        {submitTrainJob}
+        {trainJobStatus}
+        {trainModelPath}
         {validateStreamGraph}
         {startStreamGraph}
         {stopStreamGraph}

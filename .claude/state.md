@@ -292,9 +292,29 @@ DECISIONS (user chose): 1 = service identity (v1). 2 = LDA-only classify (v1).
   model, sanitize surfaces durable path/family, no-model→ephemeral). Full train→classify
   e2e not runnable here (needs recorded runs + a live pipeline).
 
-Remaining Phase 5 slices: A (train node kind + inspector submitting via the proxy;
-classify already = lda_classify + ClassificationViewer; wire model_path from a completed
-job's report into a classify node), D (natVR label-field generalization; classify LDA-only v1).
+**Slice A DONE — train node (backend + frontend), verified:**
+- Backend (submodule 82ad060): "train" node kind mirroring session — allow-list,
+  validation (no outputs; inputs optional — dataset via run selectors), normalization,
+  start-dispatch (marks running; job submitted client-side), catalog entry (category
+  "ml", runner "control_plane"). Smoke covers it. Live-verified: catalog=21 types incl.
+  train; train graph validates clean.
+- Frontend: TrainNodeConfig + StreamGraphTrainNode (types.ts). Editor: addTrainNode +
+  a train inspector (families/train_runs/eval_runs/window_ms/hop_ms) + "Submit training
+  job" button + job-status + model-path display; StreamGraphNode Cpu icon + meta. VP
+  page.svelte: onMlControlPlane→handleMlControlPlaneMessage (tracks trainJobStatus +
+  trainModelPath from job_accepted/job_status), submitTrainJob() sends
+  start_train_validate_job via wsManager.sendMlAction (through the Slice-B proxy). Props
+  passed to the editor. Verified: npm run check 0 errors; vitest 27/27; Playwright — Train
+  in palette, adds a node, inspector shows the train-spec form + Submit button, no console
+  errors. Full train RUN needs recorded runs (not available here).
+
+PHASE 5 essentially COMPLETE: B (proxy) + C (durable artifacts) + A (train node) done +
+verified; classify = the existing lda_classify transform + ClassificationViewer (wire a
+train node's model_path into an lda_classify node's model_path config to run predictions).
+Remaining minor: D = natVR "gesture"→"label" rename (cosmetic; training on arbitrary
+classes already works) + SVM/RF C++ inference (deferred; classify LDA-only for v1) +
+remote-worker durable artifacts. Test artifacts left in the backend container's
+stream_graphs.json: vp-verify, vp-train-verify, "verify" (ephemeral; vanish on recreate).
 
 Phase 6 (script nodes) deferred by design. Phases 7 (reactive/composite round-trip) + 8
 (beginner UX) remain and are independent of the control-plane work.

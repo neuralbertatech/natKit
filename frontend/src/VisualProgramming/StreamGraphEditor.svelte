@@ -2,6 +2,7 @@
     import {
         Activity,
         Archive,
+        Cpu,
         Check,
         CircleDot,
         Download,
@@ -95,6 +96,8 @@
         SessionNodeConfig,
         SessionProtocol,
         StreamGraphSessionNode,
+        StreamGraphTrainNode,
+        TrainNodeConfig,
         MuseSample,
         BufferedEmgSample,
         DataSchemaDescriptor,
@@ -114,6 +117,11 @@
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
         publishSessionBundle: (payload: SessionPublishBundleInput) => boolean;
+        // Phase 5: submit a train_validate job via the backend ML proxy, and
+        // surface the latest job status + resulting model path for train nodes.
+        submitTrainJob: (config: TrainNodeConfig) => void;
+        trainJobStatus: string | null;
+        trainModelPath: string | null;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
         startStreamGraph: (graphId: string) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
@@ -143,6 +151,9 @@
         requestStreamGraphStatus,
         saveStreamGraph,
         publishSessionBundle,
+        submitTrainJob,
+        trainJobStatus,
+        trainModelPath,
         validateStreamGraph,
         startStreamGraph,
         stopStreamGraph,
@@ -308,6 +319,10 @@
 
     const selectedSessionNode = $derived(
         selectedNode?.kind === "session" ? selectedNode : null,
+    );
+
+    const selectedTrainNode = $derived(
+        selectedNode?.kind === "train" ? selectedNode : null,
     );
 
     const selectedNodeCapability = $derived(
@@ -674,7 +689,46 @@
             addTransformNode(entry.node_type, position);
         } else if (entry.kind === "session") {
             addSessionNode(position);
+        } else if (entry.kind === "train") {
+            addTrainNode(position);
         }
+    }
+
+    function buildDefaultTrainConfig(): TrainNodeConfig {
+        return {
+            families: ["lda"],
+            train_runs: [],
+            eval_runs: [],
+            selected_fields: [],
+            window_ms: 200,
+            hop_ms: 50,
+            vote_windows: 5,
+            confidence_threshold: 0.6,
+            min_hold_windows: 2,
+            rest_gesture: "rest",
+            active_gesture: "fist",
+        };
+    }
+
+    function addTrainNode(
+        position: StreamGraphPosition = contextMenu.open
+            ? contextMenu.graphPosition
+            : getDefaultInsertionPosition(),
+    ) {
+        const nextGraph = cloneGraph(draftGraph);
+        const nodeId = `train/${Date.now()}`;
+        nextGraph.nodes.push({
+            id: nodeId,
+            kind: "train",
+            label: "Train",
+            position: { ...position },
+            config: buildDefaultTrainConfig(),
+        });
+        selectedNodeId = nodeId;
+        selectedNodeIds = new Set([nodeId]);
+        selectedEdgeId = null;
+        closeContextMenu();
+        markDraftChanged(nextGraph);
     }
 
     // A blank generic protocol — deliberately NOT the EMG gesture defaults, to
@@ -726,6 +780,7 @@
         if (kind === "viewer") return Monitor;
         if (kind === "sink") return Archive;
         if (kind === "session") return CircleDot;
+        if (kind === "train") return Cpu;
         return GitBranch;
     }
 
@@ -1120,6 +1175,15 @@
             .split(",")
             .map((value) => value.trim())
             .filter(Boolean);
+    }
+
+    function updateTrainConfig(patch: Partial<TrainNodeConfig>) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "train") {
+                return node;
+            }
+            return { ...node, config: { ...node.config, ...patch } };
+        });
     }
 
     const selectedSessionSummary = $derived.by(() => {
@@ -2426,6 +2490,101 @@
                             {/if}
                             {#if sessionRecordMessage}
                                 <p class="muted-text">{sessionRecordMessage}</p>
+                            {/if}
+                        {/if}
+
+                        {#if selectedTrainNode}
+                            {@const cfg = selectedTrainNode.config}
+                            <label>
+                                <span>Model families (comma-separated)</span>
+                                <input
+                                    value={cfg.families.join(", ")}
+                                    oninput={(event) =>
+                                        updateTrainConfig({
+                                            families: parseClassList(
+                                                (event.currentTarget as HTMLInputElement).value,
+                                            ),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Train runs (session:run, comma-separated)</span>
+                                <input
+                                    value={cfg.train_runs.join(", ")}
+                                    oninput={(event) =>
+                                        updateTrainConfig({
+                                            train_runs: parseClassList(
+                                                (event.currentTarget as HTMLInputElement).value,
+                                            ),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Eval runs (session:run, comma-separated)</span>
+                                <input
+                                    value={cfg.eval_runs.join(", ")}
+                                    oninput={(event) =>
+                                        updateTrainConfig({
+                                            eval_runs: parseClassList(
+                                                (event.currentTarget as HTMLInputElement).value,
+                                            ),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Window (ms)</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={cfg.window_ms}
+                                    oninput={(event) =>
+                                        updateTrainConfig({
+                                            window_ms: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Hop (ms)</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={cfg.hop_ms}
+                                    oninput={(event) =>
+                                        updateTrainConfig({
+                                            hop_ms: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <div class="inspector-action-row">
+                                <button
+                                    type="button"
+                                    class="action-btn"
+                                    disabled={cfg.families.length === 0 ||
+                                        cfg.train_runs.length === 0}
+                                    onclick={() =>
+                                        submitTrainJob(selectedTrainNode.config)}
+                                >
+                                    <Cpu size={15} />
+                                    Submit training job
+                                </button>
+                            </div>
+                            {#if trainJobStatus}
+                                <div class="summary-row">
+                                    <span>Job</span>
+                                    <strong>{trainJobStatus}</strong>
+                                </div>
+                            {/if}
+                            {#if trainModelPath}
+                                <div class="summary-row">
+                                    <span>Model</span>
+                                    <strong>{trainModelPath}</strong>
+                                </div>
+                                <p class="muted-text">
+                                    Paste this path into a classify (lda_classify)
+                                    node's model_path to run predictions.
+                                </p>
                             {/if}
                         {/if}
 

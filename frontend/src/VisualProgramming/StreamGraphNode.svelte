@@ -3,6 +3,7 @@
         Archive,
         CircleDot,
         ClipboardList,
+        Cpu,
         GitBranch,
         Monitor,
         Package,
@@ -99,6 +100,8 @@
                 <Package size={14} />
             {:else if node.kind === "session"}
                 <ClipboardList size={14} />
+            {:else if node.kind === "train"}
+                <Cpu size={14} />
             {:else}
                 <GitBranch size={14} />
             {/if}
@@ -173,6 +176,9 @@
                     >{node.config.protocol.classes.length} classes ·
                     {(node.input_port_ids?.length ?? 0)} sensors</span
                 >
+            {:else if node.kind === "train"}
+                <span>Train model</span>
+                <span>{node.config.families.join(", ") || "no families"}</span>
             {/if}
         </div>
         <div class="node-column outputs">
