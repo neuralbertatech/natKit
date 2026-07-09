@@ -776,6 +776,15 @@ export interface StopStreamGraphAction {
   graph_id: string;
 }
 
+// Incremental reactivity (Phase 7): restart one node + its downstream subgraph
+// in a running graph after its config was saved.
+export interface RestartStreamGraphNodeAction {
+  action: "restart_stream_graph_node";
+  request_id: string;
+  graph_id: string;
+  node_id: string;
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -796,4 +805,5 @@ export type ClientAction =
   | ValidateStreamGraphAction
   | GetStreamGraphStatusAction
   | StartStreamGraphAction
-  | StopStreamGraphAction;
+  | StopStreamGraphAction
+  | RestartStreamGraphNodeAction;

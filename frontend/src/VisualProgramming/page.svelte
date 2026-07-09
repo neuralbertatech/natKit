@@ -236,6 +236,21 @@
         return true;
     }
 
+    // Incremental reactivity (Phase 7): after a config edit is saved in a
+    // running graph, restart only the affected node + its downstream subgraph.
+    function restartStreamGraphNode(graphId: string, nodeId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "restart_stream_graph_node",
+            request_id: `stream-graph-restart:${Date.now()}`,
+            graph_id: graphId,
+            node_id: nodeId,
+        });
+        return true;
+    }
+
     // Publish a session's metadata + markers (Phase 4). Recording is driven
     // client-side by a session node; this forwards the bundle over the same
     // backend WebSocket that carries the graph protocol.
@@ -634,6 +649,7 @@
         {listStreamGraphs}
         {requestStreamGraphStatus}
         {saveStreamGraph}
+        {restartStreamGraphNode}
         {publishSessionBundle}
         {submitTrainJob}
         {trainJobStatus}
