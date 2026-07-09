@@ -2,6 +2,7 @@
     import {
         Archive,
         CircleDot,
+        ClipboardList,
         GitBranch,
         Monitor,
         Package,
@@ -96,6 +97,8 @@
                 <Archive size={14} />
             {:else if node.kind === "composite"}
                 <Package size={14} />
+            {:else if node.kind === "session"}
+                <ClipboardList size={14} />
             {:else}
                 <GitBranch size={14} />
             {/if}
@@ -163,6 +166,12 @@
                     >{(node.template?.nodes.length ?? 0)} nodes ·
                     {(node.input_port_ids?.length ?? 0)} in /
                     {(node.output_port_ids?.length ?? 0)} out</span
+                >
+            {:else if node.kind === "session"}
+                <span>{node.config.protocol.label}</span>
+                <span
+                    >{node.config.protocol.classes.length} classes ·
+                    {(node.input_port_ids?.length ?? 0)} sensors</span
                 >
             {/if}
         </div>

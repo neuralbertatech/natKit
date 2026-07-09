@@ -136,7 +136,37 @@ select_model's rest/active gesture defaults.
 - Slice D: make "training session" a first-class stored/discoverable object; natVR
   label-field generalization (cue_gesture → configurable label field).
 
-### Next: continue Phase 4 Slice B (session node kind) or as directed.
+**Slice B DONE — "session" is a first-class node kind (verified):**
+- Backend `StreamViewerWebSocket.cpp`: added "session" to the kind allow-list +
+  a validation branch (no output ports; >=1 connected input, no upper bound —
+  multi-sensor) + port normalization (defaults to in1, clears outputs, multiple
+  inputs preserved) + a start-dispatch branch (marks it "running"; recording is
+  client-side, no worker/output stream) + a node-catalog entry (category
+  "session", runner "frontend", variadic_inputs). The protocol persists in the
+  node's generic `config` json (round-trips like transform config).
+- Frontend: `SessionProtocol` MOVED to types.ts (shared home; experiment.ts
+  imports + re-exports it — avoids a cycle). New `SessionNodeConfig` +
+  `StreamGraphSessionNode` (config = {protocol, participant_id?, notes?}); added
+  "session" to StreamGraphNodeKind + the node union. StreamGraphEditor:
+  `addSessionNode` (generic 2-class default, 2 input ports) wired into
+  `addCatalogNode`; a full protocol-authoring inspector section (label/id/classes
+  (comma-sep)/rest_class/reps/hold/rest/lead-in/tail/participant/notes) with a live
+  schedule summary via buildCueScheduleForProtocol+scheduleDurationMs.
+  StreamGraphNode.svelte: ClipboardList icon + session meta.
+- Smoke test: the graph now includes a session node (transform → session) and
+  asserts it starts "running" with no output stream.
+- Verified: backend builds; npm run check 0 errors; vitest 27/27; smoke compiles.
+
+**Remaining Phase 4 slices:**
+- Slice C: the client-side recorder — when the session node runs its protocol,
+  subscribe to its upstream source streams, drive the cue timeline, and publish
+  the session bundle (metadata + cue/lifecycle markers) via the existing
+  publish_session_bundle. Multi-sensor = the session's N inputs recorded under one
+  session_id/marker timeline → one labeled dataset (device_ids spans sensors).
+- Slice D: first-class stored/discoverable training sessions + natVR label-field
+  generalization (cue_gesture → configurable).
+
+### Next: Phase 4 Slice C (client-side multi-sensor recorder) or as directed.
 
 ---
 

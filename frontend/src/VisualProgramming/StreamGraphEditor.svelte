@@ -36,6 +36,10 @@
     import ClassificationViewer from "../StreamViewer/ClassificationViewer.svelte";
     import NodeConfigFields from "../StreamViewer/NodeConfigFields.svelte";
     import { chooseViewerRenderer } from "../StreamViewer/viewerRegistry";
+    import {
+        buildCueScheduleForProtocol,
+        scheduleDurationMs,
+    } from "../StreamViewer/experiment";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import {
         DEFAULT_VIEWPORT,
@@ -81,6 +85,8 @@
         TransformCapability,
         TransformCapabilityConfigField,
         NodeCatalogEntry,
+        SessionNodeConfig,
+        SessionProtocol,
         MuseSample,
         BufferedEmgSample,
         DataSchemaDescriptor,
@@ -288,6 +294,10 @@
 
     const selectedCombineNode = $derived(
         selectedNode?.kind === "combine" ? selectedNode : null,
+    );
+
+    const selectedSessionNode = $derived(
+        selectedNode?.kind === "session" ? selectedNode : null,
     );
 
     const selectedNodeCapability = $derived(
@@ -652,12 +662,60 @@
             addCombineNode(position);
         } else if (entry.kind === "transform") {
             addTransformNode(entry.node_type, position);
+        } else if (entry.kind === "session") {
+            addSessionNode(position);
         }
+    }
+
+    // A blank generic protocol — deliberately NOT the EMG gesture defaults, to
+    // keep the session node sensor-agnostic. The user authors classes/timing in
+    // the inspector. (Phase 4.)
+    function buildDefaultSessionConfig(): SessionNodeConfig {
+        return {
+            protocol: {
+                protocol_id: "session",
+                label: "New session",
+                classes: ["class_a", "class_b"],
+                rest_class: "rest",
+                repetitions: 3,
+                hold_s: 3,
+                rest_s: 2,
+                lead_in_s: 3,
+                tail_rest_s: 2,
+                seed: 1,
+            },
+            participant_id: "",
+            notes: "",
+        };
+    }
+
+    // Starts with 2 input ports (record two sensors); more can be wired up.
+    function addSessionNode(
+        position: StreamGraphPosition = contextMenu.open
+            ? contextMenu.graphPosition
+            : getDefaultInsertionPosition(),
+    ) {
+        const nextGraph = cloneGraph(draftGraph);
+        const nodeId = `session/${Date.now()}`;
+        nextGraph.nodes.push({
+            id: nodeId,
+            kind: "session",
+            label: "Session",
+            position: { ...position },
+            input_port_ids: ["in1", "in2"],
+            config: buildDefaultSessionConfig(),
+        });
+        selectedNodeId = nodeId;
+        selectedNodeIds = new Set([nodeId]);
+        selectedEdgeId = null;
+        closeContextMenu();
+        markDraftChanged(nextGraph);
     }
 
     function utilityIcon(kind: string) {
         if (kind === "viewer") return Monitor;
         if (kind === "sink") return Archive;
+        if (kind === "session") return CircleDot;
         return GitBranch;
     }
 
@@ -1019,6 +1077,53 @@
         });
         markDraftChanged(nextGraph);
     }
+
+    function updateSessionProtocol(patch: Partial<SessionProtocol>) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "session") {
+                return node;
+            }
+            return {
+                ...node,
+                config: {
+                    ...node.config,
+                    protocol: { ...node.config.protocol, ...patch },
+                },
+            };
+        });
+    }
+
+    function updateSessionMeta(
+        patch: Partial<Pick<SessionNodeConfig, "participant_id" | "notes">>,
+    ) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "session") {
+                return node;
+            }
+            return { ...node, config: { ...node.config, ...patch } };
+        });
+    }
+
+    // Parse the comma-separated class editor into a clean vocabulary.
+    function parseClassList(raw: string): string[] {
+        return raw
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+    }
+
+    const selectedSessionSummary = $derived.by(() => {
+        if (!selectedSessionNode) {
+            return null;
+        }
+        const schedule = buildCueScheduleForProtocol(
+            selectedSessionNode.config.protocol,
+        );
+        return {
+            holdCues: schedule.filter((cue) => cue.phase === "hold").length,
+            durationS: Math.round(scheduleDurationMs(schedule) / 1000),
+        };
+    });
 
     function updateTransformConfigField(
         field: TransformCapabilityConfigField,
@@ -1920,6 +2025,158 @@
                                     </button>
                                 </div>
                             </div>
+                        {/if}
+
+                        {#if selectedSessionNode}
+                            {@const protocol = selectedSessionNode.config.protocol}
+                            <label>
+                                <span>Protocol name</span>
+                                <input
+                                    value={protocol.label}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            label: (event.currentTarget as HTMLInputElement).value,
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Protocol id</span>
+                                <input
+                                    value={protocol.protocol_id}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            protocol_id: sanitizeIdentifier(
+                                                (event.currentTarget as HTMLInputElement).value,
+                                            ),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Classes (comma-separated labels)</span>
+                                <input
+                                    value={protocol.classes.join(", ")}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            classes: parseClassList(
+                                                (event.currentTarget as HTMLInputElement).value,
+                                            ),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Rest / idle class</span>
+                                <input
+                                    value={protocol.rest_class}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            rest_class: (event.currentTarget as HTMLInputElement).value,
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Repetitions</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={protocol.repetitions}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            repetitions: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Hold (s)</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={protocol.hold_s}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            hold_s: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Rest (s)</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={protocol.rest_s}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            rest_s: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Lead-in (s)</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={protocol.lead_in_s}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            lead_in_s: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Tail rest (s)</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={protocol.tail_rest_s}
+                                    oninput={(event) =>
+                                        updateSessionProtocol({
+                                            tail_rest_s: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Participant id</span>
+                                <input
+                                    value={selectedSessionNode.config.participant_id ?? ""}
+                                    oninput={(event) =>
+                                        updateSessionMeta({
+                                            participant_id: (event.currentTarget as HTMLInputElement).value,
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Notes</span>
+                                <input
+                                    value={selectedSessionNode.config.notes ?? ""}
+                                    oninput={(event) =>
+                                        updateSessionMeta({
+                                            notes: (event.currentTarget as HTMLInputElement).value,
+                                        })}
+                                />
+                            </label>
+                            {#if selectedSessionSummary}
+                                <div class="summary-row">
+                                    <span>Schedule</span>
+                                    <strong
+                                        >{selectedSessionSummary.holdCues} cues · ~{selectedSessionSummary.durationS}s</strong
+                                    >
+                                </div>
+                            {/if}
+                            <div class="summary-row">
+                                <span
+                                    >Recording inputs ({selectedSessionNode
+                                        .input_port_ids?.length ?? 0})</span
+                                >
+                            </div>
+                            <p class="muted-text">
+                                Multi-sensor capture + publish runs client-side
+                                (next slice); the protocol above is saved with
+                                the graph.
+                            </p>
                         {/if}
 
                         {#if selectedNodeRuntimeStatus}
