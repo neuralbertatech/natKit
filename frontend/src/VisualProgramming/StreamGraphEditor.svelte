@@ -107,9 +107,7 @@
         StreamGraphSessionNode,
         StreamGraphTrainNode,
         TrainNodeConfig,
-        MuseSample,
-        BufferedEmgSample,
-        DataSchemaDescriptor,
+        LiveStreamData,
     } from "../StreamViewer/types";
 
     interface Props {
@@ -138,12 +136,10 @@
         startStreamGraph: (graphId: string) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
         inspectStream: (streamId: string) => void;
-        liveStreamId: string | null;
-        liveStreamType: "imu" | "muse" | "emg" | null;
-        liveLatestMuseSample: MuseSample | undefined;
-        liveEmgSamples: BufferedEmgSample[];
-        livePrimaryDescriptor: DataSchemaDescriptor | undefined;
-        liveDescriptorRecordValue: unknown;
+        // Per-stream live buffers (keyed by stream id) so multiple inspectors can
+        // be live at once, plus friendly device names per stream.
+        liveStreams: Record<string, LiveStreamData>;
+        streamDeviceNames: Record<string, string>;
         subscribeToStream: (streamId: string) => void;
         unsubscribeFromStream: (streamId: string) => void;
         formatNumber: (num: number, decimals?: number) => string;
@@ -171,12 +167,8 @@
         startStreamGraph,
         stopStreamGraph,
         inspectStream,
-        liveStreamId,
-        liveStreamType,
-        liveLatestMuseSample,
-        liveEmgSamples,
-        livePrimaryDescriptor,
-        liveDescriptorRecordValue,
+        liveStreams,
+        streamDeviceNames,
         subscribeToStream,
         unsubscribeFromStream,
         formatNumber,
@@ -1796,18 +1788,15 @@
         if (!node || node.kind !== "viewer") {
             return;
         }
-        const streamId = nodeRuntimeStatus(node.id)?.output_stream_id;
-        if (!streamId) {
+        if (!nodeRuntimeStatus(node.id)?.output_stream_id) {
             return;
         }
+        // Subscription is reconciled by the $effect below (keyed on the expanded
+        // node + inline viewers); this just opens the overlay.
         expandedViewerNodeId = node.id;
-        subscribeToStream(String(streamId));
     }
 
     function closeViewerData() {
-        if (expandedViewerStreamId) {
-            unsubscribeFromStream(String(expandedViewerStreamId));
-        }
         expandedViewerNodeId = null;
     }
 
@@ -1820,15 +1809,6 @@
         }
     }
 
-    // Inline viewer graphs. Only one stream buffers live at a time (page.svelte
-    // keys its buffers on liveStreamId), so an inline chart renders live data
-    // only for the currently-subscribed stream; toggling inline on subscribes to
-    // that node's stream and makes it the active one.
-    function inlineViewerIsLive(nodeId: string): boolean {
-        const streamId = nodeRuntimeStatus(nodeId)?.output_stream_id;
-        return streamId != null && String(streamId) === String(liveStreamId);
-    }
-
     function setInlineViewerGraph(nodeId: string, enabled: boolean) {
         const nextGraph = cloneGraph(draftGraph);
         for (const node of nextGraph.nodes) {
@@ -1837,18 +1817,52 @@
             }
         }
         markDraftChanged(nextGraph);
-
-        const streamId = nodeRuntimeStatus(nodeId)?.output_stream_id;
-        if (enabled && streamId) {
-            subscribeToStream(String(streamId));
-        } else if (
-            !enabled &&
-            streamId &&
-            String(streamId) === String(liveStreamId)
-        ) {
-            unsubscribeFromStream(String(streamId));
-        }
+        // Subscriptions are reconciled by the effect below — each inline viewer
+        // (and the expanded overlay) subscribes its own stream, so any number
+        // render live at once.
     }
+
+    // Keep the set of live subscriptions in sync with the streams currently being
+    // inspected: every inline-enabled viewer node with a resolved output stream,
+    // plus the expanded overlay. Ref-counted on the page side, so two viewers on
+    // the same stream share one feed and neither closes the other's.
+    const editorSubscribed = new Set<string>();
+    $effect(() => {
+        const desired = new Set<string>();
+        for (const node of draftGraph.nodes) {
+            if (node.kind === "viewer" && node.inline_graph) {
+                const streamId = nodeRuntimeStatus(node.id)?.output_stream_id;
+                if (streamId) {
+                    desired.add(String(streamId));
+                }
+            }
+            // Briefly sniff a source stream we don't yet have a name for, so the
+            // node can show its device name; once named it drops out of `desired`
+            // and is released (the name persists in the cache).
+            if (
+                node.kind === "stream_source" &&
+                node.stream_id &&
+                !streamDeviceNames[node.stream_id]
+            ) {
+                desired.add(node.stream_id);
+            }
+        }
+        if (expandedViewerStreamId) {
+            desired.add(String(expandedViewerStreamId));
+        }
+        for (const streamId of desired) {
+            if (!editorSubscribed.has(streamId)) {
+                editorSubscribed.add(streamId);
+                subscribeToStream(streamId);
+            }
+        }
+        for (const streamId of [...editorSubscribed]) {
+            if (!desired.has(streamId)) {
+                editorSubscribed.delete(streamId);
+                unsubscribeFromStream(streamId);
+            }
+        }
+    });
 
     // --- Port anchors + node resize ------------------------------------------
     // Each node reports its port dots' offsets from its top-left (unscaled graph
@@ -1912,9 +1926,10 @@
     }
 
     onDestroy(() => {
-        if (expandedViewerStreamId) {
-            unsubscribeFromStream(String(expandedViewerStreamId));
+        for (const streamId of editorSubscribed) {
+            unsubscribeFromStream(streamId);
         }
+        editorSubscribed.clear();
         if (sessionRecordTimer) {
             clearInterval(sessionRecordTimer);
             sessionRecordTimer = null;
@@ -1993,17 +2008,33 @@
     // name. A per-window feature vector routes to the bars/heatmap viewer, a
     // classifier frame to the classification readout, a waveform to the trace,
     // and anything else to the generic inspector.
-    const liveRenderer = $derived.by(() => {
-        const latest = liveEmgSamples.at(-1);
-        const hint = latest
+    // Resolve everything a renderer needs for ONE stream id from the per-stream
+    // buffers, so any number of viewers render independently.
+    function liveStreamView(streamId: string | null | undefined) {
+        const data = streamId ? liveStreams[streamId] : undefined;
+        const emgSamples = data?.emgSamples ?? [];
+        const latestMuse = data?.museSamples.at(-1);
+        const latestEmg = emgSamples.at(-1);
+        const descriptor = streamId
+            ? availableStreams.find((option) => option.streamId === streamId)
+                  ?.descriptor
+            : undefined;
+        const hint = latestEmg
             ? {
-                  n_channels: latest.n_channels,
-                  samples_per_channel: latest.samples_per_channel,
-                  channel_labels: latest.channel_labels,
+                  n_channels: latestEmg.n_channels,
+                  samples_per_channel: latestEmg.samples_per_channel,
+                  channel_labels: latestEmg.channel_labels,
               }
             : undefined;
-        return chooseViewerRenderer(livePrimaryDescriptor, hint);
-    });
+        return {
+            subscribed: data != null,
+            emgSamples,
+            latestMuse,
+            descriptor,
+            renderer: chooseViewerRenderer(descriptor, hint),
+            recordValue: latestEmg ?? latestMuse ?? data?.imuSamples.at(-1),
+        };
+    }
 
 </script>
 
@@ -2014,37 +2045,41 @@
     onkeydown={handleWindowKeydown}
 />
 
-{#snippet inlineViewerChart(node: EditorGraphNode)}
-    {#if !inlineViewerIsLive(node.id)}
-        <p class="inline-note">
-            {nodeRuntimeStatus(node.id)?.output_stream_id
-                ? "Streaming to another viewer."
-                : "Start the graph to see live data."}
-        </p>
-    {:else if liveRenderer === "muse"}
-        {#if liveLatestMuseSample}
-            <MuseViewer sample={liveLatestMuseSample} {formatNumber} />
+{#snippet streamRenderer(streamId: string | null, compact: boolean)}
+    {@const view = liveStreamView(streamId)}
+    {#if !streamId}
+        <p class="inline-note">Start the graph to see live data.</p>
+    {:else if !view.subscribed}
+        <p class="inline-note">Connecting…</p>
+    {:else if view.renderer === "muse"}
+        {#if view.latestMuse}
+            <MuseViewer sample={view.latestMuse} {formatNumber} />
         {:else}
             <p class="inline-note">Waiting for data…</p>
         {/if}
-    {:else if liveRenderer === "classification"}
-        <ClassificationViewer samples={liveEmgSamples} {formatNumber} />
-    {:else if liveRenderer === "feature_vector"}
-        <FeatureVectorViewer samples={liveEmgSamples} {formatNumber} />
-    {:else if liveRenderer === "channel_frame"}
-        {#if liveEmgSamples.length > 0}
-            <ChannelFrameViewer samples={liveEmgSamples} {formatNumber} compact />
+    {:else if view.renderer === "classification"}
+        <ClassificationViewer samples={view.emgSamples} {formatNumber} />
+    {:else if view.renderer === "feature_vector"}
+        <FeatureVectorViewer samples={view.emgSamples} {formatNumber} />
+    {:else if view.renderer === "channel_frame"}
+        {#if view.emgSamples.length > 0}
+            <ChannelFrameViewer samples={view.emgSamples} {formatNumber} {compact} />
         {:else}
             <p class="inline-note">Waiting for data…</p>
         {/if}
-    {:else if livePrimaryDescriptor}
+    {:else if view.descriptor}
         <SchemaDescriptorInspector
-            descriptor={livePrimaryDescriptor}
-            recordValue={liveDescriptorRecordValue}
+            descriptor={view.descriptor}
+            recordValue={view.recordValue}
         />
     {:else}
         <p class="inline-note">Waiting for data on this stream…</p>
     {/if}
+{/snippet}
+
+{#snippet inlineViewerChart(node: EditorGraphNode)}
+    {@const streamId = nodeRuntimeStatus(node.id)?.output_stream_id}
+    {@render streamRenderer(streamId ? String(streamId) : null, true)}
 {/snippet}
 
 <div class="graph-editor">
@@ -2491,8 +2526,10 @@
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
                             {inlineViewerChart}
+                            {streamDeviceNames}
                             onPortLayout={handlePortLayout}
                             onResize={handleNodeResize}
+                            onToggleInlineGraph={setInlineViewerGraph}
                             onSelect={selectNode}
                             onStartDrag={startNodeDrag}
                             onPortClick={handlePortClick}
@@ -3203,22 +3240,6 @@
                             </div>
                         {/if}
 
-                        {#if selectedNode.kind === "viewer"}
-                            <label class="inline-graph-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={selectedNode.inline_graph === true}
-                                    onchange={(event) =>
-                                        setInlineViewerGraph(
-                                            selectedNode.id,
-                                            (event.currentTarget as HTMLInputElement)
-                                                .checked,
-                                        )}
-                                />
-                                <span>Show live graph on node</span>
-                            </label>
-                        {/if}
-
                         {#if nodeDiagnostics(selectedNode.id).length > 0}
                             <div class="diagnostic-list">
                                 {#each nodeDiagnostics(selectedNode.id) as diagnostic}
@@ -3493,39 +3514,10 @@
                 </button>
             </div>
             <div class="viewer-data-body">
-                {#if liveRenderer === "muse"}
-                    {#if liveLatestMuseSample}
-                        <MuseViewer
-                            sample={liveLatestMuseSample}
-                            {formatNumber}
-                        />
-                    {:else}
-                        <p class="muted-text">Waiting for data…</p>
-                    {/if}
-                {:else if liveRenderer === "classification"}
-                    <ClassificationViewer
-                        samples={liveEmgSamples}
-                        {formatNumber}
-                    />
-                {:else if liveRenderer === "feature_vector"}
-                    <FeatureVectorViewer
-                        samples={liveEmgSamples}
-                        {formatNumber}
-                    />
-                {:else if liveRenderer === "channel_frame"}
-                    {#if liveEmgSamples.length > 0}
-                        <ChannelFrameViewer samples={liveEmgSamples} {formatNumber} />
-                    {:else}
-                        <p class="muted-text">Waiting for data…</p>
-                    {/if}
-                {:else if livePrimaryDescriptor}
-                    <SchemaDescriptorInspector
-                        descriptor={livePrimaryDescriptor}
-                        recordValue={liveDescriptorRecordValue}
-                    />
-                {:else}
-                    <p class="muted-text">Waiting for data on this stream…</p>
-                {/if}
+                {@render streamRenderer(
+                    expandedViewerStreamId ? String(expandedViewerStreamId) : null,
+                    false,
+                )}
             </div>
             <div class="viewer-data-footer">
                 <button
@@ -4118,19 +4110,6 @@
 
     .inspector-action {
         align-self: flex-start;
-    }
-
-    .inline-graph-toggle {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-size: 0.85rem;
-        color: #cdd8f5;
-        cursor: pointer;
-    }
-
-    .inline-graph-toggle input {
-        cursor: pointer;
     }
 
     .inspector-action-row {

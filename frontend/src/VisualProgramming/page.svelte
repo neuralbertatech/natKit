@@ -32,6 +32,7 @@
         EmgDataMessage,
         BufferedEmgSample,
         DataSchemaDescriptor,
+        LiveStreamData,
     } from "../StreamViewer/types";
     import type { SessionPublishBundleInput } from "../StreamViewer/experiment";
 
@@ -92,11 +93,24 @@
     // control-plane only, so we subscribe/unsubscribe on demand instead of
     // buffering every available stream.
     const MAX_LIVE_BUFFER_SIZE = 100;
-    let liveStreamId = $state<string | null>(null);
-    let liveStreamType = $state<"imu" | "muse" | "emg" | null>(null);
-    let liveImuSamples = $state<ImuSample[]>([]);
-    let liveMuseSamples = $state<MuseSample[]>([]);
-    let liveEmgSamples = $state<BufferedEmgSample[]>([]);
+    // Per-stream live buffers keyed by stream id, so any number of inspectors can
+    // be live at once (not just one). Ref-counted subscriptions let several
+    // viewer nodes share a stream without one closing another's feed.
+    let liveStreams = $state<Record<string, LiveStreamData>>({});
+    const streamRefCounts = new Map<string, number>();
+    // Friendly device name per stream (latest device_id seen). Persists beyond a
+    // subscription so a source node can be briefly "sniffed" for its name and
+    // then released without losing the label.
+    let streamDeviceNames = $state<Record<string, string>>({});
+
+    function emptyLiveStream(streamId: string): LiveStreamData {
+        return {
+            streamType: inferLiveStreamType(streamId) ?? null,
+            emgSamples: [],
+            museSamples: [],
+            imuSamples: [],
+        };
+    }
 
     function inferLiveStreamType(
         streamId: string,
@@ -134,36 +148,54 @@
         return undefined;
     }
 
+    // Frame appenders write into the buffer for their own stream (only if it is
+    // currently subscribed), producing a new liveStreams object so Svelte tracks
+    // the update. deviceName captures the frame's device_id for a friendly label.
     function addLiveImuSample(streamId: string, sample: ImuSample) {
-        if (streamId !== liveStreamId) {
-            return;
-        }
-        liveStreamType = "imu";
-        const nextBuffer = [...liveImuSamples, sample];
-        liveImuSamples =
-            nextBuffer.length > MAX_LIVE_BUFFER_SIZE
-                ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
-                : nextBuffer;
+        const current = liveStreams[streamId];
+        if (!current) return;
+        const nextBuffer = [...current.imuSamples, sample];
+        liveStreams = {
+            ...liveStreams,
+            [streamId]: {
+                ...current,
+                streamType: "imu",
+                imuSamples:
+                    nextBuffer.length > MAX_LIVE_BUFFER_SIZE
+                        ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
+                        : nextBuffer,
+            },
+        };
     }
 
     function addLiveMuseSample(streamId: string, sample: MuseSample) {
-        if (streamId !== liveStreamId) {
-            return;
-        }
-        liveStreamType = "muse";
-        const nextBuffer = [...liveMuseSamples, sample];
-        liveMuseSamples =
-            nextBuffer.length > MAX_LIVE_BUFFER_SIZE
-                ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
-                : nextBuffer;
+        const current = liveStreams[streamId];
+        if (!current) return;
+        const nextBuffer = [...current.museSamples, sample];
+        liveStreams = {
+            ...liveStreams,
+            [streamId]: {
+                ...current,
+                streamType: "muse",
+                museSamples:
+                    nextBuffer.length > MAX_LIVE_BUFFER_SIZE
+                        ? nextBuffer.slice(-MAX_LIVE_BUFFER_SIZE)
+                        : nextBuffer,
+            },
+        };
     }
 
-    function addLiveEmgSample(streamId: string, sample: BufferedEmgSample) {
-        if (streamId !== liveStreamId) {
-            return;
+    function addLiveEmgSample(
+        streamId: string,
+        sample: BufferedEmgSample,
+        deviceId?: string,
+    ) {
+        if (deviceId && streamDeviceNames[streamId] !== deviceId) {
+            streamDeviceNames = { ...streamDeviceNames, [streamId]: deviceId };
         }
-        liveStreamType = "emg";
-        const nextBuffer = [...liveEmgSamples, sample];
+        const current = liveStreams[streamId];
+        if (!current) return;
+        const nextBuffer = [...current.emgSamples, sample];
         const maxHistoryMs = 20000;
         let retainedDurationMs = 0;
         let startIndex = nextBuffer.length;
@@ -177,27 +209,36 @@
             }
             startIndex -= 1;
         }
-        liveEmgSamples = nextBuffer.slice(startIndex);
+        liveStreams = {
+            ...liveStreams,
+            [streamId]: {
+                ...current,
+                streamType: "emg",
+                emgSamples: nextBuffer.slice(startIndex),
+                deviceName: deviceId || current.deviceName,
+            },
+        };
     }
 
     function subscribeToStream(streamId: string) {
-        liveStreamId = streamId;
-        liveStreamType = inferLiveStreamType(streamId) ?? null;
-        liveImuSamples = [];
-        liveMuseSamples = [];
-        liveEmgSamples = [];
-        wsManager?.subscribe([streamId]);
+        const next = (streamRefCounts.get(streamId) ?? 0) + 1;
+        streamRefCounts.set(streamId, next);
+        if (next === 1) {
+            liveStreams = { ...liveStreams, [streamId]: emptyLiveStream(streamId) };
+            wsManager?.subscribe([streamId]);
+        }
     }
 
     function unsubscribeFromStream(streamId: string) {
-        wsManager?.unsubscribe([streamId]);
-        if (liveStreamId === streamId) {
-            liveStreamId = null;
-            liveStreamType = null;
-            liveImuSamples = [];
-            liveMuseSamples = [];
-            liveEmgSamples = [];
+        const next = (streamRefCounts.get(streamId) ?? 0) - 1;
+        if (next > 0) {
+            streamRefCounts.set(streamId, next);
+            return;
         }
+        streamRefCounts.delete(streamId);
+        wsManager?.unsubscribe([streamId]);
+        const { [streamId]: _removed, ...rest } = liveStreams;
+        liveStreams = rest;
     }
 
     function formatNumber(num: number, decimals: number = 4): string {
@@ -407,11 +448,12 @@
                         request_id: `node-catalog:${Date.now()}`,
                     });
                     listStreamGraphs();
-                    // Re-issue a live subscription that was dropped because the
-                    // socket wasn't open yet (subscribeToStream fires without
+                    // Re-issue every live subscription that was dropped because
+                    // the socket wasn't open yet (subscribeToStream fires without
                     // waiting for the connection), or lost across a reconnect.
-                    if (liveStreamId) {
-                        wsManager?.subscribe([liveStreamId]);
+                    const activeStreamIds = Array.from(streamRefCounts.keys());
+                    if (activeStreamIds.length > 0) {
+                        wsManager?.subscribe(activeStreamIds);
                     }
                 }
             },
@@ -515,19 +557,23 @@
                                   1000,
                           )
                         : 1000;
-                addLiveEmgSample(String(message.stream_id), {
-                    schema_version: message.schema_version,
-                    device_id: message.device_id,
-                    seq_no: message.seq_no,
-                    device_ts_us: message.device_ts_us,
-                    n_channels: message.n_channels,
-                    samples_per_channel: message.samples_per_channel,
-                    sample_rate_hz: message.sample_rate_hz,
-                    channel_labels: message.channel_labels,
-                    payload: message.payload,
-                    received_at_ms: Date.now(),
-                    frame_duration_ms: frameDurationMs,
-                });
+                addLiveEmgSample(
+                    String(message.stream_id),
+                    {
+                        schema_version: message.schema_version,
+                        device_id: message.device_id,
+                        seq_no: message.seq_no,
+                        device_ts_us: message.device_ts_us,
+                        n_channels: message.n_channels,
+                        samples_per_channel: message.samples_per_channel,
+                        sample_rate_hz: message.sample_rate_hz,
+                        channel_labels: message.channel_labels,
+                        payload: message.payload,
+                        received_at_ms: Date.now(),
+                        frame_duration_ms: frameDurationMs,
+                    },
+                    message.device_id,
+                );
             },
             onError: (message: ErrorMessage) => {
                 lastError = message.message;
@@ -572,58 +618,6 @@
         })),
     );
 
-    const liveLatestImuSample = $derived(
-        liveImuSamples.length > 0
-            ? liveImuSamples[liveImuSamples.length - 1]
-            : undefined,
-    );
-    const liveLatestMuseSample = $derived(
-        liveMuseSamples.length > 0
-            ? liveMuseSamples[liveMuseSamples.length - 1]
-            : undefined,
-    );
-    const liveLatestEmgSample = $derived(
-        liveEmgSamples.length > 0
-            ? liveEmgSamples[liveEmgSamples.length - 1]
-            : undefined,
-    );
-
-    const livePrimaryDescriptor: DataSchemaDescriptor | undefined = $derived(
-        liveStreamId
-            ? availableStreams[liveStreamId]?.topics.find(
-                  (topic) => topic.descriptor,
-              )?.descriptor
-            : undefined,
-    );
-
-    const liveDescriptorRecordValue = $derived.by((): unknown => {
-        if (liveStreamType === "emg" && liveLatestEmgSample) {
-            return liveLatestEmgSample;
-        }
-        if (liveStreamType === "imu" && liveLatestImuSample) {
-            return {
-                time: liveLatestImuSample.timestamp,
-                accel: liveLatestImuSample.data.accel,
-                gyro: liveLatestImuSample.data.gyro,
-                quat: liveLatestImuSample.data.quat,
-                accuracies: liveLatestImuSample.accuracies,
-                has_data: liveLatestImuSample.has_data,
-            };
-        }
-        if (liveStreamType === "muse" && liveLatestMuseSample) {
-            return {
-                time: liveLatestMuseSample.timestamp,
-                eeg_sequence: liveLatestMuseSample.eeg_sequence,
-                motion_sequence: liveLatestMuseSample.motion_sequence,
-                eeg: liveLatestMuseSample.eeg,
-                accel: liveLatestMuseSample.accel,
-                gyro: liveLatestMuseSample.gyro,
-                ppg: liveLatestMuseSample.ppg,
-                has_data: liveLatestMuseSample.has_data,
-            };
-        }
-        return undefined;
-    });
 </script>
 
 <div class="visual-programming">
@@ -663,12 +657,8 @@
         {startStreamGraph}
         {stopStreamGraph}
         {inspectStream}
-        {liveStreamId}
-        {liveStreamType}
-        {liveLatestMuseSample}
-        liveEmgSamples={liveEmgSamples}
-        {livePrimaryDescriptor}
-        {liveDescriptorRecordValue}
+        {liveStreams}
+        {streamDeviceNames}
         {subscribeToStream}
         {unsubscribeFromStream}
         {formatNumber}

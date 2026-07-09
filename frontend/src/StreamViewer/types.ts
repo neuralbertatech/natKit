@@ -406,6 +406,17 @@ export interface StreamGraphPosition {
   y: number;
 }
 
+// Per-stream live buffers, so any number of viewers can be inspected at once
+// (keyed by stream id). deviceName is the latest device_id seen on a frame — the
+// human name a source node prefers over its raw stream id.
+export interface LiveStreamData {
+  streamType: "imu" | "muse" | "emg" | null;
+  emgSamples: BufferedEmgSample[];
+  museSamples: MuseSample[];
+  imuSamples: ImuSample[];
+  deviceName?: string;
+}
+
 export interface StreamGraphViewport {
   x: number;
   y: number;
