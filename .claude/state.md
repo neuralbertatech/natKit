@@ -170,12 +170,26 @@ select_model's rest/active gesture defaults.
   recorded stream → one labeled dataset. Record/Stop control + live cue display in
   the session inspector. Verified: npm run check 0 errors; vitest 27/27.
 
-**Remaining Phase 4 slice:**
-- Slice D: natVR label-field generalization (featurize/features `cue_gesture` →
-  configurable label field; select_model rest/active gesture defaults) so a
-  non-gesture protocol trains; + optionally surface stored sessions.
+**Phase 4 ACCEPTANCE MET (Slices A–C).** Author a generic protocol → record N
+sensors via the session node → one labeled session (single session_id, device_ids
+spanning every recorded stream, cue + lifecycle markers) published through the
+existing publish_session_bundle. natVR's reconstruct_session already discovers such
+sessions and trains on the per-cue class label (stored in the marker's "gesture"
+attribute, which already holds arbitrary class strings — no rename needed to train).
 
-### Next: Phase 4 Slice D (natVR label generalization).
+Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
+- natVR "gesture" → generic "label" RENAME (functional training on arbitrary
+  classes already works; this is naming hygiene). Filed under Phase 5's
+  "make the label source generic" bullet.
+- Stored-session DISCOVERY in the palette (needs a backend list-sessions action).
+- Live end-to-end verification of the recorder (publish + timeline) — static only
+  so far (type-check + unit tests + build + smoke-compiles), same live-stack
+  constraint as the rest.
+
+### Next: Phase 5 — ML nodes on the canvas (train node, classify node, model
+artifacts, and the control-plane→backend WS proxy [decision #3]). LARGE; the
+control-plane proxy is a real refactor. Phase 6 (script nodes) deferred by design;
+Phases 7 (reactive/composite round-trip) + 8 (beginner UX) remain.
 
 ---
 
