@@ -212,10 +212,52 @@ all my Phase 1/4 strings). Verified two ways:
   /libnatkit/data/stream_graphs.json (no delete action exists; not bind-mounted → vanishes
   on container recreate). Harmless; left in place (didn't restart the user's backend).
 
-### Next: Phase 5 — ML nodes on the canvas (train node, classify node, model
-artifacts, and the control-plane→backend WS proxy [decision #3]). LARGE; the
-control-plane proxy is a real refactor. Phase 6 (script nodes) deferred by design;
-Phases 7 (reactive/composite round-trip) + 8 (beginner UX) remain.
+### Phase 5 — ML nodes on the canvas: DESIGN + DECOMPOSITION (not started)
+Mapped the full surface (Explore). Key facts:
+- Control plane = standalone Python `websockets` server on :8786 (NOT drogon), shared
+  auth via NATKIT_AUTH_DB_PATH + natkit_session cookie on the WS upgrade. Actions incl.
+  start_train_validate_job / get_job_status / stop_job / list_jobs / list_recorded_runs
+  / list_workers / list_thread_slots (+ worker-facing register/heartbeat/claim/report).
+  Messages: hello/recorded_runs/workers/thread_slots/job_list/job_accepted/job_status/
+  error. Full contract already typed in frontend MlPipeline/types.ts.
+- Frontend MlPipeline talks DIRECTLY to :8786 (MlControlPlaneWebSocket). startJob()
+  payload: train_runs/eval_runs, families (MODEL_FAMILIES=lda|linear_svm|random_forest),
+  selected_fields, rest/active gesture, window/hop/vote/confidence/min-hold. Decision #3:
+  drop this direct connection; route through the backend /ws/stream_viewer.
+- train_validate (natVR kafka_train_validate.py + select_model.py): families train,
+  best selected by accuracy; LDA→JSON, SVM/RF→joblib. Field selection is EMG-constrained
+  (regex ^channels\.(\d+)\.samples$). Control plane STRIPS model_path (ephemeral scratch)
+  → no durable artifact surfaced today.
+- classify LARGELY EXISTS: the lda_classify transform (loads LDA-JSON model_path, emits
+  predicted_class + confidence.*) + the Phase-2 ClassificationViewer. But C++ loads ONLY
+  model_type=="lda"; SVM/RF have no C++ inference path.
+- Backend has NO outbound WS/HTTP client, but drogon ships drogon::WebSocketClient
+  (third-party/drogon/lib/inc/drogon/WebSocketClient.h) — usable, no new dep.
+
+Proposed slices:
+- **B (proxy, foundational, decision #3):** backend gains a drogon::WebSocketClient to
+  ws://control-plane:8786 (reconnect/backoff), presents an auth cookie on upgrade,
+  forwards browser ML actions received on /ws/stream_viewer up to the control plane, and
+  re-broadcasts hello/workers/thread_slots/job_list/job_status/error back down. Frontend:
+  drop MlControlPlaneWebSocket; route ML actions/messages over the existing
+  StreamViewerWebSocket. Verify via the WS client (list_workers/list_jobs flow through).
+- **C (durable artifacts):** control plane surfaces a durable, addressable model_path
+  (stop stripping it / persist artifacts outside ephemeral scratch) so train→classify
+  can wire. natVR pytest-verifiable.
+- **A (train node):** train node kind (backend allow-list/validation/catalog + frontend
+  inspector authoring families/features/windowing/run+field selection, config on the
+  node, like the session node) → submits via the proxy. classify already = lda_classify.
+- **D (classify generalization):** either restrict classify to LDA (v1) OR add a C++
+  joblib/ONNX inference path for SVM/RF. + natVR label-field generalization
+  (cue_gesture → configurable) for non-gesture training.
+
+OPEN DECISIONS for the user:
+1. Proxy auth: one backend SERVICE identity (simpler; all users act as it) vs relay each
+   browser user's own session cookie through the proxy (preserves per-user scoping).
+2. Classify v1: LDA-only (matches today's C++) vs invest in SVM/RF C++ inference.
+
+Phase 6 (script nodes) deferred by design. Phases 7 (reactive/composite round-trip) + 8
+(beginner UX) remain and are independent of the control-plane work.
 
 ---
 
