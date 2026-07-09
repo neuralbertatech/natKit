@@ -218,8 +218,25 @@ Deferred (cosmetic / Phase-5-adjacent, NOT blocking the acceptance):
   builds. Deferred: sampled live-value-on-node (plan nice-to-have, not in acceptance);
   run-gate for ML train nodes (train already gated behind an explicit Submit button).
 
-**Remaining Phase 7:** Part C — param/input nodes (slider/dropdown/threshold) whose value
-feeds a downstream transform's config field; on change they drive the same reactive restart.
+**Part C DONE — param/input nodes, verified. PHASE 7 COMPLETE.**
+- `composites.ts`: new editor-only `ParamNode` (kind "param") + `isParamNode`; added to
+  `EditorGraphNode`. `flattenGraph` drops param nodes + any edge touching them (their value
+  is already written into the target transform's config), so the backend never sees them.
+  `updateSelectedNode` now also skips "param" (keeps its StreamGraphNode narrowing).
+- Editor: `addParamNode` + palette entries (sidebar + ⌘K, SlidersHorizontal icon);
+  `selectedParamNode` + `paramTargetFields` (numeric config fields of the bound transform);
+  `applyParamValue` writes the param's value + the target transform's config[field] then
+  drives the Part-A `scheduleReactiveRestart`; `updateParamBinding` for min/max/step/target.
+  Param inspector (value slider + target transform + target field + bounds).
+- StreamGraphNode.svelte: inline range slider on the param node card (mousedown
+  stopPropagation so the drag doesn't move the node) → `onParamValueChange` → applyParamValue.
+- Tests: composites.test.ts asserts flattenGraph drops param nodes + binding edges (28/28).
+  npm run check 0 errors. Playwright-verified live: Param in palette, adds a node with an
+  inline slider, inspector shows Value/Target transform/Target config field/Min/Max/Step.
+- Frontend-only (no backend change). Acceptance met: a bound slider changes a transform's
+  config and auto-restarts the downstream subgraph while running (Part A + C together).
+- Deferred (plan nice-to-haves, not in acceptance): dropdown/threshold param variants
+  (only the numeric slider shipped); sampled live-value-on-node.
 
 ### LIVE VERIFICATION — Phases 1–4 confirmed against the running podman stack (2026-07-09)
 The dev stack was already rebuilt from my committed source (backend binary contains

@@ -60,7 +60,30 @@ export interface CompositeInstanceNode {
     template?: CompositeTemplate;
 }
 
-export type EditorGraphNode = StreamGraphNode | CompositeInstanceNode;
+// A param/input node (Phase 7, part C): an editor-only control whose value
+// drives a downstream transform's config field. It is dropped by flattenGraph
+// (the value is written into the target's config on change), so the backend
+// never sees it — the executed graph is unchanged.
+export interface ParamNode {
+    id: string;
+    kind: "param";
+    label: string;
+    position: StreamGraphPosition;
+    input_port_ids?: string[];
+    output_port_ids?: string[];
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    // Binding: the downstream transform + config field this param drives.
+    target_node_id?: string;
+    target_field?: string;
+}
+
+export type EditorGraphNode =
+    | StreamGraphNode
+    | CompositeInstanceNode
+    | ParamNode;
 
 export interface EditorGraphDefinition
     extends Omit<StreamGraphDefinition, "nodes"> {
@@ -87,6 +110,10 @@ export function isCompositeInstance(
     node: EditorGraphNode,
 ): node is CompositeInstanceNode {
     return node.kind === "composite";
+}
+
+export function isParamNode(node: EditorGraphNode): node is ParamNode {
+    return node.kind === "param";
 }
 
 let idCounter = 0;
@@ -235,8 +262,15 @@ export function flattenGraph(
 
     const primitiveNodes: StreamGraphNode[] = [];
     const innerEdges: StreamGraphEdge[] = [];
+    const paramNodeIds = new Set<string>();
 
     for (const node of graph.nodes) {
+        if (isParamNode(node)) {
+            // Editor-only control node — its value is already written into the
+            // target transform's config, so it's dropped from the executed graph.
+            paramNodeIds.add(node.id);
+            continue;
+        }
         if (!isCompositeInstance(node)) {
             primitiveNodes.push(deepClone(node) as StreamGraphNode);
             continue;
@@ -271,7 +305,9 @@ export function flattenGraph(
     for (const edge of graph.edges) {
         if (
             missingInstances.has(edge.source_node_id) ||
-            missingInstances.has(edge.target_node_id)
+            missingInstances.has(edge.target_node_id) ||
+            paramNodeIds.has(edge.source_node_id) ||
+            paramNodeIds.has(edge.target_node_id)
         ) {
             continue;
         }

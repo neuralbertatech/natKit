@@ -7,6 +7,7 @@
         GitBranch,
         Monitor,
         Package,
+        SlidersHorizontal,
     } from "@lucide/svelte";
     import { getNodeHeight, graphRunStateClass } from "./streamGraph";
     import type { StreamGraphNodeStatus } from "../StreamViewer/types";
@@ -32,6 +33,8 @@
             side: "input" | "output",
         ) => void;
         onExpand?: (nodeId: string) => void;
+        // Phase 7: a param node's inline slider reports value changes here.
+        onParamValueChange?: (nodeId: string, value: number) => void;
     }
 
     let {
@@ -45,6 +48,7 @@
         onPortClick,
         onPortMouseDown,
         onExpand,
+        onParamValueChange,
     }: Props = $props();
 
     function handleNodeMouseDown(event: MouseEvent) {
@@ -102,6 +106,8 @@
                 <ClipboardList size={14} />
             {:else if node.kind === "train"}
                 <Cpu size={14} />
+            {:else if node.kind === "param"}
+                <SlidersHorizontal size={14} />
             {:else}
                 <GitBranch size={14} />
             {/if}
@@ -179,6 +185,26 @@
             {:else if node.kind === "train"}
                 <span>Train model</span>
                 <span>{node.config.families.join(", ") || "no families"}</span>
+            {:else if node.kind === "param"}
+                <input
+                    class="param-slider"
+                    type="range"
+                    min={node.min}
+                    max={node.max}
+                    step={node.step}
+                    value={node.value}
+                    onmousedown={(event) => event.stopPropagation()}
+                    oninput={(event) =>
+                        onParamValueChange?.(
+                            node.id,
+                            Number((event.currentTarget as HTMLInputElement).value),
+                        )}
+                />
+                <span
+                    >{node.target_field
+                        ? `${node.target_field} = ${node.value}`
+                        : `${node.value} (unbound)`}</span
+                >
             {/if}
         </div>
         <div class="node-column outputs">

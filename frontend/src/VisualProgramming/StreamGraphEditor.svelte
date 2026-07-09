@@ -3,6 +3,7 @@
         Activity,
         Archive,
         Cpu,
+        SlidersHorizontal,
         Check,
         CircleDot,
         Download,
@@ -66,10 +67,12 @@
         extractCompositeFromSelection,
         flattenGraph,
         instantiateComposite,
+        isParamNode,
         ungroupInstance,
         type CompositeTemplate,
         type EditorGraphDefinition,
         type EditorGraphNode,
+        type ParamNode,
     } from "./composites";
     import {
         deleteCompositeTemplate,
@@ -336,6 +339,36 @@
     const selectedTrainNode = $derived(
         selectedNode?.kind === "train" ? selectedNode : null,
     );
+
+    const selectedParamNode = $derived(
+        selectedNode && isParamNode(selectedNode) ? selectedNode : null,
+    );
+
+    // Transform nodes in the draft (targets a param can drive).
+    const transformNodeOptions = $derived(
+        draftGraph.nodes.filter(
+            (node): node is Extract<EditorGraphNode, { kind: "transform" }> =>
+                node.kind === "transform",
+        ),
+    );
+
+    // Numeric config fields of the selected param's target transform.
+    const paramTargetFields = $derived.by(() => {
+        const targetId = selectedParamNode?.target_node_id;
+        if (!targetId) {
+            return [];
+        }
+        const target = transformNodeOptions.find((node) => node.id === targetId);
+        if (!target) {
+            return [];
+        }
+        const capability = transformCapabilities.find(
+            (cap) => cap.kind === target.transform_kind,
+        );
+        return (capability?.config_fields ?? []).filter(
+            (field) => field.type === "number",
+        );
+    });
 
     const selectedNodeCapability = $derived(
         selectedTransformNode
@@ -788,6 +821,33 @@
         markDraftChanged(nextGraph);
     }
 
+    // Param nodes are editor-only (Phase 7, part C): dropped by flattenGraph, so
+    // they're not in the backend catalog and get a fixed palette entry here.
+    function addParamNode(
+        position: StreamGraphPosition = contextMenu.open
+            ? contextMenu.graphPosition
+            : getDefaultInsertionPosition(),
+    ) {
+        const nextGraph = cloneGraph(draftGraph);
+        const nodeId = `param/${Date.now()}`;
+        nextGraph.nodes.push({
+            id: nodeId,
+            kind: "param",
+            label: "Param",
+            position: { ...position },
+            output_port_ids: ["value"],
+            value: 20,
+            min: 0,
+            max: 100,
+            step: 1,
+        } as ParamNode);
+        selectedNodeId = nodeId;
+        selectedNodeIds = new Set([nodeId]);
+        selectedEdgeId = null;
+        closeContextMenu();
+        markDraftChanged(nextGraph);
+    }
+
     function utilityIcon(kind: string) {
         if (kind === "viewer") return Monitor;
         if (kind === "sink") return Archive;
@@ -1147,11 +1207,54 @@
         }
         const nextGraph = cloneGraph(draftGraph);
         nextGraph.nodes = nextGraph.nodes.map((node) => {
-            if (node.id !== selectedNodeId || node.kind === "composite") {
+            // Composite + param nodes are editor-only; `update` only handles the
+            // primitive StreamGraphNode kinds.
+            if (
+                node.id !== selectedNodeId ||
+                node.kind === "composite" ||
+                node.kind === "param"
+            ) {
                 return node;
             }
             return update(node);
         });
+        markDraftChanged(nextGraph);
+    }
+
+    // --- Param nodes (Phase 7, part C) --------------------------------------
+    // A param's value is written into the bound transform's config; while the
+    // graph runs, the change drives the same debounced incremental restart.
+    function applyParamValue(param: ParamNode, value: number) {
+        const nextGraph = cloneGraph(draftGraph);
+        for (const node of nextGraph.nodes) {
+            if (node.id === param.id && node.kind === "param") {
+                node.value = value;
+            }
+            if (
+                param.target_node_id &&
+                param.target_field &&
+                node.id === param.target_node_id &&
+                node.kind === "transform"
+            ) {
+                node.config = {
+                    ...node.config,
+                    [param.target_field]: value,
+                };
+            }
+        }
+        markDraftChanged(nextGraph);
+        if (param.target_node_id) {
+            scheduleReactiveRestart(param.target_node_id);
+        }
+    }
+
+    function updateParamBinding(patch: Partial<ParamNode>) {
+        const nextGraph = cloneGraph(draftGraph);
+        for (const node of nextGraph.nodes) {
+            if (node.id === selectedNodeId && node.kind === "param") {
+                Object.assign(node, patch);
+            }
+        }
         markDraftChanged(nextGraph);
     }
 
@@ -1803,6 +1906,17 @@
                             <span class="graph-list-meta">{entry.description}</span>
                         </button>
                     {/each}
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        title="A slider whose value drives a downstream transform's config field, live."
+                        onclick={() => addParamNode()}
+                    >
+                        <span class="graph-list-title">Param</span>
+                        <span class="graph-list-meta"
+                            >Slider bound to a transform config field</span
+                        >
+                    </button>
                 </div>
             </div>
 
@@ -2102,6 +2216,16 @@
                             onPortClick={handlePortClick}
                             onPortMouseDown={handlePortMouseDown}
                             onExpand={handleNodeExpand}
+                            onParamValueChange={(nodeId, value) => {
+                                const paramNode = draftGraph.nodes.find(
+                                    (candidate) =>
+                                        candidate.id === nodeId &&
+                                        candidate.kind === "param",
+                                );
+                                if (paramNode && paramNode.kind === "param") {
+                                    applyParamValue(paramNode, value);
+                                }
+                            }}
                         />
                     {/each}
                 </div>
@@ -2634,6 +2758,100 @@
                             {/if}
                         {/if}
 
+                        {#if selectedParamNode}
+                            <label>
+                                <span>Value</span>
+                                <input
+                                    type="range"
+                                    min={selectedParamNode.min}
+                                    max={selectedParamNode.max}
+                                    step={selectedParamNode.step}
+                                    value={selectedParamNode.value}
+                                    oninput={(event) =>
+                                        applyParamValue(
+                                            selectedParamNode,
+                                            Number((event.currentTarget as HTMLInputElement).value),
+                                        )}
+                                />
+                            </label>
+                            <div class="summary-row">
+                                <span>Current</span>
+                                <strong>{selectedParamNode.value}</strong>
+                            </div>
+                            <label>
+                                <span>Target transform</span>
+                                <select
+                                    value={selectedParamNode.target_node_id ?? ""}
+                                    onchange={(event) =>
+                                        updateParamBinding({
+                                            target_node_id:
+                                                (event.currentTarget as HTMLSelectElement).value || undefined,
+                                            target_field: undefined,
+                                        })}
+                                >
+                                    <option value="">(none)</option>
+                                    {#each transformNodeOptions as t}
+                                        <option value={t.id}>{t.label}</option>
+                                    {/each}
+                                </select>
+                            </label>
+                            <label>
+                                <span>Target config field</span>
+                                <select
+                                    value={selectedParamNode.target_field ?? ""}
+                                    onchange={(event) =>
+                                        updateParamBinding({
+                                            target_field:
+                                                (event.currentTarget as HTMLSelectElement).value || undefined,
+                                        })}
+                                >
+                                    <option value="">(none)</option>
+                                    {#each paramTargetFields as field}
+                                        <option value={field.id}>{field.label}</option>
+                                    {/each}
+                                </select>
+                            </label>
+                            <label>
+                                <span>Min</span>
+                                <input
+                                    type="number"
+                                    value={selectedParamNode.min}
+                                    oninput={(event) =>
+                                        updateParamBinding({
+                                            min: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Max</span>
+                                <input
+                                    type="number"
+                                    value={selectedParamNode.max}
+                                    oninput={(event) =>
+                                        updateParamBinding({
+                                            max: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Step</span>
+                                <input
+                                    type="number"
+                                    value={selectedParamNode.step}
+                                    oninput={(event) =>
+                                        updateParamBinding({
+                                            step: Number((event.currentTarget as HTMLInputElement).value),
+                                        })}
+                                />
+                            </label>
+                            {#if selectedParamNode.target_node_id && selectedParamNode.target_field}
+                                <p class="muted-text">
+                                    Drives {selectedParamNode.target_field} on the
+                                    target transform — live while the graph runs.
+                                </p>
+                            {/if}
+                        {/if}
+
                         {#if selectedNodeRuntimeStatus}
                             <div class="runtime-card">
                                 <div class="summary-row">
@@ -3013,6 +3231,13 @@
                         <span>{entry.label}</span>
                     </Command.Item>
                 {/each}
+                <Command.Item
+                    value="param slider input control"
+                    onSelect={() => runPaletteAction(() => addParamNode())}
+                >
+                    <SlidersHorizontal size={16} />
+                    <span>Param</span>
+                </Command.Item>
             </Command.Group>
         {/if}
         {#if transformCapabilities.length > 0}
