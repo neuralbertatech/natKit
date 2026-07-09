@@ -277,10 +277,24 @@ DECISIONS (user chose): 1 = service identity (v1). 2 = LDA-only classify (v1).
   Both directions confirmed. npm run check 0 errors; vitest 27/27; backend builds/links.
   (Briefly bounced the :7409 backend during cleanup; it respawned via its CMD loop.)
 
-Remaining Phase 5 slices: C (durable model artifacts surfaced from the control plane so
-train→classify can wire), A (train node kind + inspector submitting via the proxy;
-classify already = lda_classify), D (natVR label-field generalization; classify stays
-LDA-only for v1).
+**Slice C DONE — durable model artifacts (control plane), unit-verified:**
+- `natkit_ml_control_plane.py`: `resolve_artifacts_dir()` (env NATKIT_ML_ARTIFACTS_DIR,
+  default /models) + `persist_selected_model_artifact(report, job_id)` copies the winning
+  model out of the ephemeral job workspace into <artifacts>/<job_id>/ BEFORE the workspace
+  is rmtree'd. `sanitize_pipeline_report(report, model_path=None)` now surfaces
+  `model_path` + `model_family` + artifact_storage "durable"|"ephemeral_scratch" (was
+  always stripped). Wired into the in-process job path (_run_job_in_slot). Remote-worker
+  jobs keep artifact_storage ephemeral (model stays on the worker fs — documented follow-up).
+- Compose: shared `natkit-v0-models` volume — control plane rw (+ NATKIT_ML_ARTIFACTS_DIR=
+  /models), backend ro at /models — so a classify node (lda_classify) can load model_path
+  directly.
+- Verified: py_compile; functional test in the control-plane container (persist copies the
+  model, sanitize surfaces durable path/family, no-model→ephemeral). Full train→classify
+  e2e not runnable here (needs recorded runs + a live pipeline).
+
+Remaining Phase 5 slices: A (train node kind + inspector submitting via the proxy;
+classify already = lda_classify + ClassificationViewer; wire model_path from a completed
+job's report into a classify node), D (natVR label-field generalization; classify LDA-only v1).
 
 Phase 6 (script nodes) deferred by design. Phases 7 (reactive/composite round-trip) + 8
 (beginner UX) remain and are independent of the control-plane work.
