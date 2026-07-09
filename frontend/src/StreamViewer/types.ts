@@ -176,6 +176,16 @@ export interface NodeCatalogMessage {
   nodes: NodeCatalogEntry[];
 }
 
+// The backend proxies the ML control plane over this connection (Phase 5,
+// decision #3): a control-plane message arrives wrapped so it can't collide
+// with stream_viewer's own message types. `message` is an MlControlPlaneMessage
+// (typed in MlPipeline/types.ts); kept as unknown here to avoid a dependency
+// cycle from the shared base module up into MlPipeline.
+export interface MlControlPlaneEnvelopeMessage {
+  type: "ml_control_plane";
+  message: unknown;
+}
+
 export interface TransformResultMessage {
   type: "transform_result" | "emg_transform_result";
   request_id: string;
@@ -611,6 +621,7 @@ export type WebSocketMessage =
   | PublishResultMessage
   | TransformCapabilitiesMessage
   | NodeCatalogMessage
+  | MlControlPlaneEnvelopeMessage
   | TransformResultMessage
   | TransformListMessage
   | TransformStoppedMessage
@@ -650,6 +661,12 @@ export interface ListTransformCapabilitiesAction {
 export interface ListNodeCatalogAction {
   action: "list_node_catalog";
   request_id: string;
+}
+
+// Wraps an ML control-plane action for the backend to forward upstream (Phase 5).
+export interface MlProxyAction {
+  action: "ml_proxy";
+  message: unknown;
 }
 
 export interface PublishSessionBundleAction {
@@ -738,6 +755,7 @@ export type ClientAction =
   | GetStreamsAction
   | ListTransformCapabilitiesAction
   | ListNodeCatalogAction
+  | MlProxyAction
   | PublishSessionBundleAction
   | CreateTransformAction
   | ListTransformsAction

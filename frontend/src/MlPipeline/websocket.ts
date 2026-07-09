@@ -81,31 +81,77 @@ export class MlControlPlaneWebSocket {
 
   private handleMessage(raw: string): void {
     const message = JSON.parse(raw) as MlControlPlaneMessage;
-    switch (message.type) {
-      case "hello":
-        this.callbacks.onHello?.(message);
-        break;
-      case "recorded_runs":
-        this.callbacks.onRecordedRuns?.(message);
-        break;
-      case "workers":
-        this.callbacks.onWorkers?.(message);
-        break;
-      case "thread_slots":
-        this.callbacks.onThreadSlots?.(message);
-        break;
-      case "job_list":
-        this.callbacks.onJobList?.(message);
-        break;
-      case "job_accepted":
-        this.callbacks.onJobAccepted?.(message);
-        break;
-      case "job_status":
-        this.callbacks.onJobStatus?.(message);
-        break;
-      case "error":
-        this.callbacks.onError?.(message);
-        break;
-    }
+    dispatchMlControlPlaneMessage(message, this.callbacks);
   }
+}
+
+// Shared dispatch of a control-plane message to the callback set.
+function dispatchMlControlPlaneMessage(
+  message: MlControlPlaneMessage,
+  callbacks: MlControlPlaneCallbacks,
+): void {
+  switch (message.type) {
+    case "hello":
+      callbacks.onHello?.(message);
+      break;
+    case "recorded_runs":
+      callbacks.onRecordedRuns?.(message);
+      break;
+    case "workers":
+      callbacks.onWorkers?.(message);
+      break;
+    case "thread_slots":
+      callbacks.onThreadSlots?.(message);
+      break;
+    case "job_list":
+      callbacks.onJobList?.(message);
+      break;
+    case "job_accepted":
+      callbacks.onJobAccepted?.(message);
+      break;
+    case "job_status":
+      callbacks.onJobStatus?.(message);
+      break;
+    case "error":
+      callbacks.onError?.(message);
+      break;
+  }
+}
+
+// Phase 5, decision #3: the control plane is reached THROUGH the backend's
+// /ws/stream_viewer connection (the browser no longer talks to :8786 directly).
+// This adapter presents the MlControlPlaneWebSocket surface the MlPipeline page
+// uses, but rides on a StreamViewerWebSocket: actions are wrapped as ml_proxy
+// and sent over it; proxied "ml_control_plane" messages are fed back in via
+// handleMessage(). Connection lifecycle is owned by the StreamViewerWebSocket,
+// so connect()/disconnect() are no-ops here.
+export class ProxiedMlControlPlane {
+  private send_: (action: MlControlPlaneAction) => void;
+  private callbacks: MlControlPlaneCallbacks;
+
+  constructor(
+    sendMlAction: (action: MlControlPlaneAction) => void,
+    callbacks: MlControlPlaneCallbacks = {},
+  ) {
+    this.send_ = sendMlAction;
+    this.callbacks = callbacks;
+  }
+
+  // Called by the StreamViewerWebSocket's onMlControlPlane callback.
+  handleMessage(message: unknown): void {
+    dispatchMlControlPlaneMessage(message as MlControlPlaneMessage, this.callbacks);
+  }
+
+  // Called by the StreamViewerWebSocket's onConnectionChange callback.
+  setConnectionState(state: ConnectionState): void {
+    this.callbacks.onConnectionChange?.(state);
+  }
+
+  send(action: MlControlPlaneAction): void {
+    this.send_(action);
+  }
+
+  connect(): void {}
+  disconnect(): void {}
+  setUrl(_url: string): void {}
 }

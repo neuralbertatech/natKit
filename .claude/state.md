@@ -251,10 +251,36 @@ Proposed slices:
   joblib/ONNX inference path for SVM/RF. + natVR label-field generalization
   (cue_gesture → configurable) for non-gesture training.
 
-OPEN DECISIONS for the user:
-1. Proxy auth: one backend SERVICE identity (simpler; all users act as it) vs relay each
-   browser user's own session cookie through the proxy (preserves per-user scoping).
-2. Classify v1: LDA-only (matches today's C++) vs invest in SVM/RF C++ inference.
+DECISIONS (user chose): 1 = service identity (v1). 2 = LDA-only classify (v1).
+
+**Slice B DONE — control-plane proxy (decision #3), LIVE-VERIFIED:**
+- Backend: `AuthManager::createServiceSession(username)` mints a token for an existing
+  user without a password (backend owns the auth DB). StreamViewerWebSocket gained a
+  drogon::WebSocketClient to the control plane (env NATKIT_ML_CONTROL_PLANE_URL, default
+  ws://127.0.0.1:8786; service user env NATKIT_ML_PROXY_USERNAME default "admin"):
+  `ensureMlControlPlaneClient` (lazy connect + reconnect via loop->runAfter),
+  `broadcastMlControlPlaneMessage` (wraps each control-plane frame as
+  {type:"ml_control_plane",message:…} → all /ws/stream_viewer clients),
+  `handleMlProxyAction` (browser {action:"ml_proxy",message:<cp-action>} → forwarded up;
+  transient "connecting" error if not yet connected). Dispatch: action=="ml_proxy".
+- Frontend: StreamViewerWebSocket gained onMlControlPlane + sendMlAction + the
+  ml_control_plane/ml_proxy types. New MlPipeline `ProxiedMlControlPlane` adapter rides on
+  the StreamViewerWebSocket (same MlControlPlaneWebSocket surface; connect/disconnect
+  no-ops). MlPipeline/page.svelte now routes ML over its existing descriptorWsManager
+  (onMlControlPlane→wsManager.handleMessage; sv onConnectionChange→wsManager.setConnectionState);
+  the direct :8786 MlControlPlaneWebSocket + the Control-Plane-URL input are GONE.
+- Compose: NATKIT_ML_CONTROL_PLANE_URL=ws://natkit-v0-ml-control-plane:8786 on the backend.
+- VERIFIED live: hot-patched the new binary into the container, ran it on :7410 with the
+  proxy env, connected a WS client with the admin cookie, sent ml_proxy list_workers →
+  got the control-plane snapshot burst wrapped as ml_control_plane (hello service=
+  natkit-ml-control-plane, workers×2, thread_slots, job_list) + periodic worker pushes.
+  Both directions confirmed. npm run check 0 errors; vitest 27/27; backend builds/links.
+  (Briefly bounced the :7409 backend during cleanup; it respawned via its CMD loop.)
+
+Remaining Phase 5 slices: C (durable model artifacts surfaced from the control plane so
+train→classify can wire), A (train node kind + inspector submitting via the proxy;
+classify already = lda_classify), D (natVR label-field generalization; classify stays
+LDA-only for v1).
 
 Phase 6 (script nodes) deferred by design. Phases 7 (reactive/composite round-trip) + 8
 (beginner UX) remain and are independent of the control-plane work.
