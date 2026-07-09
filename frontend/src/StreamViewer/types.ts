@@ -433,13 +433,31 @@ export interface SessionProtocol {
   seed: number;
 }
 
+// Config for a train node (Phase 5): mirrors the control-plane
+// start_train_validate_job payload. The dataset is selected by run selectors
+// ("<session_id>:<run_index>"); field selection is descriptor channel paths.
+export interface TrainNodeConfig {
+  families: string[];
+  train_runs: string[];
+  eval_runs: string[];
+  selected_fields: string[];
+  window_ms: number;
+  hop_ms: number;
+  vote_windows: number;
+  confidence_threshold: number;
+  min_hold_windows: number;
+  rest_gesture: string;
+  active_gesture: string;
+}
+
 export type StreamGraphNodeKind =
   | "stream_source"
   | "transform"
   | "viewer"
   | "sink"
   | "combine"
-  | "session";
+  | "session"
+  | "train";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -497,13 +515,21 @@ export interface StreamGraphSessionNode extends StreamGraphBaseNode<"session"> {
   config: SessionNodeConfig;
 }
 
+// Submits a control-plane train_validate job (client-driven via the ML proxy);
+// its output is a durable model artifact, not a stream. (Phase 5.)
+export interface StreamGraphTrainNode extends StreamGraphBaseNode<"train"> {
+  kind: "train";
+  config: TrainNodeConfig;
+}
+
 export type StreamGraphNode =
   | StreamGraphSourceNode
   | StreamGraphTransformNode
   | StreamGraphViewerNode
   | StreamGraphSinkNode
   | StreamGraphCombineNode
-  | StreamGraphSessionNode;
+  | StreamGraphSessionNode
+  | StreamGraphTrainNode;
 
 export interface StreamGraphEdge {
   id: string;
