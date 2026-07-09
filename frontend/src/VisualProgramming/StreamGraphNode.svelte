@@ -12,6 +12,14 @@
     import { getNodeHeight, graphRunStateClass } from "./streamGraph";
     import type { StreamGraphNodeStatus } from "../StreamViewer/types";
     import type { EditorGraphNode } from "./composites";
+    import { onMount, type Snippet } from "svelte";
+
+    export interface PortAnchor {
+        portId: string;
+        side: "input" | "output";
+        dx: number;
+        dy: number;
+    }
 
     interface Props {
         node: EditorGraphNode;
@@ -19,6 +27,13 @@
         selected: boolean;
         invalid: boolean;
         pendingConnection: { nodeId: string; portId: string } | null;
+        // Renders a viewer node's live chart on the card when inline_graph is on.
+        inlineViewerChart?: Snippet<[EditorGraphNode]>;
+        // Reports each port dot's offset from the node's top-left (unscaled graph
+        // px) so edges can anchor to the real dots regardless of node size.
+        onPortLayout?: (nodeId: string, anchors: PortAnchor[]) => void;
+        // Reports a live resize from the corner handle.
+        onResize?: (nodeId: string, width: number, height: number) => void;
         onSelect: (nodeId: string, event?: MouseEvent) => void;
         onStartDrag: (event: MouseEvent, nodeId: string) => void;
         onPortClick: (
@@ -43,6 +58,9 @@
         selected,
         invalid,
         pendingConnection,
+        inlineViewerChart,
+        onPortLayout,
+        onResize,
         onSelect,
         onStartDrag,
         onPortClick,
@@ -51,6 +69,10 @@
         onParamValueChange,
     }: Props = $props();
 
+    const showInlineGraph = $derived(
+        node.kind === "viewer" && node.inline_graph === true,
+    );
+
     function handleNodeMouseDown(event: MouseEvent) {
         if ((event.target as HTMLElement).closest(".port-button")) {
             return;
@@ -58,21 +80,110 @@
         onStartDrag(event, node.id);
     }
 
-    const nodeHeight = $derived(getNodeHeight(node));
+    // A manually-resized node overrides the computed height/width; otherwise
+    // fall back to the content-driven defaults.
+    const nodeHeight = $derived(node.height ?? getNodeHeight(node));
     const runtimeStreamId = $derived(
         runtimeStatus?.output_stream_id
             ? String(runtimeStatus.output_stream_id)
             : null,
     );
+
+    let nodeEl = $state<HTMLElement | undefined>(undefined);
+
+    // Measure each port dot's center offset from the node's top-left in UNSCALED
+    // graph pixels (getBoundingClientRect is scaled by the canvas zoom, so divide
+    // it out via the node's boundingWidth/offsetWidth ratio). Offsets are
+    // invariant under pan/zoom/drag and only change on resize/content change, so
+    // edges anchored to node.position + offset stay glued to the real dots.
+    function measurePorts() {
+        if (!nodeEl || !onPortLayout) return;
+        const nodeRect = nodeEl.getBoundingClientRect();
+        const scale = nodeEl.offsetWidth ? nodeRect.width / nodeEl.offsetWidth : 1;
+        if (!scale) return;
+        const anchors: PortAnchor[] = [];
+        for (const dot of nodeEl.querySelectorAll<HTMLElement>("[data-port-anchor]")) {
+            const r = dot.getBoundingClientRect();
+            anchors.push({
+                portId: dot.dataset.portId ?? "",
+                side: (dot.dataset.portSide as "input" | "output") ?? "input",
+                dx: (r.left + r.width / 2 - nodeRect.left) / scale,
+                dy: (r.top + r.height / 2 - nodeRect.top) / scale,
+            });
+        }
+        onPortLayout(node.id, anchors);
+    }
+
+    onMount(() => {
+        measurePorts();
+        // Re-measure whenever the card's size changes (resize handle, inline
+        // graph toggle, port add/remove, font load).
+        const observer = new ResizeObserver(() => measurePorts());
+        if (nodeEl) observer.observe(nodeEl);
+        return () => observer.disconnect();
+    });
+
+    // --- Corner resize handle -------------------------------------------------
+    let resizeState: {
+        startX: number;
+        startY: number;
+        startW: number;
+        startH: number;
+        scale: number;
+    } | null = null;
+
+    function startResize(event: MouseEvent) {
+        event.stopPropagation();
+        event.preventDefault();
+        const rect = nodeEl?.getBoundingClientRect();
+        const scale =
+            nodeEl && nodeEl.offsetWidth && rect
+                ? rect.width / nodeEl.offsetWidth
+                : 1;
+        resizeState = {
+            startX: event.clientX,
+            startY: event.clientY,
+            startW: nodeEl?.offsetWidth ?? 220,
+            startH: nodeEl?.offsetHeight ?? nodeHeight,
+            scale: scale || 1,
+        };
+        window.addEventListener("mousemove", onResizeMove);
+        window.addEventListener("mouseup", endResize);
+    }
+
+    function onResizeMove(event: MouseEvent) {
+        if (!resizeState) return;
+        const { scale } = resizeState;
+        const width = Math.max(
+            160,
+            resizeState.startW + (event.clientX - resizeState.startX) / scale,
+        );
+        const height = Math.max(
+            80,
+            resizeState.startH + (event.clientY - resizeState.startY) / scale,
+        );
+        onResize?.(node.id, Math.round(width), Math.round(height));
+    }
+
+    function endResize() {
+        resizeState = null;
+        window.removeEventListener("mousemove", onResizeMove);
+        window.removeEventListener("mouseup", endResize);
+    }
 </script>
 
 <div
+    bind:this={nodeEl}
     class:selected
     class:node-invalid={invalid}
+    class:inline-viewer={showInlineGraph}
+    class:resized={node.width != null || node.height != null}
     class="node"
     role="button"
     tabindex="0"
-    style={`left:${node.position.x}px; top:${node.position.y}px; height:${nodeHeight}px;`}
+    style={`left:${node.position.x}px; top:${node.position.y}px; height:${nodeHeight}px;${
+        node.width != null ? ` width:${node.width}px;` : ""
+    }`}
     onmousedown={(event) => {
         event.stopPropagation();
         handleNodeMouseDown(event);
@@ -111,7 +222,7 @@
             {:else}
                 <GitBranch size={14} />
             {/if}
-            <span>{node.label}</span>
+            <span class="node-label" title={node.label}>{node.label}</span>
         </div>
         <div class="node-header-meta">
             {#if runtimeStatus}
@@ -121,7 +232,9 @@
                     {runtimeStatus.state}
                 </span>
             {/if}
-            <span class="node-kind">{node.kind}</span>
+            <span class="node-kind"
+                >{node.kind === "stream_source" ? "source" : node.kind}</span
+            >
         </div>
     </button>
 
@@ -143,21 +256,29 @@
                         onPortClick(node.id, portId, "input");
                     }}
                 >
-                    <span class="port-dot"></span>
+                    <span
+                        class="port-dot"
+                        data-port-anchor
+                        data-port-id={portId}
+                        data-port-side="input"
+                    ></span>
                     <span>{portId}</span>
                 </button>
             {/each}
         </div>
         <div class="node-column node-meta">
             {#if node.kind === "stream_source"}
-                <span>Stream {node.stream_id}</span>
-                <span>{node.schema_name ?? "Descriptor pending"}</span>
+                <span title={`Stream ${node.stream_id}`}>Stream {node.stream_id}</span>
+                <span title={node.schema_name}>{node.schema_name ?? "Descriptor pending"}</span>
             {:else if node.kind === "transform"}
                 <span>{node.transform_kind}</span>
                 <span>{node.output_identifier ?? "Output id pending"}</span>
             {:else if node.kind === "viewer"}
                 <span>Live inspector</span>
                 <span
+                    title={runtimeStreamId
+                        ? `Stream ${runtimeStreamId}`
+                        : undefined}
                     >{runtimeStreamId
                         ? `Stream ${runtimeStreamId}`
                         : "Connect an upstream stream"}</span
@@ -165,6 +286,9 @@
             {:else if node.kind === "sink"}
                 <span>Terminal node</span>
                 <span
+                    title={runtimeStreamId
+                        ? `Stream ${runtimeStreamId}`
+                        : undefined}
                     >{runtimeStreamId
                         ? `Stream ${runtimeStreamId}`
                         : "Connect an upstream stream"}</span
@@ -226,11 +350,35 @@
                     }}
                 >
                     <span>{portId}</span>
-                    <span class="port-dot"></span>
+                    <span
+                        class="port-dot"
+                        data-port-anchor
+                        data-port-id={portId}
+                        data-port-side="output"
+                    ></span>
                 </button>
             {/each}
         </div>
     </div>
+
+    {#if showInlineGraph && inlineViewerChart}
+        <div
+            class="node-inline"
+            role="presentation"
+            onmousedown={(event) => event.stopPropagation()}
+            ondblclick={(event) => event.stopPropagation()}
+        >
+            {@render inlineViewerChart(node)}
+        </div>
+    {/if}
+
+    <!-- Drag to resize; stops propagation so it doesn't move or select the node. -->
+    <span
+        class="node-resize-handle"
+        role="presentation"
+        title="Drag to resize"
+        onmousedown={startResize}
+    ></span>
 </div>
 
 <style>
@@ -246,6 +394,66 @@
         );
         box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
         overflow: hidden;
+        /* Flex column so the body / inline chart fill any (resized) card height. */
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* A viewer node hosting an inline live chart is wider to give the plot room;
+       ports are top-anchored so width/height changes never detach edges. */
+    .node.inline-viewer {
+        width: 360px;
+    }
+
+    /* On an inline viewer the body is just ports + meta (natural height) and the
+       chart region takes the rest; a plain node lets its body fill the card. */
+    .node.inline-viewer .node-body {
+        flex: 0 0 auto;
+        min-height: 0;
+    }
+
+    .node-inline {
+        flex: 1 1 auto;
+        min-height: 120px;
+        overflow: hidden;
+        padding: 6px 8px 8px;
+        border-top: 1px solid rgba(122, 148, 255, 0.16);
+        background: rgba(6, 10, 20, 0.6);
+        cursor: default;
+    }
+
+    .node-resize-handle {
+        position: absolute;
+        right: 2px;
+        bottom: 2px;
+        width: 14px;
+        height: 14px;
+        cursor: nwse-resize;
+        border-right: 2px solid rgba(122, 148, 255, 0.45);
+        border-bottom: 2px solid rgba(122, 148, 255, 0.45);
+        border-bottom-right-radius: 6px;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+    }
+
+    .node:hover .node-resize-handle,
+    .node.selected .node-resize-handle,
+    .node.resized .node-resize-handle {
+        opacity: 1;
+    }
+
+    .node-inline :global(.inline-note) {
+        margin: 0;
+        padding: 0.75rem 0.25rem;
+        font-size: 0.78rem;
+        color: #8a9ac8;
+        text-align: center;
+    }
+
+    /* Keep the embedded viewer components contained within the card. */
+    .node-inline > :global(*) {
+        max-height: 100%;
+        overflow: hidden;
     }
 
     .node.selected {
@@ -260,9 +468,11 @@
     .node-header {
         width: 100%;
         height: 42px;
+        flex: 0 0 42px;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 0.5rem;
         padding: 0 0.8rem;
         cursor: grab;
         background: rgba(18, 33, 60, 0.95);
@@ -276,12 +486,38 @@
         align-items: center;
         gap: 0.45rem;
         font-weight: 600;
+        min-width: 52px;
+        flex: 1 1 auto;
+    }
+
+    /* Icons keep their size; the label truncates instead of wrapping the 42px
+       header or overflowing the fixed-width card. */
+    .node-title > :global(svg) {
+        flex-shrink: 0;
+    }
+
+    .node-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .node-header-meta {
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
+        min-width: 0;
+        flex: 0 1 auto;
+    }
+
+    .node-runtime-badge {
+        flex-shrink: 0;
+    }
+
+    .node-kind {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .node-kind {
@@ -320,7 +556,8 @@
     .node-body {
         display: grid;
         grid-template-columns: 68px minmax(0, 1fr) 68px;
-        min-height: calc(100% - 42px);
+        flex: 1 1 auto;
+        min-height: 0;
     }
 
     .node-column {
@@ -333,9 +570,21 @@
     .node-meta {
         display: flex;
         justify-content: center;
-        align-items: flex-start;
+        align-items: stretch;
+        min-width: 0;
+        text-align: center;
         font-size: 0.78rem;
         color: #93a3cf;
+    }
+
+    /* Long values (19-digit stream ids, schema names) truncate with a hover
+       tooltip rather than overflowing the fixed-width card. */
+    .node-meta > span {
+        display: block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
     .outputs {

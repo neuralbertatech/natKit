@@ -407,6 +407,12 @@
                         request_id: `node-catalog:${Date.now()}`,
                     });
                     listStreamGraphs();
+                    // Re-issue a live subscription that was dropped because the
+                    // socket wasn't open yet (subscribeToStream fires without
+                    // waiting for the connection), or lost across a reconnect.
+                    if (liveStreamId) {
+                        wsManager?.subscribe([liveStreamId]);
+                    }
                 }
             },
             onStreamList: (message: StreamListMessage) => {
@@ -622,7 +628,6 @@
 
 <div class="visual-programming">
     <header class="header">
-        <h1>Visual Programming</h1>
         <div class="connection-status {connectionState}">
             {connectionState === "connected"
                 ? "Connected"
@@ -672,24 +677,22 @@
 
 <style>
     .visual-programming {
-        min-height: calc(100vh - 56px);
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        padding: 1.25rem 1.5rem 2rem;
+        position: relative;
+        height: calc(100vh - 56px);
         box-sizing: border-box;
+        overflow: hidden;
     }
 
+    /* Connection pill + error toast float over the full-bleed canvas. */
     .header {
+        position: absolute;
+        top: 22px;
+        right: 26px;
+        z-index: 25;
         display: flex;
         align-items: center;
-        justify-content: space-between;
         gap: 1rem;
-    }
-
-    .header h1 {
-        margin: 0;
-        font-size: 1.5rem;
+        pointer-events: none;
     }
 
     .connection-status {
@@ -699,6 +702,8 @@
         font-weight: 600;
         border: 1px solid rgba(114, 142, 255, 0.24);
         color: #9dafdf;
+        background: rgba(8, 13, 26, 0.82);
+        backdrop-filter: blur(4px);
     }
 
     .connection-status.connected {
@@ -712,11 +717,18 @@
     }
 
     .error-banner {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 30;
         margin: 0;
+        max-width: min(70vw, 640px);
         border-radius: 8px;
         padding: 0.7rem 0.9rem;
-        background: rgba(70, 18, 26, 0.72);
+        background: rgba(70, 18, 26, 0.92);
         color: #ffb9b9;
         border: 1px solid rgba(255, 143, 143, 0.28);
+        backdrop-filter: blur(4px);
     }
 </style>

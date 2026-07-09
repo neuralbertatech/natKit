@@ -11,6 +11,8 @@
         GitBranch,
         Monitor,
         Package,
+        PanelLeft,
+        PanelRight,
         Plus,
         RefreshCw,
         Save,
@@ -169,6 +171,7 @@
         startStreamGraph,
         stopStreamGraph,
         inspectStream,
+        liveStreamId,
         liveStreamType,
         liveLatestMuseSample,
         liveEmgSamples,
@@ -191,6 +194,10 @@
     );
     let compositeFileInput = $state<HTMLInputElement | null>(null);
     let paletteOpen = $state(false);
+    // Floating-panel visibility. The canvas fills the page and these menus float
+    // over it; each can be hidden to reclaim canvas space.
+    let showSidebar = $state(true);
+    let showInspector = $state(true);
 
     function runPaletteAction(action: () => void) {
         paletteOpen = false;
@@ -739,6 +746,7 @@
             label: "Viewer",
             position: { ...position },
             input_port_ids: ["input"],
+            inline_graph: false,
         });
         selectedNodeId = nodeId;
         selectedNodeIds = new Set([nodeId]);
@@ -1812,6 +1820,97 @@
         }
     }
 
+    // Inline viewer graphs. Only one stream buffers live at a time (page.svelte
+    // keys its buffers on liveStreamId), so an inline chart renders live data
+    // only for the currently-subscribed stream; toggling inline on subscribes to
+    // that node's stream and makes it the active one.
+    function inlineViewerIsLive(nodeId: string): boolean {
+        const streamId = nodeRuntimeStatus(nodeId)?.output_stream_id;
+        return streamId != null && String(streamId) === String(liveStreamId);
+    }
+
+    function setInlineViewerGraph(nodeId: string, enabled: boolean) {
+        const nextGraph = cloneGraph(draftGraph);
+        for (const node of nextGraph.nodes) {
+            if (node.id === nodeId && node.kind === "viewer") {
+                node.inline_graph = enabled;
+            }
+        }
+        markDraftChanged(nextGraph);
+
+        const streamId = nodeRuntimeStatus(nodeId)?.output_stream_id;
+        if (enabled && streamId) {
+            subscribeToStream(String(streamId));
+        } else if (
+            !enabled &&
+            streamId &&
+            String(streamId) === String(liveStreamId)
+        ) {
+            unsubscribeFromStream(String(streamId));
+        }
+    }
+
+    // --- Port anchors + node resize ------------------------------------------
+    // Each node reports its port dots' offsets from its top-left (unscaled graph
+    // px); an edge endpoint is then node.position + offset, so wires stay glued
+    // to the real dots at any node size, pan, or zoom. Falls back to the
+    // constant-based layout until the first measurement lands.
+    let portOffsets = $state<Record<string, { dx: number; dy: number }>>({});
+
+    function portKey(nodeId: string, side: string, portId: string): string {
+        return `${nodeId}::${side}::${portId}`;
+    }
+
+    function handlePortLayout(
+        nodeId: string,
+        anchors: {
+            portId: string;
+            side: "input" | "output";
+            dx: number;
+            dy: number;
+        }[],
+    ) {
+        const next = { ...portOffsets };
+        for (const key of Object.keys(next)) {
+            if (key.startsWith(`${nodeId}::`)) {
+                delete next[key];
+            }
+        }
+        for (const anchor of anchors) {
+            next[portKey(nodeId, anchor.side, anchor.portId)] = {
+                dx: anchor.dx,
+                dy: anchor.dy,
+            };
+        }
+        portOffsets = next;
+    }
+
+    function getPortPoint(
+        node: EditorGraphNode,
+        portId: string,
+        side: "input" | "output",
+    ): { x: number; y: number } {
+        const offset = portOffsets[portKey(node.id, side, portId)];
+        if (offset) {
+            return {
+                x: node.position.x + offset.dx,
+                y: node.position.y + offset.dy,
+            };
+        }
+        return getPortPosition(node, portId, side);
+    }
+
+    function handleNodeResize(nodeId: string, width: number, height: number) {
+        const nextGraph = cloneGraph(draftGraph);
+        for (const node of nextGraph.nodes) {
+            if (node.id === nodeId) {
+                node.width = width;
+                node.height = height;
+            }
+        }
+        markDraftChanged(nextGraph);
+    }
+
     onDestroy(() => {
         if (expandedViewerStreamId) {
             unsubscribeFromStream(String(expandedViewerStreamId));
@@ -1915,8 +2014,41 @@
     onkeydown={handleWindowKeydown}
 />
 
+{#snippet inlineViewerChart(node: EditorGraphNode)}
+    {#if !inlineViewerIsLive(node.id)}
+        <p class="inline-note">
+            {nodeRuntimeStatus(node.id)?.output_stream_id
+                ? "Streaming to another viewer."
+                : "Start the graph to see live data."}
+        </p>
+    {:else if liveRenderer === "muse"}
+        {#if liveLatestMuseSample}
+            <MuseViewer sample={liveLatestMuseSample} {formatNumber} />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
+    {:else if liveRenderer === "classification"}
+        <ClassificationViewer samples={liveEmgSamples} {formatNumber} />
+    {:else if liveRenderer === "feature_vector"}
+        <FeatureVectorViewer samples={liveEmgSamples} {formatNumber} />
+    {:else if liveRenderer === "channel_frame"}
+        {#if liveEmgSamples.length > 0}
+            <ChannelFrameViewer samples={liveEmgSamples} {formatNumber} compact />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
+    {:else if livePrimaryDescriptor}
+        <SchemaDescriptorInspector
+            descriptor={livePrimaryDescriptor}
+            recordValue={liveDescriptorRecordValue}
+        />
+    {:else}
+        <p class="inline-note">Waiting for data on this stream…</p>
+    {/if}
+{/snippet}
+
 <div class="graph-editor">
-    <div class="graph-sidebar">
+    <div class="graph-sidebar" class:panel-hidden={!showSidebar}>
         <div class="sidebar-header">
             <div>
                 <p class="eyebrow">Stream Graphs</p>
@@ -2135,6 +2267,16 @@
     <div class="graph-main">
         <div class="graph-toolbar">
             <div class="toolbar-group">
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showSidebar}
+                    onclick={() => (showSidebar = !showSidebar)}
+                    title={showSidebar ? "Hide boards & palette" : "Show boards & palette"}
+                    aria-pressed={showSidebar}
+                >
+                    <PanelLeft size={16} />
+                </button>
                 <SquareDashedMousePointer size={16} />
                 <input
                     class="graph-title-input"
@@ -2220,6 +2362,16 @@
                     <Save size={16} />
                     Save
                 </button>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showInspector}
+                    onclick={() => (showInspector = !showInspector)}
+                    title={showInspector ? "Hide inspector" : "Show inspector"}
+                    aria-pressed={showInspector}
+                >
+                    <PanelRight size={16} />
+                </button>
             </div>
         </div>
 
@@ -2262,12 +2414,12 @@
                                 (node) => node.id === edge.target_node_id,
                             )}
                         {#if sourceNode && targetNode}
-                            {@const sourcePoint = getPortPosition(
+                            {@const sourcePoint = getPortPoint(
                                 sourceNode,
                                 edge.source_port,
                                 "output",
                             )}
-                            {@const targetPoint = getPortPosition(
+                            {@const targetPoint = getPortPoint(
                                 targetNode,
                                 edge.target_port,
                                 "input",
@@ -2304,7 +2456,7 @@
                             (node) => node.id === connectionDrag?.nodeId,
                         )}
                         {#if dragSourceNode}
-                            {@const dragSourcePoint = getPortPosition(
+                            {@const dragSourcePoint = getPortPoint(
                                 dragSourceNode,
                                 connectionDrag.portId,
                                 "output",
@@ -2338,6 +2490,9 @@
                             selected={selectedNodeIds.has(node.id)}
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
+                            {inlineViewerChart}
+                            onPortLayout={handlePortLayout}
+                            onResize={handleNodeResize}
                             onSelect={selectNode}
                             onStartDrag={startNodeDrag}
                             onPortClick={handlePortClick}
@@ -2365,7 +2520,7 @@
                 {/if}
             </div>
 
-            <div class="graph-inspector">
+            <div class="graph-inspector" class:panel-hidden={!showInspector}>
                 <div class="inspector-section">
                     <p class="eyebrow">Graph</p>
                     <label>
@@ -3048,6 +3203,22 @@
                             </div>
                         {/if}
 
+                        {#if selectedNode.kind === "viewer"}
+                            <label class="inline-graph-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedNode.inline_graph === true}
+                                    onchange={(event) =>
+                                        setInlineViewerGraph(
+                                            selectedNode.id,
+                                            (event.currentTarget as HTMLInputElement)
+                                                .checked,
+                                        )}
+                                />
+                                <span>Show live graph on node</span>
+                            </label>
+                        {/if}
+
                         {#if nodeDiagnostics(selectedNode.id).length > 0}
                             <div class="diagnostic-list">
                                 {#each nodeDiagnostics(selectedNode.id) as diagnostic}
@@ -3450,9 +3621,8 @@
 <style>
     .graph-editor {
         position: relative;
-        display: grid;
-        grid-template-columns: 260px minmax(0, 1fr);
-        gap: 1rem;
+        display: block;
+        height: 100%;
         min-height: 72vh;
         color: #d6def4;
     }
@@ -3471,10 +3641,32 @@
     }
 
     .graph-sidebar {
+        position: absolute;
+        top: 72px;
+        left: 14px;
+        bottom: 14px;
+        width: 280px;
+        z-index: 15;
         padding: 1rem;
         display: flex;
         flex-direction: column;
         gap: 1rem;
+        overflow: auto;
+        border-radius: 8px;
+        transition: transform 0.18s ease, opacity 0.18s ease;
+    }
+
+    /* Floating menus slide off-canvas when hidden so the board fills the page. */
+    .graph-sidebar.panel-hidden {
+        transform: translateX(calc(-100% - 18px));
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .graph-inspector.panel-hidden {
+        transform: translateX(calc(100% + 18px));
+        opacity: 0;
+        pointer-events: none;
     }
 
     .sidebar-header,
@@ -3529,6 +3721,12 @@
     .icon-btn {
         width: 32px;
         height: 32px;
+    }
+
+    .icon-btn.active {
+        background: rgba(76, 161, 255, 0.24);
+        border-color: rgba(76, 161, 255, 0.5);
+        color: #cfe2ff;
     }
 
     .icon-btn.danger {
@@ -3687,16 +3885,21 @@
     }
 
     .graph-main {
+        position: absolute;
+        inset: 0;
         min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.9rem;
     }
 
     .graph-toolbar {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        right: 14px;
+        z-index: 20;
         border-radius: 8px;
-        padding: 0.75rem 0.9rem;
+        padding: 0.6rem 0.8rem;
         gap: 1rem;
+        flex-wrap: wrap;
     }
 
     .toolbar-group,
@@ -3741,22 +3944,18 @@
     }
 
     .graph-workspace {
-        position: relative;
-        min-height: 0;
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 360px;
-        gap: 1rem;
+        position: absolute;
+        inset: 0;
+        display: block;
     }
 
     .graph-canvas {
-        position: relative;
+        position: absolute;
+        inset: 0;
         overflow: hidden;
-        border-radius: 8px;
         background:
             radial-gradient(circle at top, rgba(76, 161, 255, 0.12), transparent 45%),
             linear-gradient(180deg, rgba(8, 12, 24, 0.96), rgba(5, 8, 16, 1));
-        border: 1px solid rgba(110, 138, 255, 0.16);
-        min-height: 720px;
         cursor: grab;
     }
 
@@ -3852,11 +4051,19 @@
     }
 
     .graph-inspector {
+        position: absolute;
+        top: 72px;
+        right: 14px;
+        bottom: 14px;
+        width: 360px;
+        z-index: 15;
         padding: 1rem;
         display: flex;
         flex-direction: column;
         gap: 1rem;
         overflow: auto;
+        border-radius: 8px;
+        transition: transform 0.18s ease, opacity 0.18s ease;
     }
 
     .inspector-section {
@@ -3911,6 +4118,19 @@
 
     .inspector-action {
         align-self: flex-start;
+    }
+
+    .inline-graph-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        color: #cdd8f5;
+        cursor: pointer;
+    }
+
+    .inline-graph-toggle input {
+        cursor: pointer;
     }
 
     .inspector-action-row {

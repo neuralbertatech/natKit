@@ -7,6 +7,9 @@
     interface Props {
         samples: BufferedEmgSample[];
         formatNumber: (num: number, decimals?: number) => string;
+        // Compact mode drops the summary + per-channel table and shrinks the
+        // chart so the viewer fits inside an on-canvas node.
+        compact?: boolean;
     }
 
     interface ChartRenderState {
@@ -35,7 +38,7 @@
     ];
     const MAX_POINTS_PER_CHANNEL = 1600;
 
-    let { samples, formatNumber }: Props = $props();
+    let { samples, formatNumber, compact = false }: Props = $props();
 
     let chartCanvas = $state<HTMLCanvasElement | null>(null);
     let selectedWindowMs = $state(10000);
@@ -482,8 +485,9 @@
     );
 </script>
 
-<div class="emg-viewer">
+<div class="emg-viewer" class:compact>
     {#if latestSample}
+        {#if !compact}
         <div class="emg-summary">
             <div><span class="label">Device</span>{latestSample.device_id}</div>
             <div><span class="label">Seq</span>{latestSample.seq_no}</div>
@@ -516,8 +520,10 @@
                 )}s
             </div>
         </div>
+        {/if}
 
         <div class="graph-section">
+            {#if !compact}
             <div class="graph-head">
                 <h4>Rolling Trace</h4>
                 <div class="window-controls" aria-label="History window">
@@ -534,11 +540,13 @@
                     {/each}
                 </div>
             </div>
+            {/if}
 
             <div class="chart-wrap">
                 <canvas bind:this={chartCanvas}></canvas>
             </div>
 
+            {#if !compact}
             <div class="graph-foot">
                 <span>
                     Revealing {latestVisibleCount}/{latestSample
@@ -551,8 +559,10 @@
                     Window {formatNumber(selectedWindowMs / 1000, 0)}s
                 </span>
             </div>
+            {/if}
         </div>
 
+        {#if !compact}
         <div class="channel-list">
             {#each latestSample.payload as values, channelIndex}
                 {@const stats = getChannelStats(values)}
@@ -581,6 +591,7 @@
             <summary>Raw Frame JSON</summary>
             <pre>{formatPayload(latestSample)}</pre>
         </details>
+        {/if}
     {/if}
 </div>
 
@@ -660,6 +671,21 @@
                 rgba(255, 255, 255, 0.98)
             );
         padding: 0.75rem;
+    }
+
+    .emg-viewer.compact {
+        gap: 0;
+        height: 100%;
+    }
+
+    .emg-viewer.compact .graph-section {
+        height: 100%;
+    }
+
+    .emg-viewer.compact .chart-wrap {
+        min-height: 0;
+        height: 100%;
+        padding: 0.35rem;
     }
 
     .graph-foot {
