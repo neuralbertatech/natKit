@@ -1,4 +1,7 @@
-import type { BufferedEmgSample, StreamInfo } from "./types";
+import type { BufferedEmgSample, StreamInfo, SessionProtocol } from "./types";
+
+// Re-exported from ./types (its shared home) so existing importers keep working.
+export type { SessionProtocol } from "./types";
 
 export const EMG_GESTURE_OPTIONS = [
     "rest",
@@ -54,27 +57,6 @@ export interface EmgRecordedFrame {
     cue_gesture: string | null;
     cue_prompt: string | null;
     frame: BufferedEmgSample;
-}
-
-// A generic, sensor-agnostic recording protocol (Phase 4 of the
-// visual-programming rework). Generalizes the EMG gesture experiment into a
-// reusable definition any classification task can use: an ordered class
-// vocabulary, per-class hold/rest timing, a run/repetition count, and
-// participant/protocol metadata. The cue engine (buildCueSchedule) is driven
-// from this — no gesture-specific hardcoding.
-export interface SessionProtocol {
-    protocol_id: string;
-    label: string;
-    // Ordered class vocabulary; each hold cue draws its label from here.
-    classes: string[];
-    // Filler/idle class for lead-in, inter-cue rest, and tail-rest phases.
-    rest_class: string;
-    repetitions: number;
-    hold_s: number;
-    rest_s: number;
-    lead_in_s: number;
-    tail_rest_s: number;
-    seed: number;
 }
 
 // The built-in EMG gesture protocol — the previous hardcoded experiment,

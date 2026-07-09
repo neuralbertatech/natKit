@@ -402,12 +402,34 @@ export interface StreamGraphViewport {
   zoom: number;
 }
 
+// A generic, sensor-agnostic recording protocol (Phase 4). Generalizes the EMG
+// gesture experiment into a reusable definition any classification task can use:
+// an ordered class vocabulary, per-class hold/rest timing, a run/repetition
+// count, and protocol metadata. The cue engine (experiment.ts) is driven from
+// this — no gesture-specific hardcoding. Lives here (the shared types module) so
+// both the session node and the cue engine can reference it without a cycle.
+export interface SessionProtocol {
+  protocol_id: string;
+  label: string;
+  // Ordered class vocabulary; each hold cue draws its label from here.
+  classes: string[];
+  // Filler/idle class for lead-in, inter-cue rest, and tail-rest phases.
+  rest_class: string;
+  repetitions: number;
+  hold_s: number;
+  rest_s: number;
+  lead_in_s: number;
+  tail_rest_s: number;
+  seed: number;
+}
+
 export type StreamGraphNodeKind =
   | "stream_source"
   | "transform"
   | "viewer"
   | "sink"
-  | "combine";
+  | "combine"
+  | "session";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -450,12 +472,28 @@ export interface StreamGraphCombineNode extends StreamGraphBaseNode<"combine"> {
   output_stream_id?: string;
 }
 
+// Records N upstream sensor streams under one protocol/marker timeline and
+// publishes a labeled session bundle (client-driven, via publish_session_bundle).
+// No output stream; the protocol + participant metadata live in `config` so they
+// round-trip through the backend's generic node config. (Phase 4.)
+export interface SessionNodeConfig {
+  protocol: SessionProtocol;
+  participant_id?: string;
+  notes?: string;
+}
+
+export interface StreamGraphSessionNode extends StreamGraphBaseNode<"session"> {
+  kind: "session";
+  config: SessionNodeConfig;
+}
+
 export type StreamGraphNode =
   | StreamGraphSourceNode
   | StreamGraphTransformNode
   | StreamGraphViewerNode
   | StreamGraphSinkNode
-  | StreamGraphCombineNode;
+  | StreamGraphCombineNode
+  | StreamGraphSessionNode;
 
 export interface StreamGraphEdge {
   id: string;
