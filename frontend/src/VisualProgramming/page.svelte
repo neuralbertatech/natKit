@@ -33,6 +33,7 @@
         BufferedEmgSample,
         DataSchemaDescriptor,
     } from "../StreamViewer/types";
+    import type { SessionPublishBundleInput } from "../StreamViewer/experiment";
 
     const STATUS_REFRESH_INTERVAL_MS = 500;
     const STREAM_GRAPH_REFRESH_INTERVAL_MS = 1000;
@@ -227,6 +228,24 @@
             action: "save_stream_graph",
             request_id: `stream-graph-save:${Date.now()}`,
             graph,
+        });
+        return true;
+    }
+
+    // Publish a session's metadata + markers (Phase 4). Recording is driven
+    // client-side by a session node; this forwards the bundle over the same
+    // backend WebSocket that carries the graph protocol.
+    function publishSessionBundle(payload: SessionPublishBundleInput): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "publish_session_bundle",
+            request_id: payload.requestId,
+            session_id: payload.sessionId,
+            meta_records: payload.metaRecords,
+            marker_events: payload.markerEvents,
         });
         return true;
     }
@@ -557,6 +576,7 @@
         {listStreamGraphs}
         {requestStreamGraphStatus}
         {saveStreamGraph}
+        {publishSessionBundle}
         {validateStreamGraph}
         {startStreamGraph}
         {stopStreamGraph}

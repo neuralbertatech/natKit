@@ -39,6 +39,13 @@
     import {
         buildCueScheduleForProtocol,
         scheduleDurationMs,
+        activeCueAtElapsedMs,
+        buildDefaultSessionId,
+        buildSessionMetadataRecordPayload,
+        buildSessionLifecycleMarkerPayload,
+        buildCueMarkerPayloads,
+        type EmgCueEvent,
+        type SessionPublishBundleInput,
     } from "../StreamViewer/experiment";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import {
@@ -87,6 +94,7 @@
         NodeCatalogEntry,
         SessionNodeConfig,
         SessionProtocol,
+        StreamGraphSessionNode,
         MuseSample,
         BufferedEmgSample,
         DataSchemaDescriptor,
@@ -105,6 +113,7 @@
         listStreamGraphs: () => void;
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
+        publishSessionBundle: (payload: SessionPublishBundleInput) => boolean;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
         startStreamGraph: (graphId: string) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
@@ -133,6 +142,7 @@
         listStreamGraphs,
         requestStreamGraphStatus,
         saveStreamGraph,
+        publishSessionBundle,
         validateStreamGraph,
         startStreamGraph,
         stopStreamGraph,
@@ -1125,6 +1135,196 @@
         };
     });
 
+    // --- Session recording (Phase 4, slice C) -------------------------------
+    // Recording is client-side: run the protocol cue timeline and publish the
+    // session bundle (metadata + lifecycle + cue markers) via the backend under
+    // one session_id spanning every recorded upstream stream. The raw sensor
+    // data is already in Kafka (the source/transform streams); the session emits
+    // the marker timeline that labels and delimits the runs.
+    interface SessionRecordingState {
+        nodeId: string;
+        sessionId: string;
+        protocolId: string;
+        participantId: string;
+        notes: string;
+        schedule: EmgCueEvent[];
+        durationMs: number;
+        streamIds: string[];
+        startedAtEpochMs: number;
+        startedAtUs: number;
+        elapsedMs: number;
+    }
+    let sessionRecording = $state<SessionRecordingState | null>(null);
+    let sessionRecordTimer: ReturnType<typeof setInterval> | null = null;
+    let sessionRecordMessage = $state<string | null>(null);
+
+    const activeSessionCue = $derived(
+        sessionRecording
+            ? activeCueAtElapsedMs(
+                  sessionRecording.schedule,
+                  sessionRecording.elapsedMs,
+              )
+            : null,
+    );
+
+    // Resolve the concrete stream ids feeding a session node: stream_source
+    // inputs contribute their stream_id, transform/combine inputs their resolved
+    // runtime output_stream_id.
+    function resolveSessionInputStreamIds(
+        node: StreamGraphSessionNode,
+    ): string[] {
+        const ids: string[] = [];
+        for (const edge of draftGraph.edges) {
+            if (edge.target_node_id !== node.id) {
+                continue;
+            }
+            const src = draftGraph.nodes.find(
+                (candidate) => candidate.id === edge.source_node_id,
+            );
+            if (!src) {
+                continue;
+            }
+            if (src.kind === "stream_source") {
+                if (src.stream_id) {
+                    ids.push(String(src.stream_id));
+                }
+            } else {
+                const rt = nodeRuntimeStatus(src.id);
+                if (rt?.output_stream_id) {
+                    ids.push(String(rt.output_stream_id));
+                }
+            }
+        }
+        return Array.from(new Set(ids));
+    }
+
+    function startSessionRecording(node: StreamGraphSessionNode) {
+        if (sessionRecording) {
+            return;
+        }
+        const protocol = node.config.protocol;
+        const schedule = buildCueScheduleForProtocol(protocol);
+        if (schedule.length === 0) {
+            sessionRecordMessage =
+                "Protocol has no cues — add classes and timing first.";
+            return;
+        }
+        const streamIds = resolveSessionInputStreamIds(node);
+        if (streamIds.length === 0) {
+            sessionRecordMessage =
+                "No upstream streams resolved — connect sources and start the graph first.";
+            return;
+        }
+        const sessionId = sanitizeIdentifier(
+            buildDefaultSessionId(protocol.protocol_id || "session"),
+        );
+        const startedAtEpochMs = Date.now();
+        const startedAtUs = startedAtEpochMs * 1000;
+        const participantId = node.config.participant_id ?? "";
+        const notes = node.config.notes ?? "";
+        const meta = buildSessionMetadataRecordPayload({
+            sessionId,
+            purpose: "training",
+            participantId,
+            protocolId: protocol.protocol_id,
+            deviceIds: streamIds,
+            tags: streamIds.map((id) => `stream:${id}`),
+            notes,
+            createdAtUs: startedAtUs,
+        });
+        publishSessionBundle({
+            requestId: `vp-session-start:${startedAtUs}`,
+            sessionId,
+            metaRecords: [meta],
+            markerEvents: [
+                buildSessionLifecycleMarkerPayload({
+                    sessionId,
+                    purpose: "training",
+                    participantId,
+                    protocolId: protocol.protocol_id,
+                    deviceIds: streamIds,
+                    event: "start",
+                    emittedAtUs: startedAtUs,
+                }),
+            ],
+        });
+        sessionRecording = {
+            nodeId: node.id,
+            sessionId,
+            protocolId: protocol.protocol_id,
+            participantId,
+            notes,
+            schedule,
+            durationMs: scheduleDurationMs(schedule),
+            streamIds,
+            startedAtEpochMs,
+            startedAtUs,
+            elapsedMs: 0,
+        };
+        sessionRecordMessage = `Recording ${streamIds.length} stream(s) as ${sessionId}…`;
+        sessionRecordTimer = setInterval(tickSessionRecording, 100);
+    }
+
+    function tickSessionRecording() {
+        if (!sessionRecording) {
+            return;
+        }
+        const elapsedMs = Date.now() - sessionRecording.startedAtEpochMs;
+        sessionRecording = { ...sessionRecording, elapsedMs };
+        if (elapsedMs >= sessionRecording.durationMs) {
+            finishSessionRecording(true);
+        }
+    }
+
+    function finishSessionRecording(completed: boolean) {
+        const rec = sessionRecording;
+        if (!rec) {
+            return;
+        }
+        if (sessionRecordTimer) {
+            clearInterval(sessionRecordTimer);
+            sessionRecordTimer = null;
+        }
+        const endedAtUs = Date.now() * 1000;
+        const cueMarkers = buildCueMarkerPayloads({
+            sessionId: rec.sessionId,
+            cues: rec.schedule,
+            sessionStartedAtUs: rec.startedAtUs,
+        }).filter((marker) => marker.emitted_at_us <= endedAtUs);
+        const meta = buildSessionMetadataRecordPayload({
+            sessionId: rec.sessionId,
+            purpose: "training",
+            participantId: rec.participantId,
+            protocolId: rec.protocolId,
+            deviceIds: rec.streamIds,
+            tags: rec.streamIds.map((id) => `stream:${id}`),
+            notes: rec.notes,
+            createdAtUs: rec.startedAtUs,
+            updatedAtUs: endedAtUs,
+        });
+        publishSessionBundle({
+            requestId: `vp-session-complete:${endedAtUs}`,
+            sessionId: rec.sessionId,
+            metaRecords: [meta],
+            markerEvents: [
+                ...cueMarkers,
+                buildSessionLifecycleMarkerPayload({
+                    sessionId: rec.sessionId,
+                    purpose: "training",
+                    participantId: rec.participantId,
+                    protocolId: rec.protocolId,
+                    deviceIds: rec.streamIds,
+                    event: "end",
+                    emittedAtUs: endedAtUs,
+                }),
+            ],
+        });
+        sessionRecordMessage = completed
+            ? `Recorded ${rec.sessionId} (${rec.streamIds.length} stream(s)).`
+            : `Stopped ${rec.sessionId} early; partial session published.`;
+        sessionRecording = null;
+    }
+
     function updateTransformConfigField(
         field: TransformCapabilityConfigField,
         rawValue: string,
@@ -1307,6 +1507,10 @@
     onDestroy(() => {
         if (expandedViewerStreamId) {
             unsubscribeFromStream(String(expandedViewerStreamId));
+        }
+        if (sessionRecordTimer) {
+            clearInterval(sessionRecordTimer);
+            sessionRecordTimer = null;
         }
     });
 
@@ -2172,11 +2376,57 @@
                                         .input_port_ids?.length ?? 0})</span
                                 >
                             </div>
-                            <p class="muted-text">
-                                Multi-sensor capture + publish runs client-side
-                                (next slice); the protocol above is saved with
-                                the graph.
-                            </p>
+                            <div class="inspector-action-row">
+                                {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
+                                    <button
+                                        type="button"
+                                        class="action-btn secondary"
+                                        onclick={() =>
+                                            finishSessionRecording(false)}
+                                    >
+                                        Stop recording
+                                    </button>
+                                {:else}
+                                    <button
+                                        type="button"
+                                        class="action-btn"
+                                        disabled={sessionRecording !== null}
+                                        onclick={() =>
+                                            startSessionRecording(
+                                                selectedSessionNode,
+                                            )}
+                                    >
+                                        <CircleDot size={15} />
+                                        Record session
+                                    </button>
+                                {/if}
+                            </div>
+                            {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
+                                <div class="runtime-card">
+                                    <div class="summary-row">
+                                        <span>Elapsed</span>
+                                        <strong
+                                            >{(
+                                                sessionRecording.elapsedMs / 1000
+                                            ).toFixed(1)}s / {(
+                                                sessionRecording.durationMs /
+                                                1000
+                                            ).toFixed(0)}s</strong
+                                        >
+                                    </div>
+                                    {#if activeSessionCue}
+                                        <div class="summary-row">
+                                            <span>Current cue</span>
+                                            <strong
+                                                >{activeSessionCue.prompt} · {activeSessionCue.gesture}</strong
+                                            >
+                                        </div>
+                                    {/if}
+                                </div>
+                            {/if}
+                            {#if sessionRecordMessage}
+                                <p class="muted-text">{sessionRecordMessage}</p>
+                            {/if}
                         {/if}
 
                         {#if selectedNodeRuntimeStatus}
