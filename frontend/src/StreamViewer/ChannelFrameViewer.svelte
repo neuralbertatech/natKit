@@ -392,9 +392,21 @@
         chart.update("none");
     }
 
+    // Throttle the rolling-trace redraw. The chart scrolls smoothly by
+    // re-rendering as time passes, but doing that every animation frame (~60fps)
+    // means one chart alone drives 60 full Chart.js redraws/second — and several
+    // inline viewers multiply that into the main-thread saturation + GC churn
+    // that made multiple viewers slow. A capped rate still looks smooth; inline
+    // (compact) charts are tiny previews and can refresh even less often.
+    let lastSyncMs = 0;
     function startAnimationLoop(): void {
-        renderClockMs = Date.now();
-        syncChart();
+        const now = Date.now();
+        const minRenderIntervalMs = compact ? 100 : 40;
+        if (now - lastSyncMs >= minRenderIntervalMs) {
+            lastSyncMs = now;
+            renderClockMs = now;
+            syncChart();
+        }
         animationFrameId = requestAnimationFrame(startAnimationLoop);
     }
 
