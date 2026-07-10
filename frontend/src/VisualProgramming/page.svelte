@@ -96,7 +96,15 @@
     // Per-stream live buffers keyed by stream id, so any number of inspectors can
     // be live at once (not just one). Ref-counted subscriptions let several
     // viewer nodes share a stream without one closing another's feed.
-    let liveStreams = $state<Record<string, LiveStreamData>>({});
+    //
+    // $state.raw (NOT deep $state): the sample buffers are large and read on the
+    // chart hot path (buildChartState iterates every sample × channel). A deep
+    // proxy would route each of those element reads through Svelte's reactive
+    // getter — profiling showed that proxy overhead dominating and growing with
+    // buffer size (the progressive stutter). Raw state keeps the arrays plain;
+    // we trigger reactivity by reassigning the map (cheap — a viewer's chart only
+    // rebuilds when its own array reference changes).
+    let liveStreams = $state.raw<Record<string, LiveStreamData>>({});
     const streamRefCounts = new Map<string, number>();
 
     // Ingest is decoupled from render: incoming frames accumulate in a plain
@@ -147,10 +155,13 @@
             : buffer;
     }
 
-    // Merge each stream's pending frames into its reactive buffer, mutating that
-    // one key in place (never replacing the whole liveStreams object — that would
-    // invalidate every stream's readers and re-render every viewer's chart).
+    // Merge each stream's pending frames into its buffer. Only the streams that
+    // actually received frames get a fresh value object (new array reference), so
+    // an unchanged stream keeps its identity and its viewer's chart doesn't
+    // rebuild. We reassign liveStreams once at the end (raw state tracks
+    // reassignment, not nested mutation).
     function flushLiveStreams() {
+        let updated: Record<string, LiveStreamData> | null = null;
         for (const [streamId, pending] of pendingByStream) {
             const current = liveStreams[streamId];
             if (!current) {
@@ -185,7 +196,13 @@
                 };
                 pending.imu.length = 0;
             }
-            liveStreams[streamId] = next;
+            if (updated === null) {
+                updated = { ...liveStreams };
+            }
+            updated[streamId] = next;
+        }
+        if (updated !== null) {
+            liveStreams = updated;
         }
     }
     // Friendly device name per stream (latest device_id seen). Persists beyond a
@@ -267,7 +284,7 @@
         const next = (streamRefCounts.get(streamId) ?? 0) + 1;
         streamRefCounts.set(streamId, next);
         if (next === 1) {
-            liveStreams[streamId] = emptyLiveStream(streamId);
+            liveStreams = { ...liveStreams, [streamId]: emptyLiveStream(streamId) };
             ensureLiveFlushTimer();
             wsManager?.subscribe([streamId]);
         }
@@ -282,7 +299,8 @@
         streamRefCounts.delete(streamId);
         pendingByStream.delete(streamId);
         wsManager?.unsubscribe([streamId]);
-        delete liveStreams[streamId];
+        const { [streamId]: _removed, ...rest } = liveStreams;
+        liveStreams = rest;
     }
 
     function formatNumber(num: number, decimals: number = 4): string {
