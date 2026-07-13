@@ -141,9 +141,18 @@
         const cssWidth = canvas.clientWidth || 600;
         const cssHeight = rows.length * ROW_HEIGHT;
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
-        canvas.height = Math.max(1, Math.floor(cssHeight * dpr));
-        canvas.style.height = `${cssHeight}px`;
+        // Assigning canvas.width/height reallocates + clears the backing store,
+        // which is expensive to do on every (5Hz) redraw. Only resize when the
+        // dimensions actually change; clearRect below handles clearing.
+        const targetW = Math.max(1, Math.floor(cssWidth * dpr));
+        const targetH = Math.max(1, Math.floor(cssHeight * dpr));
+        if (canvas.width !== targetW) {
+            canvas.width = targetW;
+        }
+        if (canvas.height !== targetH) {
+            canvas.height = targetH;
+            canvas.style.height = `${cssHeight}px`;
+        }
 
         const ctx = canvas.getContext("2d");
         if (!ctx) {
