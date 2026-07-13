@@ -260,7 +260,12 @@
 
             return {
                 label,
-                data: downsampleMinMax(shifted, MAX_POINTS_PER_CHANNEL),
+                // Compact inline charts are only ~340px wide, so 1600 points is
+                // far more than pixels — downsample harder to cut per-frame work.
+                data: downsampleMinMax(
+                    shifted,
+                    compact ? 400 : MAX_POINTS_PER_CHANNEL,
+                ),
                 borderColor: getChannelColor(channelIndex),
                 backgroundColor: `${getChannelColor(channelIndex)}22`,
                 borderWidth: 2,
