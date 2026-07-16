@@ -108,10 +108,15 @@ services:
     environment:
       LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
       LIBNATKIT_KAFKA_BROKER_PORT: 9092
+      # Persist saved stream graphs on the host so they survive container recreate
+      # (the default ./data/stream_graphs.json lives in the ephemeral container
+      # layer and is lost on `down`/rebuild).
+      NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
     ports:
       - "7409:7409"
     volumes:
       - ./natkit-backend/log:/logs:Z
+      - ./natkit-backend/data:/graphs:Z
     networks:
       - natkit-v0-kafka-network
     depends_on:
