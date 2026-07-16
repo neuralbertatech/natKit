@@ -167,6 +167,13 @@
         // Durable bundle path from the last completed train job; auto-filled into
         // emg_gesture_classify nodes so live classification needs no manual paste.
         trainBundlePath: string | null;
+        // Phase 6: validation accuracy of the last completed train job.
+        trainAccuracy: {
+            family: string | null;
+            mean_accuracy: number;
+            min_accuracy: number;
+            mean_coverage: number;
+        } | null;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
         startStreamGraph: (graphId: string, startOffset?: number) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
@@ -210,6 +217,7 @@
         trainJobStatus,
         trainModelPath,
         trainBundlePath,
+        trainAccuracy,
         validateStreamGraph,
         startStreamGraph,
         stopStreamGraph,
@@ -3801,6 +3809,24 @@
                                 <div class="summary-row">
                                     <span>Job</span>
                                     <strong>{trainJobStatus}</strong>
+                                </div>
+                            {/if}
+                            {#if trainAccuracy}
+                                <div class="summary-row">
+                                    <span>Validation accuracy</span>
+                                    <strong>
+                                        {(trainAccuracy.mean_accuracy * 100).toFixed(1)}%
+                                        {#if trainAccuracy.family}
+                                            ({trainAccuracy.family})
+                                        {/if}
+                                    </strong>
+                                </div>
+                                <div class="summary-row">
+                                    <span>Min acc / coverage</span>
+                                    <strong>
+                                        {(trainAccuracy.min_accuracy * 100).toFixed(1)}% /
+                                        {(trainAccuracy.mean_coverage * 100).toFixed(1)}%
+                                    </strong>
                                 </div>
                             {/if}
                             {#if trainModelPath}

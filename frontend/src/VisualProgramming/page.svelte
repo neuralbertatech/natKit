@@ -78,6 +78,14 @@
     // is what an emg_gesture_classify node loads; auto-filled into the classify
     // node on job completion so the operator never pastes a path.
     let trainBundlePath = $state<string | null>(null);
+    // Phase 6: validation accuracy from the last completed train job, surfaced
+    // on the train node so the operator sees the number before going live.
+    let trainAccuracy = $state<{
+        family: string | null;
+        mean_accuracy: number;
+        min_accuracy: number;
+        mean_coverage: number;
+    } | null>(null);
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
@@ -412,7 +420,14 @@
             message?: string;
             error?: string;
             job_id?: string;
-            report?: { model_path?: string | null; bundle_path?: string | null } | null;
+            report?: {
+                model_path?: string | null;
+                bundle_path?: string | null;
+                selected_family?: string | null;
+                selected_mean_accuracy?: number | null;
+                selected_min_accuracy?: number | null;
+                selected_mean_coverage?: number | null;
+            } | null;
             runs?: RecordedRunSummary[];
         };
         if (msg.type === "recorded_runs") {
@@ -431,6 +446,17 @@
             if (msg.status === "completed" && msg.report?.bundle_path) {
                 trainBundlePath = msg.report.bundle_path;
             }
+            if (
+                msg.status === "completed" &&
+                typeof msg.report?.selected_mean_accuracy === "number"
+            ) {
+                trainAccuracy = {
+                    family: msg.report.selected_family ?? null,
+                    mean_accuracy: msg.report.selected_mean_accuracy,
+                    min_accuracy: msg.report.selected_min_accuracy ?? 0,
+                    mean_coverage: msg.report.selected_mean_coverage ?? 0,
+                };
+            }
         } else if (msg.type === "error") {
             trainJobStatus = `error: ${msg.error ?? msg.message ?? "unknown"}`;
         }
@@ -446,6 +472,7 @@
         }
         trainModelPath = null;
         trainBundlePath = null;
+        trainAccuracy = null;
         trainJobStatus = "submitting…";
         wsManager.sendMlAction({
             action: "start_train_validate_job",
@@ -792,6 +819,7 @@
         {trainJobStatus}
         {trainModelPath}
         {trainBundlePath}
+        {trainAccuracy}
         {validateStreamGraph}
         {startStreamGraph}
         {stopStreamGraph}

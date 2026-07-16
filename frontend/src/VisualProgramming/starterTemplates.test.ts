@@ -57,12 +57,12 @@ describe("Convention EMG Quick-Start template", () => {
     it("pre-places emg_gesture_classify with an empty model path (filled after training)", () => {
         const graph = template("convention-emg-quick-start").build(null);
         const classify = graph.nodes.find((n) => n.id === "classify");
-        expect(classify && "transform_kind" in classify ? classify.transform_kind : null).toBe(
-            "emg_gesture_classify",
-        );
-        expect(
-            classify && "config" in classify ? classify.config.model_path : "x",
-        ).toBe("");
+        expect(classify?.kind).toBe("transform");
+        if (classify?.kind !== "transform") {
+            throw new Error("classify node is not a transform");
+        }
+        expect(classify.transform_kind).toBe("emg_gesture_classify");
+        expect(classify.config.model_path).toBe("");
     });
 
     it("uses the convention protocol including a fist gesture for calibration", () => {
