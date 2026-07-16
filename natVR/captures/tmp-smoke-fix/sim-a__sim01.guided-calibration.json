@@ -1,0 +1,19 @@
+{
+  "session_id": "sim-a",
+  "parquet_path": "captures/tmp-smoke-fix/sim-a__sim01.parquet",
+  "feature_path": "captures/tmp-smoke-fix/sim-a__sim01.features.jsonl",
+  "calibration_path": "captures/tmp-smoke-fix/sim-a__sim01.calibration.json",
+  "model_path": "captures/tmp-smoke-fix/sim-a__sim01.session-lda-model.json",
+  "window_ms": 200,
+  "hop_ms": 50,
+  "sample_rate_hz": 1000,
+  "feature_windows": 25,
+  "hold_windows": 22,
+  "hold_gesture_counts": {
+    "fist": 4,
+    "open": 4,
+    "pinch": 4,
+    "point": 4,
+    "rest": 6
+  }
+}

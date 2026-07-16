@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neuralberta.tech/schemas/natvr/exg-pill-emg-data-v1.schema.json",
+  "title": "natVR EXG Pill EMG Data v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "device_id",
+    "seq_no",
+    "device_ts_us",
+    "n_channels",
+    "samples_per_channel",
+    "sample_rate_hz",
+    "channel_labels",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "exg.pill.emg.data.v1"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "seq_no": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "device_ts_us": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "n_channels": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "samples_per_channel": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sample_rate_hz": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "channel_labels": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "payload": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "integer",
+          "minimum": -32768,
+          "maximum": 32767
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "session_id": "emg-web-2026-06-26T17-30-24",
+  "device_id": "emg01",
+  "topic": "Data-1112596048936639351-Json-ExgPillEmgDataSchemaV1",
+  "subject": "Session 2",
+  "arm": null,
+  "electrode_photo_ref": null,
+  "channel_map": [
+    "flexor_a"
+  ],
+  "sensor_serials": [],
+  "skin_prep_notes": null,
+  "notes": null,
+  "date_utc": "2026-06-26T17:58:47.200000+00:00",
+  "extra": {
+    "reconstructed_from_kafka": true,
+    "marker_topic": "Marker-819841655402830509-Json-MarkerEventV1",
+    "meta_topic": "Meta-819841655402830509-Json-MetaRecord",
+    "marker_count": 132,
+    "frame_count": 32147,
+    "session_start_us": 1782496727200000,
+    "session_end_us": 1782498334612000,
+    "session_duration_s": 1607.412,
+    "session_record": {
+      "purpose": "training",
+      "participant_id": "Session 2",
+      "protocol_id": "emg-gesture-cues-v1",
+      "device_ids": [
+        "emg01"
+      ],
+      "tags": [
+        "right",
+        "completed"
+      ],
+      "notes": "",
+      "created_at_us": 1782498254611000,
+      "updated_at_us": 1782498334612000
+    }
+  }
+}

@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "natvr"
+version = "0.1.0"
+description = "EMG to VR pipeline support code for natKit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  # Kafka I/O goes through the libnatkit Kafka C ABI (natvr.libnatkit_kafka),
+  # not a Python Kafka client -- see natvr.kafka_transport.
+  "pyarrow>=16.0.0",
+  "scikit-learn>=1.5.0",
+  "websockets>=12,<16",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+# Host-side serial backup ingest (natvr-serial-bridge). Only needed on the
+# laptop the ESP32 is plugged into; kept out of the core deps so the pipeline
+# stays lean.
+serial = [
+  "pyserial>=3.5",
+  "paho-mqtt>=1.6",
+]
+
+[project.scripts]
+natvr-serial-bridge = "natvr.bridge.serial_bridge:main"
+natvr-hand-state-bridge = "natvr.bridge.hand_state_bridge:main"
+natvr-emg-record = "natvr.recording:main"
+natvr-emg-replay = "natvr.replay:main"
+natvr-emg-stitch-markers = "natvr.stitch_markers:main"
+natvr-emg-capture = "natvr.capture_session:main"
+natvr-emg-analyze = "natvr.analysis:main"
+natvr-emg-dataset-manifest = "natvr.dataset_manifest:main"
+natvr-emg-featurize = "natvr.featurize:main"
+natvr-emg-calibrate = "natvr.calibration:main"
+natvr-emg-guided-calibration = "natvr.guided_calibration:main"
+natvr-emg-baseline = "natvr.baseline:main"
+natvr-emg-compare-models = "natvr.compare_models:main"
+natvr-emg-select-model = "natvr.select_model:main"
+natvr-emg-train-validate-kafka = "natvr.kafka_train_validate:main"
+natvr-emg-channel-ablation = "natvr.channel_ablation:main"
+natvr-emg-train = "natvr.train_model:main"
+natvr-emg-classifier = "natvr.classifier:main"
+natvr-emg-classify-replay = "natvr.classify_replay:main"
+natvr-emg-replay-eval = "natvr.replay_eval:main"
+natvr-emg-publish-session = "natvr.session_publish:main"
+natvr-emg-reconstruct = "natvr.reconstruct_session:main"
+natvr-emg-simulate = "natvr.synthetic:main"
+natvr-emg-smoke = "natvr.smoke:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

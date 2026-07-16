@@ -1,0 +1,50 @@
+{
+  "session_id": "sim-replay",
+  "parquet_path": "captures/sim-integration/sim-a__sim01.parquet",
+  "model_path": "captures/sim-integration/lda-model.json",
+  "calibration_path": "captures/sim-integration/sim-a__sim01.calibration.json",
+  "expected_windows": 25,
+  "predicted_windows": 25,
+  "matched_windows": 25,
+  "missing_windows": 0,
+  "unmatched_predictions": 0,
+  "coverage": 1.0,
+  "accuracy": 0.16,
+  "confusion_matrix": {
+    "fist": {
+      "fist": 0,
+      "open": 4,
+      "pinch": 0,
+      "point": 0,
+      "rest": 0
+    },
+    "open": {
+      "fist": 0,
+      "open": 4,
+      "pinch": 0,
+      "point": 0,
+      "rest": 0
+    },
+    "pinch": {
+      "fist": 0,
+      "open": 4,
+      "pinch": 0,
+      "point": 0,
+      "rest": 0
+    },
+    "point": {
+      "fist": 0,
+      "open": 4,
+      "pinch": 0,
+      "point": 0,
+      "rest": 0
+    },
+    "rest": {
+      "fist": 0,
+      "open": 9,
+      "pinch": 0,
+      "point": 0,
+      "rest": 0
+    }
+  }
+}

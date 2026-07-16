@@ -1,0 +1,193 @@
+{
+  "feature_paths": [
+    "captures/tmp-select-smoke/sim-a__sim01.features.jsonl",
+    "captures/tmp-select-smoke/sim-b__sim01.features.jsonl"
+  ],
+  "eval_parquet_paths": [
+    "captures/tmp-select-smoke/sim-a__sim01.parquet"
+  ],
+  "results": [
+    {
+      "family": "lda",
+      "model_path": "captures/tmp-select-smoke/lda-model.json",
+      "replay_reports": [
+        {
+          "session_id": "lda-sim-a__sim01",
+          "parquet_path": "captures/tmp-select-smoke/sim-a__sim01.parquet",
+          "model_path": "captures/tmp-select-smoke/lda-model.json",
+          "calibration_path": "captures/tmp-select-smoke/sim-a__sim01.calibration.json",
+          "expected_windows": 25,
+          "predicted_windows": 25,
+          "matched_windows": 25,
+          "missing_windows": 0,
+          "unmatched_predictions": 0,
+          "coverage": 1.0,
+          "accuracy": 0.68,
+          "confusion_matrix": {
+            "fist": {
+              "fist": 2,
+              "open": 0,
+              "pinch": 0,
+              "point": 0,
+              "rest": 2
+            },
+            "open": {
+              "fist": 0,
+              "open": 4,
+              "pinch": 0,
+              "point": 0,
+              "rest": 0
+            },
+            "pinch": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 4,
+              "point": 0,
+              "rest": 0
+            },
+            "point": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 0,
+              "point": 4,
+              "rest": 0
+            },
+            "rest": {
+              "fist": 1,
+              "open": 3,
+              "pinch": 1,
+              "point": 1,
+              "rest": 3
+            }
+          }
+        }
+      ],
+      "mean_accuracy": 0.68,
+      "min_accuracy": 0.68,
+      "mean_coverage": 1.0
+    },
+    {
+      "family": "linear_svm",
+      "model_path": "captures/tmp-select-smoke/linear-svm-model.joblib",
+      "replay_reports": [
+        {
+          "session_id": "linear_svm-sim-a__sim01",
+          "parquet_path": "captures/tmp-select-smoke/sim-a__sim01.parquet",
+          "model_path": "captures/tmp-select-smoke/linear-svm-model.joblib",
+          "calibration_path": "captures/tmp-select-smoke/sim-a__sim01.calibration.json",
+          "expected_windows": 25,
+          "predicted_windows": 25,
+          "matched_windows": 25,
+          "missing_windows": 0,
+          "unmatched_predictions": 0,
+          "coverage": 1.0,
+          "accuracy": 0.84,
+          "confusion_matrix": {
+            "fist": {
+              "fist": 3,
+              "open": 0,
+              "pinch": 0,
+              "point": 0,
+              "rest": 1
+            },
+            "open": {
+              "fist": 0,
+              "open": 4,
+              "pinch": 0,
+              "point": 0,
+              "rest": 0
+            },
+            "pinch": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 4,
+              "point": 0,
+              "rest": 0
+            },
+            "point": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 0,
+              "point": 4,
+              "rest": 0
+            },
+            "rest": {
+              "fist": 0,
+              "open": 1,
+              "pinch": 1,
+              "point": 1,
+              "rest": 6
+            }
+          }
+        }
+      ],
+      "mean_accuracy": 0.84,
+      "min_accuracy": 0.84,
+      "mean_coverage": 1.0
+    },
+    {
+      "family": "random_forest",
+      "model_path": "captures/tmp-select-smoke/random-forest-model.joblib",
+      "replay_reports": [
+        {
+          "session_id": "random_forest-sim-a__sim01",
+          "parquet_path": "captures/tmp-select-smoke/sim-a__sim01.parquet",
+          "model_path": "captures/tmp-select-smoke/random-forest-model.joblib",
+          "calibration_path": "captures/tmp-select-smoke/sim-a__sim01.calibration.json",
+          "expected_windows": 25,
+          "predicted_windows": 25,
+          "matched_windows": 25,
+          "missing_windows": 0,
+          "unmatched_predictions": 0,
+          "coverage": 1.0,
+          "accuracy": 0.88,
+          "confusion_matrix": {
+            "fist": {
+              "fist": 4,
+              "open": 0,
+              "pinch": 0,
+              "point": 0,
+              "rest": 0
+            },
+            "open": {
+              "fist": 0,
+              "open": 4,
+              "pinch": 0,
+              "point": 0,
+              "rest": 0
+            },
+            "pinch": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 4,
+              "point": 0,
+              "rest": 0
+            },
+            "point": {
+              "fist": 0,
+              "open": 0,
+              "pinch": 0,
+              "point": 4,
+              "rest": 0
+            },
+            "rest": {
+              "fist": 0,
+              "open": 1,
+              "pinch": 1,
+              "point": 1,
+              "rest": 6
+            }
+          }
+        }
+      ],
+      "mean_accuracy": 0.88,
+      "min_accuracy": 0.88,
+      "mean_coverage": 1.0
+    }
+  ],
+  "selected_family": "random_forest",
+  "selected_model_path": "captures/tmp-select-smoke/random-forest-model.joblib",
+  "selected_mean_accuracy": 0.88,
+  "selected_min_accuracy": 0.88,
+  "selected_mean_coverage": 1.0
+}

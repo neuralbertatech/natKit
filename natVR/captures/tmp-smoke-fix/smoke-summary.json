@@ -1,0 +1,523 @@
+{
+  "output_dir": "captures/tmp-smoke-fix",
+  "device_id": "sim01",
+  "gestures": [
+    "rest",
+    "fist",
+    "point",
+    "pinch",
+    "open"
+  ],
+  "parquet_paths": [
+    "captures/tmp-smoke-fix/sim-a__sim01.parquet",
+    "captures/tmp-smoke-fix/sim-b__sim01.parquet"
+  ],
+  "feature_paths": [
+    "captures/tmp-smoke-fix/sim-a__sim01.features.jsonl",
+    "captures/tmp-smoke-fix/sim-b__sim01.features.jsonl"
+  ],
+  "global_model_path": "captures/tmp-smoke-fix/lda-model.json",
+  "global_replay_eval": {
+    "session_id": "smoke-global",
+    "parquet_path": "captures/tmp-smoke-fix/sim-a__sim01.parquet",
+    "model_path": "captures/tmp-smoke-fix/lda-model.json",
+    "calibration_path": "captures/tmp-smoke-fix/sim-a__sim01.calibration.json",
+    "expected_windows": 25,
+    "predicted_windows": 25,
+    "matched_windows": 25,
+    "missing_windows": 0,
+    "unmatched_predictions": 0,
+    "coverage": 1.0,
+    "accuracy": 0.68,
+    "confusion_matrix": {
+      "fist": {
+        "fist": 2,
+        "open": 0,
+        "pinch": 0,
+        "point": 0,
+        "rest": 2
+      },
+      "open": {
+        "fist": 0,
+        "open": 4,
+        "pinch": 0,
+        "point": 0,
+        "rest": 0
+      },
+      "pinch": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 4,
+        "point": 0,
+        "rest": 0
+      },
+      "point": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 0,
+        "point": 4,
+        "rest": 0
+      },
+      "rest": {
+        "fist": 1,
+        "open": 3,
+        "pinch": 1,
+        "point": 1,
+        "rest": 3
+      }
+    }
+  },
+  "guided_manifest": {
+    "session_id": "sim-a",
+    "parquet_path": "captures/tmp-smoke-fix/sim-a__sim01.parquet",
+    "feature_path": "captures/tmp-smoke-fix/sim-a__sim01.features.jsonl",
+    "calibration_path": "captures/tmp-smoke-fix/sim-a__sim01.calibration.json",
+    "model_path": "captures/tmp-smoke-fix/sim-a__sim01.session-lda-model.json",
+    "window_ms": 200,
+    "hop_ms": 50,
+    "sample_rate_hz": 1000,
+    "feature_windows": 25,
+    "hold_windows": 22,
+    "hold_gesture_counts": {
+      "fist": 4,
+      "open": 4,
+      "pinch": 4,
+      "point": 4,
+      "rest": 6
+    }
+  },
+  "guided_replay_eval": {
+    "session_id": "smoke-guided",
+    "parquet_path": "captures/tmp-smoke-fix/sim-a__sim01.parquet",
+    "model_path": "captures/tmp-smoke-fix/sim-a__sim01.session-lda-model.json",
+    "calibration_path": "captures/tmp-smoke-fix/sim-a__sim01.calibration.json",
+    "expected_windows": 25,
+    "predicted_windows": 25,
+    "matched_windows": 25,
+    "missing_windows": 0,
+    "unmatched_predictions": 0,
+    "coverage": 1.0,
+    "accuracy": 0.68,
+    "confusion_matrix": {
+      "fist": {
+        "fist": 2,
+        "open": 0,
+        "pinch": 0,
+        "point": 0,
+        "rest": 2
+      },
+      "open": {
+        "fist": 0,
+        "open": 4,
+        "pinch": 0,
+        "point": 0,
+        "rest": 0
+      },
+      "pinch": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 4,
+        "point": 0,
+        "rest": 0
+      },
+      "point": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 0,
+        "point": 4,
+        "rest": 0
+      },
+      "rest": {
+        "fist": 1,
+        "open": 3,
+        "pinch": 1,
+        "point": 1,
+        "rest": 3
+      }
+    }
+  },
+  "baseline_report": {
+    "sessions": {
+      "sim-a": {
+        "samples": 22,
+        "accuracy": 0.7727272727272727,
+        "confusion_matrix": {
+          "fist": {
+            "fist": 2,
+            "open": 0,
+            "pinch": 0,
+            "point": 0,
+            "rest": 2
+          },
+          "open": {
+            "fist": 0,
+            "open": 4,
+            "pinch": 0,
+            "point": 0,
+            "rest": 0
+          },
+          "pinch": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 4,
+            "point": 0,
+            "rest": 0
+          },
+          "point": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 0,
+            "point": 4,
+            "rest": 0
+          },
+          "rest": {
+            "fist": 1,
+            "open": 1,
+            "pinch": 1,
+            "point": 0,
+            "rest": 3
+          }
+        }
+      },
+      "sim-b": {
+        "samples": 22,
+        "accuracy": 0.7727272727272727,
+        "confusion_matrix": {
+          "fist": {
+            "fist": 2,
+            "open": 0,
+            "pinch": 0,
+            "point": 0,
+            "rest": 2
+          },
+          "open": {
+            "fist": 0,
+            "open": 4,
+            "pinch": 0,
+            "point": 0,
+            "rest": 0
+          },
+          "pinch": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 4,
+            "point": 0,
+            "rest": 0
+          },
+          "point": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 0,
+            "point": 4,
+            "rest": 0
+          },
+          "rest": {
+            "fist": 1,
+            "open": 1,
+            "pinch": 1,
+            "point": 0,
+            "rest": 3
+          }
+        }
+      }
+    },
+    "overall_samples": 44,
+    "overall_accuracy": 0.7727272727272727,
+    "overall_confusion_matrix": {
+      "fist": {
+        "fist": 4,
+        "open": 0,
+        "pinch": 0,
+        "point": 0,
+        "rest": 4
+      },
+      "open": {
+        "fist": 0,
+        "open": 8,
+        "pinch": 0,
+        "point": 0,
+        "rest": 0
+      },
+      "pinch": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 8,
+        "point": 0,
+        "rest": 0
+      },
+      "point": {
+        "fist": 0,
+        "open": 0,
+        "pinch": 0,
+        "point": 8,
+        "rest": 0
+      },
+      "rest": {
+        "fist": 2,
+        "open": 2,
+        "pinch": 2,
+        "point": 0,
+        "rest": 6
+      }
+    }
+  },
+  "channel_ablation": {
+    "available_channels": 2,
+    "evaluated_channel_counts": [
+      1,
+      2
+    ],
+    "results": {
+      "1": {
+        "sessions": {
+          "sim-a": {
+            "samples": 22,
+            "accuracy": 0.5454545454545454,
+            "confusion_matrix": {
+              "fist": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "open": {
+                "fist": 0,
+                "open": 3,
+                "pinch": 0,
+                "point": 1,
+                "rest": 0
+              },
+              "pinch": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "point": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 0,
+                "point": 4,
+                "rest": 0
+              },
+              "rest": {
+                "fist": 1,
+                "open": 0,
+                "pinch": 1,
+                "point": 1,
+                "rest": 3
+              }
+            }
+          },
+          "sim-b": {
+            "samples": 22,
+            "accuracy": 0.5454545454545454,
+            "confusion_matrix": {
+              "fist": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "open": {
+                "fist": 0,
+                "open": 3,
+                "pinch": 0,
+                "point": 1,
+                "rest": 0
+              },
+              "pinch": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "point": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 0,
+                "point": 4,
+                "rest": 0
+              },
+              "rest": {
+                "fist": 1,
+                "open": 0,
+                "pinch": 1,
+                "point": 1,
+                "rest": 3
+              }
+            }
+          }
+        },
+        "overall_samples": 44,
+        "overall_accuracy": 0.5454545454545454,
+        "overall_confusion_matrix": {
+          "fist": {
+            "fist": 4,
+            "open": 0,
+            "pinch": 0,
+            "point": 0,
+            "rest": 4
+          },
+          "open": {
+            "fist": 0,
+            "open": 6,
+            "pinch": 0,
+            "point": 2,
+            "rest": 0
+          },
+          "pinch": {
+            "fist": 4,
+            "open": 0,
+            "pinch": 0,
+            "point": 0,
+            "rest": 4
+          },
+          "point": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 0,
+            "point": 8,
+            "rest": 0
+          },
+          "rest": {
+            "fist": 2,
+            "open": 0,
+            "pinch": 2,
+            "point": 2,
+            "rest": 6
+          }
+        }
+      },
+      "2": {
+        "sessions": {
+          "sim-a": {
+            "samples": 22,
+            "accuracy": 0.7727272727272727,
+            "confusion_matrix": {
+              "fist": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "open": {
+                "fist": 0,
+                "open": 4,
+                "pinch": 0,
+                "point": 0,
+                "rest": 0
+              },
+              "pinch": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 4,
+                "point": 0,
+                "rest": 0
+              },
+              "point": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 0,
+                "point": 4,
+                "rest": 0
+              },
+              "rest": {
+                "fist": 1,
+                "open": 1,
+                "pinch": 1,
+                "point": 0,
+                "rest": 3
+              }
+            }
+          },
+          "sim-b": {
+            "samples": 22,
+            "accuracy": 0.7727272727272727,
+            "confusion_matrix": {
+              "fist": {
+                "fist": 2,
+                "open": 0,
+                "pinch": 0,
+                "point": 0,
+                "rest": 2
+              },
+              "open": {
+                "fist": 0,
+                "open": 4,
+                "pinch": 0,
+                "point": 0,
+                "rest": 0
+              },
+              "pinch": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 4,
+                "point": 0,
+                "rest": 0
+              },
+              "point": {
+                "fist": 0,
+                "open": 0,
+                "pinch": 0,
+                "point": 4,
+                "rest": 0
+              },
+              "rest": {
+                "fist": 1,
+                "open": 1,
+                "pinch": 1,
+                "point": 0,
+                "rest": 3
+              }
+            }
+          }
+        },
+        "overall_samples": 44,
+        "overall_accuracy": 0.7727272727272727,
+        "overall_confusion_matrix": {
+          "fist": {
+            "fist": 4,
+            "open": 0,
+            "pinch": 0,
+            "point": 0,
+            "rest": 4
+          },
+          "open": {
+            "fist": 0,
+            "open": 8,
+            "pinch": 0,
+            "point": 0,
+            "rest": 0
+          },
+          "pinch": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 8,
+            "point": 0,
+            "rest": 0
+          },
+          "point": {
+            "fist": 0,
+            "open": 0,
+            "pinch": 0,
+            "point": 8,
+            "rest": 0
+          },
+          "rest": {
+            "fist": 2,
+            "open": 2,
+            "pinch": 2,
+            "point": 0,
+            "rest": 6
+          }
+        }
+      }
+    }
+  }
+}
