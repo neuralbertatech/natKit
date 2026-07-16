@@ -17,6 +17,10 @@
         StreamGraphDefinition,
         StreamGraphListMessage,
         StreamGraphSavedMessage,
+        Profile,
+        ProfileListMessage,
+        ProfileSavedMessage,
+        ProfileDeletedMessage,
         StreamGraphStatusMessage,
         StreamGraphStatusSummary,
         StreamGraphValidationMessage,
@@ -87,6 +91,8 @@
         mean_coverage: number;
     } | null>(null);
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
+    // Phase 4: individual profiles (person -> saved classify graph).
+    let profiles = $state<Profile[]>([]);
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
     );
@@ -379,6 +385,39 @@
         return true;
     }
 
+    // Phase 4: individual profiles.
+    function listProfiles() {
+        wsManager?.send({
+            action: "list_profiles",
+            request_id: `profiles:${Date.now()}`,
+        });
+    }
+
+    function saveProfile(profile: Profile): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "save_profile",
+            request_id: `profile-save:${Date.now()}`,
+            profile,
+        });
+        return true;
+    }
+
+    function deleteProfile(participantId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "delete_profile",
+            request_id: `profile-delete:${Date.now()}`,
+            participant_id: participantId,
+        });
+        return true;
+    }
+
     // Incremental reactivity (Phase 7): after a config edit is saved in a
     // running graph, restart only the affected node + its downstream subgraph.
     function restartStreamGraphNode(graphId: string, nodeId: string): boolean {
@@ -599,6 +638,7 @@
                         request_id: `node-catalog:${Date.now()}`,
                     });
                     listStreamGraphs();
+                    listProfiles();
                     // Re-issue every live subscription that was dropped because
                     // the socket wasn't open yet (subscribeToStream fires without
                     // waiting for the connection), or lost across a reconnect.
@@ -627,6 +667,26 @@
                 );
                 streamGraphs = [...remainingGraphs, message.graph].sort(
                     (left, right) => left.label.localeCompare(right.label),
+                );
+            },
+            onProfileList: (message: ProfileListMessage) => {
+                profiles = [...message.profiles].sort((left, right) =>
+                    left.display_name.localeCompare(right.display_name),
+                );
+            },
+            onProfileSaved: (message: ProfileSavedMessage) => {
+                const remaining = profiles.filter(
+                    (profile) =>
+                        profile.participant_id !== message.participant_id,
+                );
+                profiles = [...remaining, message.profile].sort((left, right) =>
+                    left.display_name.localeCompare(right.display_name),
+                );
+            },
+            onProfileDeleted: (message: ProfileDeletedMessage) => {
+                profiles = profiles.filter(
+                    (profile) =>
+                        profile.participant_id !== message.participant_id,
                 );
             },
             onStreamGraphValidation: (
@@ -813,6 +873,10 @@
         {listStreamGraphs}
         {requestStreamGraphStatus}
         {saveStreamGraph}
+        {profiles}
+        {listProfiles}
+        {saveProfile}
+        {deleteProfile}
         {restartStreamGraphNode}
         {publishSessionBundle}
         {submitTrainJob}

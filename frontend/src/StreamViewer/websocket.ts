@@ -16,10 +16,15 @@ import type {
   MuseDataMessage,
   MuseBulkDataMessage,
   EmgDataMessage,
+  MarkerMessage,
+  StreamTimeMessage,
   TransformProvenanceMessage,
   ErrorMessage,
   StreamGraphListMessage,
   StreamGraphSavedMessage,
+  ProfileListMessage,
+  ProfileSavedMessage,
+  ProfileDeletedMessage,
   StreamGraphValidationMessage,
   StreamGraphStatusMessage,
   StreamGraphStartedMessage,
@@ -46,6 +51,8 @@ export interface StreamViewerCallbacks {
   onMuseData?: (message: MuseDataMessage) => void;
   onMuseBulkData?: (message: MuseBulkDataMessage) => void;
   onEmgData?: (message: EmgDataMessage) => void;
+  onMarker?: (message: MarkerMessage) => void;
+  onStreamTime?: (message: StreamTimeMessage) => void;
   onTransformProvenance?: (message: TransformProvenanceMessage) => void;
   onStreamGraphList?: (message: StreamGraphListMessage) => void;
   onStreamGraphSaved?: (message: StreamGraphSavedMessage) => void;
@@ -53,6 +60,9 @@ export interface StreamViewerCallbacks {
   onStreamGraphStatus?: (message: StreamGraphStatusMessage) => void;
   onStreamGraphStarted?: (message: StreamGraphStartedMessage) => void;
   onStreamGraphStopped?: (message: StreamGraphStoppedMessage) => void;
+  onProfileList?: (message: ProfileListMessage) => void;
+  onProfileSaved?: (message: ProfileSavedMessage) => void;
+  onProfileDeleted?: (message: ProfileDeletedMessage) => void;
   onError?: (message: ErrorMessage) => void;
 }
 
@@ -203,6 +213,12 @@ export class StreamViewerWebSocket {
         case "emg_data":
           this.callbacks.onEmgData?.(message);
           break;
+        case "marker":
+          this.callbacks.onMarker?.(message);
+          break;
+        case "stream_time":
+          this.callbacks.onStreamTime?.(message);
+          break;
         case "transform_provenance":
           this.callbacks.onTransformProvenance?.(message);
           break;
@@ -223,6 +239,15 @@ export class StreamViewerWebSocket {
           break;
         case "stream_graph_stopped":
           this.callbacks.onStreamGraphStopped?.(message);
+          break;
+        case "profile_list":
+          this.callbacks.onProfileList?.(message);
+          break;
+        case "profile_saved":
+          this.callbacks.onProfileSaved?.(message);
+          break;
+        case "profile_deleted":
+          this.callbacks.onProfileDeleted?.(message);
           break;
         case "error":
           this.callbacks.onError?.(message);
@@ -250,12 +275,33 @@ export class StreamViewerWebSocket {
     this.send({ action: "ml_proxy", message: action });
   }
 
-  subscribe(streamIds: string[]): void {
-    this.send({ action: "subscribe", stream_ids: streamIds });
+  // startOffset (Phase 3): -1 live tail (default), -2 beginning, >=0 a concrete
+  // offset for historical reads.
+  subscribe(streamIds: string[], startOffset?: number): void {
+    this.send({
+      action: "subscribe",
+      stream_ids: streamIds,
+      ...(startOffset !== undefined ? { start_offset: startOffset } : {}),
+    });
   }
 
   unsubscribe(streamIds: string[]): void {
     this.send({ action: "unsubscribe", stream_ids: streamIds });
+  }
+
+  // Query a stream's retained offset bounds and (optionally) the offset for a
+  // timestamp — the reply arrives via onStreamTime.
+  queryStreamTime(
+    streamId: string,
+    timestampUs?: number,
+    requestId?: string,
+  ): void {
+    this.send({
+      action: "query_stream_time",
+      stream_id: streamId,
+      ...(timestampUs !== undefined ? { timestamp_us: timestampUs } : {}),
+      ...(requestId !== undefined ? { request_id: requestId } : {}),
+    });
   }
 
   requestStreamList(): void {

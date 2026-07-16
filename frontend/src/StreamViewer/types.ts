@@ -384,6 +384,50 @@ export interface EmgDataMessage extends EmgSample {
   schema_name?: string;
 }
 
+// A MarkerEventV1 record forwarded from a marker stream (Phase 2). Cue/session
+// events for one session_id — rendered as ticks/regions + data-chart overlays.
+export interface MarkerMessage {
+  type: "marker";
+  stream_id: string;
+  schema_name?: string;
+  encoding: EncodingInfo;
+  session_id: string;
+  marker_type: string;
+  marker_id: string;
+  event: string;
+  label: string;
+  // Canonical marker time axis (microseconds). Mirrored as `timestamp` too.
+  emitted_at_us: number;
+  timestamp?: number;
+  attributes: Record<string, unknown>;
+}
+
+// A marker event buffered client-side for rendering (adds arrival time).
+export interface BufferedMarkerEvent {
+  session_id: string;
+  marker_type: string;
+  marker_id: string;
+  event: string;
+  label: string;
+  emitted_at_us: number;
+  attributes: Record<string, unknown>;
+  received_at_ms: number;
+}
+
+// Reply to query_stream_time (Phase 3): a stream's retained offset bounds and,
+// if a timestamp was queried, the offset at/after it. Offsets: -1 = end/none,
+// -2 = beginning, >=0 concrete.
+export interface StreamTimeMessage {
+  type: "stream_time";
+  request_id?: string;
+  stream_id: string;
+  valid: boolean;
+  earliest_offset?: number;
+  latest_offset?: number;
+  offset_for_timestamp?: number;
+  reason?: string;
+}
+
 export interface TransformProvenanceMessage {
   type: "transform_provenance";
   stream_id: string;
@@ -414,6 +458,8 @@ export interface LiveStreamData {
   emgSamples: BufferedEmgSample[];
   museSamples: MuseSample[];
   imuSamples: ImuSample[];
+  // Markers accumulate here for streams whose schema is MarkerEventV1 (Phase 2).
+  markers: BufferedMarkerEvent[];
   deviceName?: string;
 }
 
@@ -467,7 +513,7 @@ export type StreamGraphNodeKind =
   | "viewer"
   | "sink"
   | "combine"
-  | "session"
+  | "experiment"
   | "train";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
@@ -504,6 +550,10 @@ export interface StreamGraphViewerNode extends StreamGraphBaseNode<"viewer"> {
   // of only in the click-to-open overlay. Persists via the editor_metadata
   // round-trip; the backend never interprets it.
   inline_graph?: boolean;
+  // Topic-aware channels (Part D): when the incoming channel carries markers, a
+  // phantom "markers" input appears on the node; enabling it (this flag) overlays
+  // the markers on the waveform. Editor-only, rides editor_metadata.
+  show_markers?: boolean;
 }
 
 export interface StreamGraphSinkNode extends StreamGraphBaseNode<"sink"> {
@@ -521,18 +571,33 @@ export interface StreamGraphCombineNode extends StreamGraphBaseNode<"combine"> {
 
 // Records N upstream sensor streams under one protocol/marker timeline and
 // publishes a labeled session bundle (client-driven, via publish_session_bundle).
-// No output stream; the protocol + participant metadata live in `config` so they
-// round-trip through the backend's generic node config. (Phase 4.)
-export interface SessionNodeConfig {
+// Exposes a single `markers` output — the MarkerEventV1 stream for its
+// `experiment_id` (used verbatim as the recording session_id), which downstream
+// marker-aware nodes subscribe to. The protocol + metadata live in `config` so
+// they round-trip through the backend's generic node config.
+// (Formerly the "session" node — Phase 4 / experiments-and-time Phase 1.)
+export interface ExperimentNodeConfig {
   protocol: SessionProtocol;
+  // Stable identifier for this experiment; used verbatim as the recording
+  // session_id and as the key of the Marker/<experiment_id> topic the `markers`
+  // output resolves to. Generated once when the node is created.
+  experiment_id: string;
   participant_id?: string;
   notes?: string;
 }
 
-export interface StreamGraphSessionNode extends StreamGraphBaseNode<"session"> {
-  kind: "session";
-  config: SessionNodeConfig;
+export interface StreamGraphExperimentNode extends StreamGraphBaseNode<"experiment"> {
+  kind: "experiment";
+  config: ExperimentNodeConfig;
+  // Editor-only: render the participant-facing run panel directly on the node
+  // card (like a viewer's inline_graph). Persists via editor_metadata; the
+  // backend ignores it.
+  inline_experiment?: boolean;
 }
+
+// Backward-compat aliases (the node kind was renamed session -> experiment).
+export type SessionNodeConfig = ExperimentNodeConfig;
+export type StreamGraphSessionNode = StreamGraphExperimentNode;
 
 // Submits a control-plane train_validate job (client-driven via the ML proxy);
 // its output is a durable model artifact, not a stream. (Phase 5.)
@@ -547,7 +612,7 @@ export type StreamGraphNode =
   | StreamGraphViewerNode
   | StreamGraphSinkNode
   | StreamGraphCombineNode
-  | StreamGraphSessionNode
+  | StreamGraphExperimentNode
   | StreamGraphTrainNode;
 
 export interface StreamGraphEdge {
@@ -556,6 +621,11 @@ export interface StreamGraphEdge {
   source_port: string;
   target_node_id: string;
   target_port: string;
+  // Topic-aware channels: StreamType strings ("Data" | "Marker" | "Meta") hidden
+  // on this link, so they don't reach the target node. Empty/absent = the whole
+  // channel flows. Toggled from the edge topic badge; honored by the target's
+  // input resolution (viewer overlay, combine merge lanes).
+  hidden_topic_types?: string[];
 }
 
 export interface StreamGraphDefinition {
@@ -585,6 +655,15 @@ export interface StreamGraphDiagnostic {
   message: string;
 }
 
+// One topic carried by a node's output channel (topic-aware channels, Part A).
+// `type` is the StreamType string ("Data" | "Marker" | "Meta"); `id` is the
+// stableStreamId of the full topic (stringified uint64).
+export interface OutputChannelTopic {
+  type: string;
+  id: string;
+  schema: string;
+}
+
 export interface StreamGraphNodeStatus {
   state:
     | "draft"
@@ -596,11 +675,46 @@ export interface StreamGraphNodeStatus {
     | "blocked"
     | "error";
   output_stream_id?: string;
+  // The node's output channel: a topic set, at most one per type. Absent on old
+  // backends / nodes with no output; when present it includes the DATA topic
+  // whose id equals output_stream_id for the one-topic (backward-compat) case.
+  output_topics?: OutputChannelTopic[];
   worker_id?: string;
   thread_slot_id?: string;
   frames_processed?: number;
   last_frame_at_us?: number;
   message?: string;
+}
+
+// The kind of a channel, derived from its topic set (Part A). Input ports
+// relabel themselves with these; the edge badge and viewer phantom input read
+// them too.
+export type ChannelKind = "data" | "markers" | "stream" | "empty";
+
+export function channelKindFromTopics(
+  topics: OutputChannelTopic[] | undefined,
+): ChannelKind {
+  if (!topics || topics.length === 0) return "empty";
+  const hasData = topics.some((t) => t.type === "Data");
+  const hasMarker = topics.some((t) => t.type === "Marker");
+  if (hasData && hasMarker) return "stream";
+  if (hasMarker) return "markers";
+  return "data";
+}
+
+// The MARKER topic in a channel, if any (used to route markers + reveal the
+// viewer's phantom markers input).
+export function markerTopicOfChannel(
+  topics: OutputChannelTopic[] | undefined,
+): OutputChannelTopic | undefined {
+  return topics?.find((t) => t.type === "Marker");
+}
+
+// The DATA topic in a channel, if any.
+export function dataTopicOfChannel(
+  topics: OutputChannelTopic[] | undefined,
+): OutputChannelTopic | undefined {
+  return topics?.find((t) => t.type === "Data");
 }
 
 export interface StreamGraphStatusSummary {
@@ -629,6 +743,41 @@ export interface StreamGraphSavedMessage {
   request_id: string;
   graph_id: string;
   graph: StreamGraphDefinition;
+}
+
+// Individual profiles (Phase 4): a person persisted so they can walk up later
+// and resume live classifying in one click. Thin pointer — the trained bundle
+// path is baked into the referenced classify graph (graph_id).
+export interface Profile {
+  participant_id: string;
+  display_name: string;
+  model_path: string;
+  graph_id: string;
+  protocol_id: string;
+  device_id: string;
+  session_ids: string[];
+  best_accuracy: number;
+  created_at_us: number;
+  updated_at_us: number;
+}
+
+export interface ProfileListMessage {
+  type: "profile_list";
+  request_id: string;
+  profiles: Profile[];
+}
+
+export interface ProfileSavedMessage {
+  type: "profile_saved";
+  request_id: string;
+  participant_id: string;
+  profile: Profile;
+}
+
+export interface ProfileDeletedMessage {
+  type: "profile_deleted";
+  request_id: string;
+  participant_id: string;
 }
 
 export interface StreamGraphValidationMessage {
@@ -680,18 +829,36 @@ export type WebSocketMessage =
   | MuseDataMessage
   | MuseBulkDataMessage
   | EmgDataMessage
+  | MarkerMessage
+  | StreamTimeMessage
   | TransformProvenanceMessage
   | StreamGraphListMessage
   | StreamGraphSavedMessage
   | StreamGraphValidationMessage
   | StreamGraphStatusMessage
   | StreamGraphStartedMessage
-  | StreamGraphStoppedMessage;
+  | StreamGraphStoppedMessage
+  | ProfileListMessage
+  | ProfileSavedMessage
+  | ProfileDeletedMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
   action: "subscribe";
   stream_ids: string[];
+  // Optional historical start (Phase 3): -1 live tail (default), -2 beginning,
+  // >=0 a concrete offset (e.g. from a query_stream_time offset_for_timestamp).
+  start_offset?: number;
+}
+
+// Ask the backend for a stream's retained offset bounds and, when timestamp_us
+// is given, the offset at/after that time (offsets_for_times) — so the UI knows
+// the available history extent and can map a scrubbed timestamp to an offset.
+export interface QueryStreamTimeAction {
+  action: "query_stream_time";
+  request_id?: string;
+  stream_id: string;
+  timestamp_us?: number;
 }
 
 export interface UnsubscribeAction {
@@ -787,6 +954,10 @@ export interface StartStreamGraphAction {
   action: "start_stream_graph";
   request_id: string;
   graph_id: string;
+  // Optional replay start (Phase 5): -1 live (default), -2 beginning, >=0 a
+  // concrete offset (from a query_stream_time offset_for_timestamp). Only the
+  // graph's root sources seek to it; the re-run chain feeds downstream live.
+  start_offset?: number;
 }
 
 export interface StopStreamGraphAction {
@@ -804,6 +975,23 @@ export interface RestartStreamGraphNodeAction {
   node_id: string;
 }
 
+export interface ListProfilesAction {
+  action: "list_profiles";
+  request_id: string;
+}
+
+export interface SaveProfileAction {
+  action: "save_profile";
+  request_id: string;
+  profile: Profile;
+}
+
+export interface DeleteProfileAction {
+  action: "delete_profile";
+  request_id: string;
+  participant_id: string;
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -811,6 +999,7 @@ export type StopEmgTransformAction = StopTransformAction;
 export type ClientAction =
   | SubscribeAction
   | UnsubscribeAction
+  | QueryStreamTimeAction
   | GetStreamsAction
   | ListTransformCapabilitiesAction
   | ListNodeCatalogAction
@@ -825,4 +1014,7 @@ export type ClientAction =
   | GetStreamGraphStatusAction
   | StartStreamGraphAction
   | StopStreamGraphAction
-  | RestartStreamGraphNodeAction;
+  | RestartStreamGraphNodeAction
+  | ListProfilesAction
+  | SaveProfileAction
+  | DeleteProfileAction;
