@@ -24,6 +24,7 @@
         Trash2,
         Ungroup,
         Upload,
+        UserPlus,
         Workflow,
         X,
     } from "@lucide/svelte";
@@ -135,6 +136,7 @@
         LiveStreamData,
         OutputChannelTopic,
         ChannelKind,
+        Profile,
     } from "../StreamViewer/types";
     import {
         channelKindFromTopics,
@@ -155,6 +157,11 @@
         listStreamGraphs: () => void;
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
+        // Phase 4: individual profiles (person -> saved classify graph).
+        profiles: Profile[];
+        listProfiles: () => void;
+        saveProfile: (profile: Profile) => boolean;
+        deleteProfile: (participantId: string) => boolean;
         // Phase 7: incremental reactivity — restart a node + downstream after a
         // debounced config edit while the graph is running.
         restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
@@ -211,6 +218,10 @@
         listStreamGraphs,
         requestStreamGraphStatus,
         saveStreamGraph,
+        profiles,
+        listProfiles,
+        saveProfile,
+        deleteProfile,
         restartStreamGraphNode,
         publishSessionBundle,
         submitTrainJob,
@@ -647,6 +658,95 @@
         selectedNodeIds = new Set();
         selectedEdgeId = null;
         pendingConnection = null;
+    }
+
+    // Phase 4: profiles. Save the CURRENT (saved) graph as a person's profile,
+    // capturing the bundle path, protocol, device binding, and validation
+    // accuracy. The bundle is already baked into the graph's classify node, so
+    // loading a profile just reloads that graph — resume in one click.
+    function saveCurrentAsProfile() {
+        if (!selectedGraphId) {
+            window.alert("Save the graph first, then save it as a profile.");
+            return;
+        }
+        if (graphDirty) {
+            window.alert(
+                "Save the graph (unsaved edits) before creating a profile.",
+            );
+            return;
+        }
+        const displayName = window.prompt("Profile name (e.g. Alice):", "");
+        if (!displayName) {
+            return;
+        }
+        const participantId =
+            sanitizeIdentifier(displayName) || `profile-${Date.now()}`;
+
+        // Pull details from the current graph.
+        let modelPath = "";
+        let protocolId = "";
+        let deviceId = "";
+        for (const node of draftGraph.nodes) {
+            if (
+                node.kind === "transform" &&
+                node.transform_kind === "emg_gesture_classify"
+            ) {
+                const path = node.config?.model_path;
+                if (typeof path === "string") {
+                    modelPath = path;
+                }
+            } else if (node.kind === "experiment") {
+                protocolId =
+                    (node.config as ExperimentNodeConfig)?.protocol
+                        ?.protocol_id ?? protocolId;
+            } else if (node.kind === "stream_source" && !deviceId) {
+                deviceId = node.stream_id ?? "";
+            }
+        }
+
+        const nowUs = Date.now() * 1000;
+        const existing = profiles.find(
+            (profile) => profile.participant_id === participantId,
+        );
+        saveProfile({
+            participant_id: participantId,
+            display_name: displayName,
+            model_path: modelPath,
+            graph_id: selectedGraphId,
+            protocol_id: protocolId,
+            device_id: deviceId,
+            session_ids: existing?.session_ids ?? [],
+            best_accuracy: trainAccuracy?.mean_accuracy ?? existing?.best_accuracy ?? 0,
+            created_at_us: existing?.created_at_us ?? nowUs,
+            updated_at_us: nowUs,
+        });
+    }
+
+    function loadProfile(profile: Profile) {
+        if (!profile.graph_id) {
+            window.alert("This profile has no saved graph.");
+            return;
+        }
+        const hasGraph = graphDefinitions.some(
+            (graph) => graph.graph_id === profile.graph_id,
+        );
+        if (!hasGraph) {
+            listStreamGraphs();
+            window.alert(
+                "Refreshing saved graphs — pick the profile again once the list loads.",
+            );
+            return;
+        }
+        selectGraph(profile.graph_id);
+    }
+
+    function removeProfile(profile: Profile) {
+        const confirmed = window.confirm(
+            `Delete profile "${profile.display_name}"? The saved graph is not deleted.`,
+        );
+        if (confirmed) {
+            deleteProfile(profile.participant_id);
+        }
     }
 
     function getCanvasGraphPosition(clientX: number, clientY: number) {
@@ -2755,6 +2855,58 @@
             </div>
         </div>
 
+        <div class="library-group">
+            <div class="library-header-row">
+                <span class="library-title">Profiles</span>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    onclick={saveCurrentAsProfile}
+                    title="Save the current saved graph as a profile"
+                >
+                    <UserPlus size={16} />
+                </button>
+            </div>
+            <div class="library-actions">
+                {#if profiles.length === 0}
+                    <div class="empty-state">
+                        <p>
+                            No profiles yet. Train a person's classifier, save the
+                            graph, then save it as a profile to resume later.
+                        </p>
+                    </div>
+                {:else}
+                    {#each profiles as profile}
+                        <div class="profile-row">
+                            <button
+                                type="button"
+                                class="graph-list-item profile-load"
+                                title={`Resume ${profile.display_name}'s classifier`}
+                                onclick={() => loadProfile(profile)}
+                            >
+                                <span class="graph-list-title"
+                                    >{profile.display_name}</span
+                                >
+                                <span class="graph-list-meta">
+                                    {profile.best_accuracy > 0
+                                        ? `${(profile.best_accuracy * 100).toFixed(0)}% · `
+                                        : ""}{profile.graph_id}
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                class="icon-btn"
+                                title={`Delete ${profile.display_name}`}
+                                onclick={() => removeProfile(profile)}
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+        </div>
+
         <div class="summary-card">
             <div class="summary-row">
                 <span>Connection</span>
@@ -4701,6 +4853,23 @@
         gap: 0.45rem;
         max-height: 240px;
         overflow: auto;
+    }
+
+    .library-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .profile-row {
+        display: flex;
+        align-items: stretch;
+        gap: 0.35rem;
+    }
+
+    .profile-load {
+        flex: 1;
+        min-width: 0;
     }
 
     .library-header {
