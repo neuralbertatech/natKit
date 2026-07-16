@@ -1773,6 +1773,12 @@
             ? `Recorded ${rec.sessionId} markers.`
             : `Stopped ${rec.sessionId} early; partial markers published.`;
         sessionRecording = null;
+
+        // Auto-refresh the Experiments library so the just-recorded run shows up
+        // for the Train node without a manual refresh. Delay a beat so the
+        // markers have landed in Kafka and the marker topic exists before
+        // discover_runs scans (it lists broker topics + reads their history).
+        setTimeout(() => requestRecordedRuns(), 1500);
     }
 
     // Phase 7 incremental reactivity: when a transform config changes while the
