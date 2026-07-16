@@ -31,9 +31,13 @@
         MuseSample,
         EmgDataMessage,
         BufferedEmgSample,
+        MarkerMessage,
+        BufferedMarkerEvent,
+        StreamTimeMessage,
         DataSchemaDescriptor,
         LiveStreamData,
     } from "../StreamViewer/types";
+    import type { RecordedRunSummary } from "../MlPipeline/types";
     import type { SessionPublishBundleInput } from "../StreamViewer/experiment";
 
     const STATUS_REFRESH_INTERVAL_MS = 500;
@@ -70,10 +74,19 @@
     // the control plane over the same connection).
     let trainJobStatus = $state<string | null>(null);
     let trainModelPath = $state<string | null>(null);
+    // Durable path to the self-describing live-inference bundle (Phase 2). This
+    // is what an emg_gesture_classify node loads; auto-filled into the classify
+    // node on job completion so the operator never pastes a path.
+    let trainBundlePath = $state<string | null>(null);
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
     );
+    // Phase 5: latest time-introspection reply per stream id (offset bounds +
+    // offset_for_timestamp), used to resolve a replay start offset.
+    let streamTimeExtents = $state<Record<string, StreamTimeMessage>>({});
+    // Phase 6: recorded experiments (from natVR run discovery via the ML proxy).
+    let recordedRuns = $state<RecordedRunSummary[]>([]);
     let latestStreamGraphDiagnostics = $state<StreamGraphDiagnostic[]>([]);
     let latestStreamGraphNodeDiagnostics = $state<
         Record<string, StreamGraphDiagnostic[]>
@@ -117,6 +130,7 @@
         emg: BufferedEmgSample[];
         muse: MuseSample[];
         imu: ImuSample[];
+        markers: BufferedMarkerEvent[];
     }
     const pendingByStream = new Map<string, PendingSamples>();
     let liveFlushTimer: ReturnType<typeof setInterval> | null = null;
@@ -124,7 +138,7 @@
     function pendingFor(streamId: string): PendingSamples {
         let pending = pendingByStream.get(streamId);
         if (!pending) {
-            pending = { emg: [], muse: [], imu: [] };
+            pending = { emg: [], muse: [], imu: [], markers: [] };
             pendingByStream.set(streamId, pending);
         }
         return pending;
@@ -168,7 +182,12 @@
                 pendingByStream.delete(streamId);
                 continue;
             }
-            if (!pending.emg.length && !pending.muse.length && !pending.imu.length) {
+            if (
+                !pending.emg.length &&
+                !pending.muse.length &&
+                !pending.imu.length &&
+                !pending.markers.length
+            ) {
                 continue;
             }
             let next: LiveStreamData = current;
@@ -196,6 +215,13 @@
                 };
                 pending.imu.length = 0;
             }
+            if (pending.markers.length) {
+                next = {
+                    ...next,
+                    markers: trimBounded([...next.markers, ...pending.markers]),
+                };
+                pending.markers.length = 0;
+            }
             if (updated === null) {
                 updated = { ...liveStreams };
             }
@@ -216,6 +242,7 @@
             emgSamples: [],
             museSamples: [],
             imuSamples: [],
+            markers: [],
         };
     }
 
@@ -265,6 +292,11 @@
     function addLiveMuseSample(streamId: string, sample: MuseSample) {
         if (!streamRefCounts.has(streamId)) return;
         pendingFor(streamId).muse.push(sample);
+    }
+
+    function addLiveMarker(streamId: string, marker: BufferedMarkerEvent) {
+        if (!streamRefCounts.has(streamId)) return;
+        pendingFor(streamId).markers.push(marker);
     }
 
     function addLiveEmgSample(
@@ -380,14 +412,24 @@
             message?: string;
             error?: string;
             job_id?: string;
-            report?: { model_path?: string | null } | null;
+            report?: { model_path?: string | null; bundle_path?: string | null } | null;
+            runs?: RecordedRunSummary[];
         };
+        if (msg.type === "recorded_runs") {
+            // Experiment library (Phase 6): recorded runs discovered by natVR's
+            // reconstruct_session, surfaced through the ML proxy.
+            recordedRuns = msg.runs ?? [];
+            return;
+        }
         if (msg.type === "job_accepted") {
             trainJobStatus = `queued (${msg.job_id ?? "job"})`;
         } else if (msg.type === "job_status") {
             trainJobStatus = `${msg.status ?? "?"}: ${msg.message ?? ""}`.trim();
             if (msg.status === "completed" && msg.report?.model_path) {
                 trainModelPath = msg.report.model_path;
+            }
+            if (msg.status === "completed" && msg.report?.bundle_path) {
+                trainBundlePath = msg.report.bundle_path;
             }
         } else if (msg.type === "error") {
             trainJobStatus = `error: ${msg.error ?? msg.message ?? "unknown"}`;
@@ -403,6 +445,7 @@
             return;
         }
         trainModelPath = null;
+        trainBundlePath = null;
         trainJobStatus = "submitting…";
         wsManager.sendMlAction({
             action: "start_train_validate_job",
@@ -436,7 +479,7 @@
         return true;
     }
 
-    function startStreamGraph(graphId: string): boolean {
+    function startStreamGraph(graphId: string, startOffset?: number): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
             return false;
@@ -460,8 +503,27 @@
             action: "start_stream_graph",
             request_id: `stream-graph-start:${Date.now()}`,
             graph_id: graphId,
+            ...(startOffset !== undefined ? { start_offset: startOffset } : {}),
         });
         return true;
+    }
+
+    function queryStreamTime(
+        streamId: string,
+        timestampUs?: number,
+        requestId?: string,
+    ): void {
+        wsManager?.queryStreamTime(streamId, timestampUs, requestId);
+    }
+
+    // Ask the control plane (via the ML proxy) for recorded experiments; the
+    // reply arrives as a recorded_runs message (Phase 6).
+    function requestRecordedRuns(): void {
+        if (wsManager?.getConnectionState() !== "connected") return;
+        wsManager.sendMlAction({
+            action: "list_recorded_runs",
+            request_id: crypto.randomUUID(),
+        });
     }
 
     function stopStreamGraph(graphId: string): boolean {
@@ -637,6 +699,24 @@
                     message.device_id,
                 );
             },
+            onStreamTime: (message: StreamTimeMessage) => {
+                streamTimeExtents = {
+                    ...streamTimeExtents,
+                    [String(message.stream_id)]: message,
+                };
+            },
+            onMarker: (message: MarkerMessage) => {
+                addLiveMarker(String(message.stream_id), {
+                    session_id: message.session_id,
+                    marker_type: message.marker_type,
+                    marker_id: message.marker_id,
+                    event: message.event,
+                    label: message.label,
+                    emitted_at_us: message.emitted_at_us,
+                    attributes: message.attributes ?? {},
+                    received_at_ms: Date.now(),
+                });
+            },
             onError: (message: ErrorMessage) => {
                 lastError = message.message;
             },
@@ -686,15 +766,8 @@
 </script>
 
 <div class="visual-programming">
-    <header class="header">
-        <div class="connection-status {connectionState}">
-            {connectionState === "connected"
-                ? "Connected"
-                : connectionState === "connecting"
-                  ? "Connecting…"
-                  : "Disconnected"}
-        </div>
-    </header>
+    <!-- Connection status now lives in the editor toolbar (see conn-pill) so it
+         no longer floats over the toolbar's right-edge buttons. -->
 
     {#if lastError}
         <p class="error-banner">{lastError}</p>
@@ -718,9 +791,14 @@
         {submitTrainJob}
         {trainJobStatus}
         {trainModelPath}
+        {trainBundlePath}
         {validateStreamGraph}
         {startStreamGraph}
         {stopStreamGraph}
+        {queryStreamTime}
+        {streamTimeExtents}
+        {recordedRuns}
+        {requestRecordedRuns}
         {inspectStream}
         {liveStreams}
         {streamDeviceNames}
@@ -738,39 +816,8 @@
         overflow: hidden;
     }
 
-    /* Connection pill + error toast float over the full-bleed canvas. */
-    .header {
-        position: absolute;
-        top: 22px;
-        right: 26px;
-        z-index: 25;
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        pointer-events: none;
-    }
-
-    .connection-status {
-        border-radius: 999px;
-        padding: 0.3rem 0.85rem;
-        font-size: 0.82rem;
-        font-weight: 600;
-        border: 1px solid rgba(114, 142, 255, 0.24);
-        color: #9dafdf;
-        background: rgba(8, 13, 26, 0.82);
-        backdrop-filter: blur(4px);
-    }
-
-    .connection-status.connected {
-        color: #8ef2bf;
-        border-color: rgba(142, 242, 191, 0.32);
-    }
-
-    .connection-status.connecting {
-        color: #ffcf85;
-        border-color: rgba(255, 176, 32, 0.32);
-    }
-
+    /* Error toast floats over the full-bleed canvas (connection status moved
+       into the editor toolbar). */
     .error-banner {
         position: absolute;
         top: 20px;

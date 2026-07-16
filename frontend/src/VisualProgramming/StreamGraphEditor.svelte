@@ -17,6 +17,7 @@
         RefreshCw,
         Save,
         ScanSearch,
+        Clock,
         SquareDashedMousePointer,
         Square,
         Play,
@@ -38,8 +39,29 @@
     import FeatureVectorViewer from "../StreamViewer/FeatureVectorViewer.svelte";
     import SchemaDescriptorInspector from "../StreamViewer/SchemaDescriptorInspector.svelte";
     import ClassificationViewer from "../StreamViewer/ClassificationViewer.svelte";
+    import MarkerViewer from "../StreamViewer/MarkerViewer.svelte";
+    import TimelineStrip from "./TimelineStrip.svelte";
+    import {
+        createLiveContext,
+        computeTimeWindow,
+        timeToFraction,
+        fractionToTime,
+        layoutTicks,
+        layoutRegions,
+        advancePlayhead,
+        type TimeContext,
+        type PlaybackSpeed,
+    } from "./timeContext";
+    import type {
+        BufferedMarkerEvent,
+        StreamTimeMessage,
+    } from "../StreamViewer/types";
+    import type { RecordedRunSummary } from "../MlPipeline/types";
     import NodeConfigFields from "../StreamViewer/NodeConfigFields.svelte";
-    import { chooseViewerRenderer } from "../StreamViewer/viewerRegistry";
+    import {
+        chooseViewerRenderer,
+        MARKER_SCHEMA_NAME,
+    } from "../StreamViewer/viewerRegistry";
     import {
         STARTER_TEMPLATES,
         type StarterTemplate,
@@ -48,14 +70,17 @@
         buildCueScheduleForProtocol,
         scheduleDurationMs,
         activeCueAtElapsedMs,
+        nextCueAfterElapsedMs,
         buildDefaultSessionId,
         buildSessionMetadataRecordPayload,
         buildSessionLifecycleMarkerPayload,
         buildCueMarkerPayloads,
         type EmgCueEvent,
         type SessionPublishBundleInput,
+        FINGER_COUNTING_PROTOCOL,
     } from "../StreamViewer/experiment";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
+    import ExperimentRunner from "./ExperimentRunner.svelte";
     import {
         DEFAULT_VIEWPORT,
         NODE_WIDTH,
@@ -102,12 +127,19 @@
         TransformCapability,
         TransformCapabilityConfigField,
         NodeCatalogEntry,
-        SessionNodeConfig,
+        ExperimentNodeConfig,
         SessionProtocol,
-        StreamGraphSessionNode,
+        StreamGraphExperimentNode,
         StreamGraphTrainNode,
         TrainNodeConfig,
         LiveStreamData,
+        OutputChannelTopic,
+        ChannelKind,
+    } from "../StreamViewer/types";
+    import {
+        channelKindFromTopics,
+        markerTopicOfChannel,
+        dataTopicOfChannel,
     } from "../StreamViewer/types";
 
     interface Props {
@@ -132,9 +164,23 @@
         submitTrainJob: (config: TrainNodeConfig) => void;
         trainJobStatus: string | null;
         trainModelPath: string | null;
+        // Durable bundle path from the last completed train job; auto-filled into
+        // emg_gesture_classify nodes so live classification needs no manual paste.
+        trainBundlePath: string | null;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
-        startStreamGraph: (graphId: string) => boolean;
+        startStreamGraph: (graphId: string, startOffset?: number) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
+        // Phase 5: replay support — query a stream's offset bounds / the offset
+        // for a scrubbed timestamp, with replies surfaced in streamTimeExtents.
+        queryStreamTime: (
+            streamId: string,
+            timestampUs?: number,
+            requestId?: string,
+        ) => void;
+        streamTimeExtents: Record<string, StreamTimeMessage>;
+        // Phase 6: the experiment library (recorded runs) + a refresh trigger.
+        recordedRuns: RecordedRunSummary[];
+        requestRecordedRuns: () => void;
         inspectStream: (streamId: string) => void;
         // Per-stream live buffers (keyed by stream id) so multiple inspectors can
         // be live at once, plus friendly device names per stream.
@@ -163,9 +209,14 @@
         submitTrainJob,
         trainJobStatus,
         trainModelPath,
+        trainBundlePath,
         validateStreamGraph,
         startStreamGraph,
         stopStreamGraph,
+        queryStreamTime,
+        streamTimeExtents,
+        recordedRuns,
+        requestRecordedRuns,
         inspectStream,
         liveStreams,
         streamDeviceNames,
@@ -181,6 +232,8 @@
     let selectedNodeId = $state<string | null>(null);
     let selectedNodeIds = $state<Set<string>>(new Set());
     let selectedEdgeId = $state<string | null>(null);
+    // Part C: which edge's topic badge dropdown is open (click-to-toggle).
+    let openBadgeEdgeId = $state<string | null>(null);
     let compositeTemplates = $state<CompositeTemplate[]>(
         listCompositeTemplates(),
     );
@@ -197,6 +250,10 @@
     }
 
     function handleWindowKeydown(event: KeyboardEvent) {
+        if (event.key === "Escape" && openBadgeEdgeId) {
+            openBadgeEdgeId = null;
+            return;
+        }
         if (
             (event.metaKey || event.ctrlKey) &&
             event.key.toLowerCase() === "k"
@@ -336,7 +393,7 @@
     );
 
     const selectedSessionNode = $derived(
-        selectedNode?.kind === "session" ? selectedNode : null,
+        selectedNode?.kind === "experiment" ? selectedNode : null,
     );
 
     const selectedTrainNode = $derived(
@@ -649,10 +706,15 @@
     }
 
     function handleWindowPointerDown(event: MouseEvent) {
+        const target = event.target as HTMLElement | null;
+        // Close an open edge-topic badge dropdown on any pointer-down outside it
+        // (the badge + menu stop propagation, so those clicks don't reach here).
+        if (openBadgeEdgeId && !target?.closest(".edge-badge-wrap")) {
+            openBadgeEdgeId = null;
+        }
         if (!contextMenu.open) {
             return;
         }
-        const target = event.target as HTMLElement | null;
         if (
             target?.closest(".context-menu") ||
             target?.closest(".graph-canvas")
@@ -822,8 +884,8 @@
             addCombineNode(position);
         } else if (entry.kind === "transform") {
             addTransformNode(entry.node_type, position);
-        } else if (entry.kind === "session") {
-            addSessionNode(position);
+        } else if (entry.kind === "experiment") {
+            addExperimentNode(position);
         } else if (entry.kind === "train") {
             addTrainNode(position);
         }
@@ -866,43 +928,37 @@
         markDraftChanged(nextGraph);
     }
 
-    // A blank generic protocol — deliberately NOT the EMG gesture defaults, to
-    // keep the session node sensor-agnostic. The user authors classes/timing in
-    // the inspector. (Phase 4.)
-    function buildDefaultSessionConfig(): SessionNodeConfig {
+    // Defaults to the finger-counting (digit-movement) protocol — cues the hand
+    // at each finger count (1–5), with `rest` as the inter-cue filler. Still fully
+    // editable in the inspector (the node stays sensor-agnostic). The
+    // experiment_id is stable per node (the recording session_id and the
+    // Marker/<experiment_id> output topic key).
+    function buildDefaultExperimentConfig(): ExperimentNodeConfig {
         return {
-            protocol: {
-                protocol_id: "session",
-                label: "New session",
-                classes: ["class_a", "class_b"],
-                rest_class: "rest",
-                repetitions: 3,
-                hold_s: 3,
-                rest_s: 2,
-                lead_in_s: 3,
-                tail_rest_s: 2,
-                seed: 1,
-            },
+            protocol: { ...FINGER_COUNTING_PROTOCOL },
+            experiment_id: sanitizeIdentifier(`finger-counting-${Date.now()}`),
             participant_id: "",
             notes: "",
         };
     }
 
-    // Starts with 2 input ports (record two sensors); more can be wired up.
-    function addSessionNode(
+    // Source-like: no inputs. The single `markers` output carries the
+    // cue/session marker stream downstream.
+    function addExperimentNode(
         position: StreamGraphPosition = contextMenu.open
             ? contextMenu.graphPosition
             : getDefaultInsertionPosition(),
     ) {
         const nextGraph = cloneGraph(draftGraph);
-        const nodeId = `session/${Date.now()}`;
+        const nodeId = `experiment/${Date.now()}`;
         nextGraph.nodes.push({
             id: nodeId,
-            kind: "session",
-            label: "Session",
+            kind: "experiment",
+            label: "Experiment",
             position: { ...position },
-            input_port_ids: ["in1", "in2"],
-            config: buildDefaultSessionConfig(),
+            input_port_ids: [],
+            output_port_ids: ["markers"],
+            config: buildDefaultExperimentConfig(),
         });
         selectedNodeId = nodeId;
         selectedNodeIds = new Set([nodeId]);
@@ -941,7 +997,7 @@
     function utilityIcon(kind: string) {
         if (kind === "viewer") return Monitor;
         if (kind === "sink") return Archive;
-        if (kind === "session") return CircleDot;
+        if (kind === "experiment") return CircleDot;
         if (kind === "train") return Cpu;
         return GitBranch;
     }
@@ -1222,6 +1278,23 @@
             return;
         }
 
+        // A marker stream (an experiment's `markers` output) is discrete events,
+        // not a numeric frame — a transform can't process it. Combine, however,
+        // is now a topic-aware merger (Part B): markers feed its marker lane and
+        // bundle with data into a "stream" channel, so only transform is blocked.
+        const connectSource = draftGraph.nodes.find(
+            (n) => n.id === connection.nodeId,
+        );
+        const connectTarget = draftGraph.nodes.find((n) => n.id === nodeId);
+        if (
+            connectSource?.kind === "experiment" &&
+            connectTarget?.kind === "transform"
+        ) {
+            connectionMessage = `⚠ Markers can't feed a ${connectTarget.kind}. Combine them with a data stream, wire the experiment into a viewer, or use the timeline.`;
+            pendingConnection = null;
+            return;
+        }
+
         const nextGraph = cloneGraph(draftGraph);
         nextGraph.edges = nextGraph.edges.filter(
             (edge) =>
@@ -1359,7 +1432,7 @@
 
     function updateSessionProtocol(patch: Partial<SessionProtocol>) {
         updateSelectedNode((node) => {
-            if (node.kind !== "session") {
+            if (node.kind !== "experiment") {
                 return node;
             }
             return {
@@ -1373,13 +1446,31 @@
     }
 
     function updateSessionMeta(
-        patch: Partial<Pick<SessionNodeConfig, "participant_id" | "notes">>,
+        patch: Partial<Pick<ExperimentNodeConfig, "participant_id" | "notes">>,
     ) {
         updateSelectedNode((node) => {
-            if (node.kind !== "session") {
+            if (node.kind !== "experiment") {
                 return node;
             }
             return { ...node, config: { ...node.config, ...patch } };
+        });
+    }
+
+    // The experiment_id is the recording session_id and the key of the
+    // Marker/<experiment_id> topic the `markers` output resolves to, so keep it
+    // a valid topic identifier.
+    function updateExperimentId(raw: string) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "experiment") {
+                return node;
+            }
+            return {
+                ...node,
+                config: {
+                    ...node.config,
+                    experiment_id: sanitizeIdentifier(raw),
+                },
+            };
         });
     }
 
@@ -1445,38 +1536,7 @@
             : null,
     );
 
-    // Resolve the concrete stream ids feeding a session node: stream_source
-    // inputs contribute their stream_id, transform/combine inputs their resolved
-    // runtime output_stream_id.
-    function resolveSessionInputStreamIds(
-        node: StreamGraphSessionNode,
-    ): string[] {
-        const ids: string[] = [];
-        for (const edge of draftGraph.edges) {
-            if (edge.target_node_id !== node.id) {
-                continue;
-            }
-            const src = draftGraph.nodes.find(
-                (candidate) => candidate.id === edge.source_node_id,
-            );
-            if (!src) {
-                continue;
-            }
-            if (src.kind === "stream_source") {
-                if (src.stream_id) {
-                    ids.push(String(src.stream_id));
-                }
-            } else {
-                const rt = nodeRuntimeStatus(src.id);
-                if (rt?.output_stream_id) {
-                    ids.push(String(rt.output_stream_id));
-                }
-            }
-        }
-        return Array.from(new Set(ids));
-    }
-
-    function startSessionRecording(node: StreamGraphSessionNode) {
+    function startSessionRecording(node: StreamGraphExperimentNode) {
         if (sessionRecording) {
             return;
         }
@@ -1487,14 +1547,18 @@
                 "Protocol has no cues — add classes and timing first.";
             return;
         }
-        const streamIds = resolveSessionInputStreamIds(node);
-        if (streamIds.length === 0) {
-            sessionRecordMessage =
-                "No upstream streams resolved — connect sources and start the graph first.";
-            return;
-        }
+        // An experiment is source-like: it emits markers independently of any
+        // data stream, so there are no upstream device ids to record. The raw
+        // data already lives in Kafka; the markers are the deliverable and
+        // anything consuming them correlates by time.
+        const streamIds: string[] = [];
+        // Record under the node's stable experiment_id so the published markers
+        // land on the same Marker/<experiment_id> topic the `markers` output
+        // port resolves to (downstream marker-aware nodes subscribe to it).
+        // Fall back to a generated id for graphs saved before experiment_id.
         const sessionId = sanitizeIdentifier(
-            buildDefaultSessionId(protocol.protocol_id || "session"),
+            node.config.experiment_id ||
+                buildDefaultSessionId(protocol.protocol_id || "experiment"),
         );
         const startedAtEpochMs = Date.now();
         const startedAtUs = startedAtEpochMs * 1000;
@@ -1539,7 +1603,7 @@
             startedAtUs,
             elapsedMs: 0,
         };
-        sessionRecordMessage = `Recording ${streamIds.length} stream(s) as ${sessionId}…`;
+        sessionRecordMessage = `Recording markers as ${sessionId}…`;
         sessionRecordTimer = setInterval(tickSessionRecording, 100);
     }
 
@@ -1598,8 +1662,8 @@
             ],
         });
         sessionRecordMessage = completed
-            ? `Recorded ${rec.sessionId} (${rec.streamIds.length} stream(s)).`
-            : `Stopped ${rec.sessionId} early; partial session published.`;
+            ? `Recorded ${rec.sessionId} markers.`
+            : `Stopped ${rec.sessionId} early; partial markers published.`;
         sessionRecording = null;
     }
 
@@ -1644,6 +1708,55 @@
         });
         scheduleReactiveRestart(selectedNodeId);
     }
+
+    // Phase 2: when a train job completes, auto-fill the resulting bundle path
+    // into classify nodes so the operator never pastes a model path. Only fills
+    // nodes whose model_path is empty, preserving a manually-edited path or one
+    // loaded from a saved profile. emg_gesture_classify gets the self-describing
+    // bundle; a legacy lda_classify node gets the raw LDA model path.
+    let lastAutoFilledBundlePath: string | null = null;
+    function autofillClassifyModelPath(
+        bundlePath: string,
+        ldaModelPath: string | null,
+    ) {
+        const nextGraph = cloneGraph(draftGraph);
+        const restartNodeIds: string[] = [];
+        for (const node of nextGraph.nodes) {
+            if (node.kind !== "transform") {
+                continue;
+            }
+            const path =
+                node.transform_kind === "emg_gesture_classify"
+                    ? bundlePath
+                    : node.transform_kind === "lda_classify"
+                      ? ldaModelPath
+                      : null;
+            if (!path) {
+                continue;
+            }
+            const current = node.config?.model_path;
+            if (typeof current === "string" && current.trim().length > 0) {
+                continue;
+            }
+            node.config = { ...node.config, model_path: path };
+            restartNodeIds.push(node.id);
+        }
+        if (restartNodeIds.length > 0) {
+            markDraftChanged(nextGraph);
+            for (const nodeId of restartNodeIds) {
+                scheduleReactiveRestart(nodeId);
+            }
+        }
+    }
+
+    $effect(() => {
+        const bundlePath = trainBundlePath;
+        if (!bundlePath || bundlePath === lastAutoFilledBundlePath) {
+            return;
+        }
+        lastAutoFilledBundlePath = bundlePath;
+        autofillClassifyModelPath(bundlePath, trainModelPath);
+    });
 
     // Flatten composites into primitives for the backend (which only understands
     // the four primitive node kinds).
@@ -1784,6 +1897,47 @@
             : null,
     );
 
+    const expandedViewerNode = $derived(
+        expandedViewerNodeId
+            ? draftGraph.nodes.find((n) => n.id === expandedViewerNodeId) ?? null
+            : null,
+    );
+
+    // Part D: a viewer's incoming channel carries markers (a "stream" or markers
+    // channel), so a marker overlay is possible.
+    function viewerChannelHasMarkers(node: EditorGraphNode): boolean {
+        if (node.kind !== "viewer") return false;
+        return resolveInputChannel(node.id).some((t) => t.type === "Marker");
+    }
+
+    // Whether the viewer's marker overlay is enabled (the phantom markers input
+    // has been clicked). Off until enabled, per the plan's click-to-enable flow.
+    function viewerShowsMarkers(node: EditorGraphNode): boolean {
+        if (!viewerChannelHasMarkers(node)) return false;
+        return node.kind === "viewer" ? node.show_markers === true : false;
+    }
+
+    // The phantom markers input state for the node card: absent when the channel
+    // has no markers, else "on"/"available" from the overlay toggle.
+    function viewerMarkersPhantom(
+        node: EditorGraphNode,
+    ): "on" | "available" | undefined {
+        if (!viewerChannelHasMarkers(node)) return undefined;
+        return viewerShowsMarkers(node) ? "on" : "available";
+    }
+
+    // Toggle the marker overlay for a viewer node (the phantom-input click).
+    function toggleViewerMarkers(nodeId: string) {
+        draftGraph = {
+            ...draftGraph,
+            nodes: draftGraph.nodes.map((node) =>
+                node.id === nodeId && node.kind === "viewer"
+                    ? { ...node, show_markers: node.show_markers !== true }
+                    : node,
+            ),
+        };
+    }
+
     function openViewerData(node: EditorGraphNode | null) {
         if (!node || node.kind !== "viewer") {
             return;
@@ -1806,6 +1960,8 @@
             openCompositeInternals(node);
         } else if (node?.kind === "viewer") {
             openViewerData(node);
+        } else if (node?.kind === "experiment") {
+            expandedExperimentNodeId = node.id;
         }
     }
 
@@ -1822,6 +1978,58 @@
         // render live at once.
     }
 
+    // --- Experiment run surfaces (inline on-node + large modal) --------------
+    let expandedExperimentNodeId = $state<string | null>(null);
+    const expandedExperimentNode = $derived(
+        expandedExperimentNodeId
+            ? (draftGraph.nodes.find(
+                  (n) => n.id === expandedExperimentNodeId,
+              ) ?? null)
+            : null,
+    );
+
+    function setInlineExperiment(nodeId: string, enabled: boolean) {
+        const nextGraph = cloneGraph(draftGraph);
+        for (const node of nextGraph.nodes) {
+            if (node.id === nodeId && node.kind === "experiment") {
+                node.inline_experiment = enabled;
+            }
+        }
+        markDraftChanged(nextGraph);
+    }
+
+    // Everything a run surface needs for one experiment node, resolved from the
+    // shared recording state (only one experiment records at a time).
+    function experimentRunView(node: StreamGraphExperimentNode) {
+        const protocol = node.config.protocol;
+        const isRecording = sessionRecording?.nodeId === node.id;
+        const schedule = isRecording
+            ? sessionRecording!.schedule
+            : buildCueScheduleForProtocol(protocol);
+        const durationMs = isRecording
+            ? sessionRecording!.durationMs
+            : scheduleDurationMs(schedule);
+        const elapsedMs = isRecording ? sessionRecording!.elapsedMs : 0;
+        const activeCue = isRecording
+            ? activeCueAtElapsedMs(schedule, elapsedMs)
+            : null;
+        const nextCue = isRecording
+            ? nextCueAfterElapsedMs(schedule, elapsedMs)
+            : null;
+        const holdCues = schedule.filter((c) => c.phase === "hold").length;
+        return {
+            protocolLabel: protocol.label,
+            classes: protocol.classes,
+            recording: isRecording,
+            recordingElsewhere: sessionRecording != null && !isRecording,
+            elapsedMs,
+            durationMs,
+            activeCue,
+            nextCue,
+            summary: { holdCues, durationS: Math.round(durationMs / 1000) },
+        };
+    }
+
     // Keep the set of live subscriptions in sync with the streams currently being
     // inspected: every inline-enabled viewer node with a resolved output stream,
     // plus the expanded overlay. Ref-counted on the page side, so two viewers on
@@ -1835,6 +2043,20 @@
                 if (streamId) {
                     desired.add(String(streamId));
                 }
+                // Topic-aware channels (Part A): a viewer fed a data+markers
+                // "stream" also receives markers on their own MARKER topic id —
+                // subscribe to every topic in the incoming channel so both the
+                // data and the marker feeds arrive.
+                for (const topic of resolveInputChannel(node.id)) {
+                    desired.add(String(topic.id));
+                }
+            }
+            // Timeline (Part E): subscribe to EVERY channel that carries a MARKER
+            // topic (an experiment's markers, or a combine "stream" output), so
+            // the strip shows recorded regions + cue ticks from any of them.
+            const markerTopic = markerTopicOfChannel(nodeOutputTopics(node.id));
+            if (markerTopic) {
+                desired.add(String(markerTopic.id));
             }
             // Briefly sniff a source stream we don't yet have a name for, so the
             // node can show its device name; once named it drops out of `desired`
@@ -1938,6 +2160,10 @@
             clearTimeout(reactiveRestartTimer);
             reactiveRestartTimer = null;
         }
+        if (timelineClock) {
+            clearInterval(timelineClock);
+            timelineClock = null;
+        }
     });
 
     // Composite templates are authored with node positions relative to an
@@ -2003,6 +2229,146 @@
         return selectedGraphStatus?.node_statuses?.[nodeId] ?? null;
     }
 
+    // Topic-aware channels (Part A): a node's output channel is a topic set. The
+    // backend reports it in runtime status as `output_topics`; fall back to a
+    // one-DATA-topic channel synthesised from output_stream_id so pre-topic
+    // backends (and nodes that haven't reported topics yet) still resolve.
+    function nodeOutputTopics(nodeId: string): OutputChannelTopic[] {
+        const status = nodeRuntimeStatus(nodeId);
+        if (status?.output_topics && status.output_topics.length > 0) {
+            return status.output_topics;
+        }
+        if (status?.output_stream_id) {
+            return [
+                { type: "Data", id: String(status.output_stream_id), schema: "" },
+            ];
+        }
+        return [];
+    }
+
+    // The output channel of a node — runtime-reported when the graph is running,
+    // else a statically-inferred set from the node kind (Part C badge shows a
+    // count pre-run: a source = 1 data, an experiment = 1 marker, a combine =
+    // the per-type union of its inputs). `depth` guards the combine recursion.
+    function channelTopicsForNode(
+        node: EditorGraphNode | undefined,
+        depth = 0,
+    ): OutputChannelTopic[] {
+        if (!node) return [];
+        const runtime = nodeOutputTopics(node.id);
+        if (runtime.length > 0) return runtime;
+        if (depth > 8) return [];
+        switch (node.kind) {
+            case "stream_source":
+                return node.stream_id
+                    ? [
+                          {
+                              type: "Data",
+                              id: String(node.stream_id),
+                              schema: node.schema_name ?? "",
+                          },
+                      ]
+                    : [];
+            case "experiment":
+                return [{ type: "Marker", id: "", schema: "MarkerEventV1" }];
+            case "transform":
+                return [{ type: "Data", id: "", schema: "" }];
+            case "combine": {
+                // Per-type union of the input source channels (one per type).
+                const byType = new Map<string, OutputChannelTopic>();
+                for (const e of draftGraph.edges) {
+                    if (e.target_node_id !== node.id) continue;
+                    const src = draftGraph.nodes.find(
+                        (n) => n.id === e.source_node_id,
+                    );
+                    for (const t of channelTopicsForNode(src, depth + 1)) {
+                        if (!byType.has(t.type)) {
+                            byType.set(t.type, { type: t.type, id: "", schema: t.schema });
+                        }
+                    }
+                }
+                return [...byType.values()];
+            }
+            default:
+                return [];
+        }
+    }
+
+    // The channel feeding a node's input port (resolved via the incoming edge):
+    // the topic set the upstream source node outputs, MINUS any topic types the
+    // user hid on that edge (so the target acts on only the enabled part). `port`
+    // narrows to the edge targeting that specific input port.
+    function resolveInputChannel(
+        nodeId: string,
+        port?: string,
+    ): OutputChannelTopic[] {
+        const edge = draftGraph.edges.find(
+            (e) =>
+                e.target_node_id === nodeId &&
+                (port === undefined || e.target_port === port),
+        );
+        if (!edge) return [];
+        const hidden = new Set(edge.hidden_topic_types ?? []);
+        return channelTopicsForNode(
+            draftGraph.nodes.find((n) => n.id === edge.source_node_id),
+        ).filter((t) => !hidden.has(t.type));
+    }
+
+    // The full channel carried by an edge = the source node's output channel
+    // (unfiltered — the badge shows every topic with its enabled/hidden state).
+    function edgeChannelTopics(edge: StreamGraphEdge): OutputChannelTopic[] {
+        return channelTopicsForNode(
+            draftGraph.nodes.find((n) => n.id === edge.source_node_id),
+        );
+    }
+
+    function isEdgeTopicHidden(edge: StreamGraphEdge, type: string): boolean {
+        return (edge.hidden_topic_types ?? []).includes(type);
+    }
+
+    // Toggle whether a topic type flows to the edge's target node (the badge
+    // checkboxes). Persists on the edge; the frontend (viewer overlay/phantom,
+    // combine relabel) reacts immediately, and a running combine is re-run so its
+    // merge lanes pick up the change.
+    function toggleEdgeTopic(edgeId: string, type: string) {
+        let targetNodeId: string | null = null;
+        draftGraph = {
+            ...draftGraph,
+            edges: draftGraph.edges.map((edge) => {
+                if (edge.id !== edgeId) return edge;
+                targetNodeId = edge.target_node_id;
+                const hidden = new Set(edge.hidden_topic_types ?? []);
+                if (hidden.has(type)) hidden.delete(type);
+                else hidden.add(type);
+                return { ...edge, hidden_topic_types: [...hidden] };
+            }),
+        };
+        // A viewer only needs the frontend to stop rendering the topic (no re-run);
+        // a combine must re-resolve its merge lanes, so restart it if running.
+        const target = draftGraph.nodes.find((n) => n.id === targetNodeId);
+        if (target?.kind === "combine") {
+            scheduleReactiveRestart(targetNodeId);
+        }
+    }
+
+    function inputChannelKind(nodeId: string, port?: string): ChannelKind {
+        return channelKindFromTopics(resolveInputChannel(nodeId, port));
+    }
+
+    // Part B: relabel each connected combine input port data/markers/stream from
+    // the channel it is fed, so the merge type is visible on the node itself.
+    function combineInputLabels(
+        node: EditorGraphNode,
+    ): Record<string, string> | undefined {
+        if (node.kind !== "combine") return undefined;
+        const labels: Record<string, string> = {};
+        for (const portId of node.input_port_ids ?? []) {
+            const kind = inputChannelKind(node.id, portId);
+            if (kind !== "empty") labels[portId] = kind;
+        }
+        return Object.keys(labels).length > 0 ? labels : undefined;
+    }
+
     // The renderer for a viewer node is chosen from the upstream output's
     // descriptor capability plus the latest frame's shape — never from a sensor
     // name. A per-window feature vector routes to the bars/heatmap viewer, a
@@ -2013,6 +2379,7 @@
     function liveStreamView(streamId: string | null | undefined) {
         const data = streamId ? liveStreams[streamId] : undefined;
         const emgSamples = data?.emgSamples ?? [];
+        const markers = data?.markers ?? [];
         const latestMuse = data?.museSamples.at(-1);
         const latestEmg = emgSamples.at(-1);
         const descriptor = streamId
@@ -2026,15 +2393,209 @@
                   channel_labels: latestEmg.channel_labels,
               }
             : undefined;
+        // A markers-ONLY stream (e.g. an experiment node's `markers` output) has
+        // no channel-frame descriptor; once a marker arrives we know its schema,
+        // so hint the registry to the marker renderer. But a "stream" channel
+        // (data + markers, from a topic-aware combine) carries data too — keep
+        // the DATA renderer and overlay the markers via the phantom input, rather
+        // than replacing the whole waveform with the marker list (Part D).
+        const hasData = latestEmg != null;
+        const schemaNameHint =
+            markers.length > 0 && !hasData
+                ? MARKER_SCHEMA_NAME
+                : descriptor?.schema_name;
         return {
             subscribed: data != null,
             emgSamples,
+            markers,
             latestMuse,
             descriptor,
-            renderer: chooseViewerRenderer(descriptor, hint),
+            renderer: chooseViewerRenderer(descriptor, hint, schemaNameHint),
             recordValue: latestEmg ?? latestMuse ?? data?.imuSamples.at(-1),
         };
     }
+
+    // --- Timeline & transport (Phase 4) --------------------------------------
+    // A per-graph time context (Decision #2) drives the DVR-style strip: the
+    // graph runs at the live head, or at a scrubbed point in recorded history.
+    // The actual re-run of a replayed chain is Phase 5; here the strip sets the
+    // context, shows recorded experiments/cues, and scrubs a playhead.
+    let showTimeline = $state(false);
+    let timelineNowUs = $state(Date.now() * 1000);
+    let timelineClock: ReturnType<typeof setInterval> | null = null;
+    let timeContextByGraph = $state<Record<string, TimeContext>>({});
+
+    function currentTimeContext(): TimeContext {
+        return (
+            timeContextByGraph[draftGraph.graph_id] ??
+            createLiveContext(timelineNowUs)
+        );
+    }
+
+    // Part E: the timeline's event source is EVERY channel that carries a MARKER
+    // topic — an experiment's markers, but also a combine "stream" output's merged
+    // markers — merged, de-duplicated, and time-sorted (recorded regions + cue
+    // ticks). Dedup by marker id + emitted_at because a combine re-publishes its
+    // upstream markers under its own topic id, so the same cue can appear twice.
+    const timelineMarkers = $derived.by<BufferedMarkerEvent[]>(() => {
+        const out: BufferedMarkerEvent[] = [];
+        const seen = new Set<string>();
+        for (const node of draftGraph.nodes) {
+            const markerTopic = markerTopicOfChannel(nodeOutputTopics(node.id));
+            if (!markerTopic) continue;
+            for (const m of liveStreams[String(markerTopic.id)]?.markers ?? []) {
+                const key = `${m.marker_id}:${m.emitted_at_us}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(m);
+            }
+        }
+        return out.sort((a, b) => a.emitted_at_us - b.emitted_at_us);
+    });
+
+    const timelineWindow = $derived(
+        computeTimeWindow(currentTimeContext(), timelineNowUs, timelineMarkers),
+    );
+    const timelineTicks = $derived(layoutTicks(timelineMarkers, timelineWindow));
+    const timelineRegions = $derived(
+        layoutRegions(timelineMarkers, timelineWindow, timelineNowUs),
+    );
+    const playheadFraction = $derived(
+        timeToFraction(currentTimeContext().playheadUs, timelineWindow),
+    );
+    const atLiveEdge = $derived(
+        currentTimeContext().mode === "live" ||
+            currentTimeContext().playheadUs >= timelineWindow.endUs - 1,
+    );
+
+    function ensureTimelineClock() {
+        if (timelineClock !== null) return;
+        timelineClock = setInterval(() => {
+            timelineNowUs = Date.now() * 1000;
+            const id = draftGraph.graph_id;
+            const ctx = timeContextByGraph[id];
+            if (ctx && ctx.mode === "replay" && ctx.playing) {
+                const endUs = ctx.endUs ?? timelineNowUs;
+                const { playheadUs, reachedEnd } = advancePlayhead(
+                    ctx,
+                    200,
+                    endUs,
+                );
+                timeContextByGraph = {
+                    ...timeContextByGraph,
+                    [id]: {
+                        ...ctx,
+                        playheadUs,
+                        playing: reachedEnd ? false : ctx.playing,
+                    },
+                };
+            }
+        }, 200);
+    }
+
+    $effect(() => {
+        if (showTimeline) ensureTimelineClock();
+    });
+
+    function setTimeContext(patch: Partial<TimeContext>) {
+        const id = draftGraph.graph_id;
+        timeContextByGraph = {
+            ...timeContextByGraph,
+            [id]: { ...currentTimeContext(), ...patch },
+        };
+    }
+
+    function timelineScrub(fraction: number) {
+        const us = fractionToTime(fraction, timelineWindow);
+        // Scrubbing enters replay at the picked time (paused).
+        setTimeContext({ mode: "replay", playheadUs: us, playing: false });
+    }
+
+    function timelineJumpToLive() {
+        setTimeContext({
+            mode: "live",
+            playheadUs: timelineNowUs,
+            playing: true,
+        });
+    }
+
+    function timelineTogglePlay() {
+        setTimeContext({ playing: !currentTimeContext().playing });
+    }
+
+    function timelineSetSpeed(speed: PlaybackSpeed) {
+        setTimeContext({ speed });
+    }
+
+    function formatClock(us: number): string {
+        return new Date(us / 1000).toLocaleTimeString([], { hour12: false });
+    }
+
+    // Reprocess the chain from the playhead time (Phase 5): resolve the primary
+    // root source's offset for the scrubbed timestamp, then re-run the graph
+    // from that offset. The backend seeks only the root sources and re-runs the
+    // chain live; the timestamp-aligned combine keeps multi-stream correct.
+    let pendingReprocess = $state<{ streamId: string; requestId: string } | null>(
+        null,
+    );
+    let reprocessNonce = 0;
+
+    function primaryRootSourceStreamId(): string | null {
+        for (const node of draftGraph.nodes) {
+            if (node.kind === "stream_source" && node.stream_id) {
+                return String(node.stream_id);
+            }
+        }
+        return null;
+    }
+
+    function timelineReprocess() {
+        const sid = primaryRootSourceStreamId();
+        if (!sid) {
+            connectionMessage = "No source stream to reprocess from.";
+            return;
+        }
+        const requestId = `reprocess:${sid}:${++reprocessNonce}`;
+        pendingReprocess = { streamId: sid, requestId };
+        queryStreamTime(sid, currentTimeContext().playheadUs, requestId);
+    }
+
+    // Experiment library (Phase 6): selecting a recorded run sets the graph's
+    // time context to that experiment's window (Decision #2, per-graph). The
+    // user can then Reprocess to re-run the chain over it.
+    function loadExperiment(run: RecordedRunSummary) {
+        showTimeline = true;
+        const endUs = run.end_us ?? Date.now() * 1000;
+        setTimeContext({
+            mode: "replay",
+            playheadUs: run.start_us,
+            endUs,
+            playing: false,
+            sessionId: run.session_id,
+        });
+    }
+
+    // When the offset for a pending reprocess query lands, re-run from it.
+    $effect(() => {
+        const pending = pendingReprocess;
+        if (!pending) return;
+        const extent = streamTimeExtents[pending.streamId];
+        if (!extent || extent.request_id !== pending.requestId) return;
+        pendingReprocess = null;
+        if (!extent.valid) {
+            connectionMessage = "Could not resolve a replay offset for that time.";
+            return;
+        }
+        const offset =
+            (extent.offset_for_timestamp ?? -1) >= 0
+                ? (extent.offset_for_timestamp as number)
+                : (extent.earliest_offset ?? -2);
+        if (selectedGraphStatus?.run_state === "running") {
+            stopStreamGraph(draftGraph.graph_id);
+        }
+        startStreamGraph(draftGraph.graph_id, offset);
+        setTimeContext({ mode: "replay", playing: true });
+    });
 
 </script>
 
@@ -2045,7 +2606,11 @@
     onkeydown={handleWindowKeydown}
 />
 
-{#snippet streamRenderer(streamId: string | null, compact: boolean)}
+{#snippet streamRenderer(
+    streamId: string | null,
+    compact: boolean,
+    showMarkers: boolean = false,
+)}
     {@const view = liveStreamView(streamId)}
     {#if !streamId}
         <p class="inline-note">Start the graph to see live data.</p>
@@ -2057,13 +2622,20 @@
         {:else}
             <p class="inline-note">Waiting for data…</p>
         {/if}
+    {:else if view.renderer === "marker"}
+        <MarkerViewer markers={view.markers} />
     {:else if view.renderer === "classification"}
         <ClassificationViewer samples={view.emgSamples} {formatNumber} />
     {:else if view.renderer === "feature_vector"}
         <FeatureVectorViewer samples={view.emgSamples} {formatNumber} />
     {:else if view.renderer === "channel_frame"}
         {#if view.emgSamples.length > 0}
-            <ChannelFrameViewer samples={view.emgSamples} {formatNumber} {compact} />
+            <ChannelFrameViewer
+                samples={view.emgSamples}
+                markers={showMarkers ? view.markers : []}
+                {formatNumber}
+                {compact}
+            />
         {:else}
             <p class="inline-note">Waiting for data…</p>
         {/if}
@@ -2079,7 +2651,30 @@
 
 {#snippet inlineViewerChart(node: EditorGraphNode)}
     {@const streamId = nodeRuntimeStatus(node.id)?.output_stream_id}
-    {@render streamRenderer(streamId ? String(streamId) : null, true)}
+    {@render streamRenderer(
+        streamId ? String(streamId) : null,
+        true,
+        viewerShowsMarkers(node),
+    )}
+{/snippet}
+
+{#snippet inlineExperiment(node: EditorGraphNode)}
+    {#if node.kind === "experiment"}
+        {@const view = experimentRunView(node)}
+        <ExperimentRunner
+            protocolLabel={view.protocolLabel}
+            classes={view.classes}
+            recording={view.recording}
+            recordingElsewhere={view.recordingElsewhere}
+            elapsedMs={view.elapsedMs}
+            durationMs={view.durationMs}
+            activeCue={view.activeCue}
+            nextCue={view.nextCue}
+            summary={view.summary}
+            onRecord={() => startSessionRecording(node)}
+            onStop={() => finishSessionRecording(false)}
+        />
+    {/if}
 {/snippet}
 
 <div class="graph-editor">
@@ -2326,6 +2921,17 @@
                 {#if graphDirty}
                     <span class="dirty-pill">Unsaved</span>
                 {/if}
+                <span
+                    class="conn-pill {connectionState}"
+                    title={`Backend: ${connectionState}`}
+                >
+                    <span class="conn-dot"></span>
+                    {connectionState === "connected"
+                        ? "Connected"
+                        : connectionState === "connecting"
+                          ? "Connecting…"
+                          : "Disconnected"}
+                </span>
             </div>
             <div class="toolbar-actions">
                 <button
@@ -2396,6 +3002,16 @@
                 <button type="button" class="action-btn" onclick={saveDraftGraph}>
                     <Save size={16} />
                     Save
+                </button>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showTimeline}
+                    onclick={() => (showTimeline = !showTimeline)}
+                    title={showTimeline ? "Hide timeline" : "Show timeline"}
+                    aria-pressed={showTimeline}
+                >
+                    <Clock size={16} />
                 </button>
                 <button
                     type="button"
@@ -2526,10 +3142,15 @@
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
                             {inlineViewerChart}
+                            {inlineExperiment}
                             {streamDeviceNames}
+                            inputPortLabels={combineInputLabels(node)}
+                            markersPhantom={viewerMarkersPhantom(node)}
+                            onToggleMarkers={toggleViewerMarkers}
                             onPortLayout={handlePortLayout}
                             onResize={handleNodeResize}
                             onToggleInlineGraph={setInlineViewerGraph}
+                            onToggleInlineExperiment={setInlineExperiment}
                             onSelect={selectNode}
                             onStartDrag={startNodeDrag}
                             onPortClick={handlePortClick}
@@ -2546,6 +3167,111 @@
                                 }
                             }}
                         />
+                    {/each}
+
+                    <!-- Part C: per-edge topic badge at the link midpoint. -->
+                    {#each draftGraph.edges as edge (edge.id)}
+                        {@const sourceNode = draftGraph.nodes.find(
+                            (n) => n.id === edge.source_node_id,
+                        )}
+                        {@const targetNode = draftGraph.nodes.find(
+                            (n) => n.id === edge.target_node_id,
+                        )}
+                        {#if sourceNode && targetNode}
+                            {@const sp = getPortPoint(
+                                sourceNode,
+                                edge.source_port,
+                                "output",
+                            )}
+                            {@const tp = getPortPoint(
+                                targetNode,
+                                edge.target_port,
+                                "input",
+                            )}
+                            {@const topics = edgeChannelTopics(edge)}
+                            {#if topics.length > 0}
+                                {@const enabledCount = topics.filter(
+                                    (t) => !isEdgeTopicHidden(edge, t.type),
+                                ).length}
+                                <div
+                                    class="edge-badge-wrap"
+                                    style={`left:${(sp.x + tp.x) / 2}px; top:${
+                                        (sp.y + tp.y) / 2
+                                    }px;`}
+                                >
+                                    <button
+                                        type="button"
+                                        class="edge-badge"
+                                        class:multi={topics.length > 1}
+                                        class:filtered={enabledCount <
+                                            topics.length}
+                                        title={`${enabledCount} of ${
+                                            topics.length
+                                        } topic${
+                                            topics.length > 1 ? "s" : ""
+                                        } active on this link`}
+                                        onmousedown={(e) => e.stopPropagation()}
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            openBadgeEdgeId =
+                                                openBadgeEdgeId === edge.id
+                                                    ? null
+                                                    : edge.id;
+                                        }}
+                                    >
+                                        {enabledCount < topics.length
+                                            ? `${enabledCount}/${topics.length}`
+                                            : topics.length}
+                                    </button>
+                                    {#if openBadgeEdgeId === edge.id}
+                                        <div
+                                            class="edge-badge-menu"
+                                            onmousedown={(e) =>
+                                                e.stopPropagation()}
+                                            role="presentation"
+                                        >
+                                            <div class="edge-badge-hint">
+                                                Toggle which topics reach {targetNode.label ??
+                                                    targetNode.kind}
+                                            </div>
+                                            {#each topics as t}
+                                                {@const hidden = isEdgeTopicHidden(
+                                                    edge,
+                                                    t.type,
+                                                )}
+                                                <label
+                                                    class="edge-badge-row"
+                                                    class:row-hidden={hidden}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!hidden}
+                                                        onchange={() =>
+                                                            toggleEdgeTopic(
+                                                                edge.id,
+                                                                t.type,
+                                                            )}
+                                                    />
+                                                    <span
+                                                        class="badge-type badge-type-{t.type.toLowerCase()}"
+                                                    >
+                                                        {t.type}
+                                                    </span>
+                                                    <span class="badge-schema"
+                                                        >{t.schema || "—"}</span
+                                                    >
+                                                    {#if t.id}
+                                                        <span class="badge-id"
+                                                            >#{t.id}</span
+                                                        >
+                                                    {/if}
+                                                </label>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
+                            {/if}
+                        {/if}
                     {/each}
                 </div>
 
@@ -2814,6 +3540,16 @@
                                 />
                             </label>
                             <label>
+                                <span>Experiment id</span>
+                                <input
+                                    value={selectedSessionNode.config.experiment_id ?? ""}
+                                    oninput={(event) =>
+                                        updateExperimentId(
+                                            (event.currentTarget as HTMLInputElement).value,
+                                        )}
+                                />
+                            </label>
+                            <label>
                                 <span>Classes (comma-separated labels)</span>
                                 <input
                                     value={protocol.classes.join(", ")}
@@ -2929,10 +3665,7 @@
                                 </div>
                             {/if}
                             <div class="summary-row">
-                                <span
-                                    >Recording inputs ({selectedSessionNode
-                                        .input_port_ids?.length ?? 0})</span
-                                >
+                                <span>Emits a marker timeline (no inputs)</span>
                             </div>
                             <div class="inspector-action-row">
                                 {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
@@ -2955,7 +3688,7 @@
                                             )}
                                     >
                                         <CircleDot size={15} />
-                                        Record session
+                                        Record experiment
                                     </button>
                                 {/if}
                             </div>
@@ -3075,9 +3808,16 @@
                                     <span>Model</span>
                                     <strong>{trainModelPath}</strong>
                                 </div>
+                            {/if}
+                            {#if trainBundlePath}
+                                <div class="summary-row">
+                                    <span>Bundle</span>
+                                    <strong>{trainBundlePath}</strong>
+                                </div>
                                 <p class="muted-text">
-                                    Paste this path into a classify (lda_classify)
-                                    node's model_path to run predictions.
+                                    Auto-filled into this graph's EMG Gesture
+                                    Classify node — no manual paste needed. Start
+                                    the graph to classify live.
                                 </p>
                             {/if}
                         {/if}
@@ -3309,6 +4049,60 @@
                 </div>
             </div>
         </div>
+
+        {#if showTimeline}
+            <div class="timeline-dock">
+                <div class="experiment-library">
+                    <span class="lib-title">Experiments</span>
+                    <button
+                        type="button"
+                        class="lib-refresh"
+                        onclick={requestRecordedRuns}
+                        title="Refresh recorded experiments"
+                    >
+                        <RefreshCw size={13} />
+                    </button>
+                    {#if recordedRuns.length === 0}
+                        <span class="lib-empty">No recorded experiments — refresh, or record one.</span>
+                    {:else}
+                        <div class="lib-list">
+                            {#each recordedRuns as run}
+                                <button
+                                    type="button"
+                                    class="lib-item"
+                                    class:selected={currentTimeContext().sessionId === run.session_id}
+                                    onclick={() => loadExperiment(run)}
+                                    title={`${run.session_id} · run ${run.run_index}`}
+                                >
+                                    <span class="lib-item-name">{run.session_id}</span>
+                                    <span class="lib-item-meta"
+                                        >{run.protocol_id} · {run.marker_count} markers · {run.device_ids.length} stream(s)</span
+                                    >
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                </div>
+                <TimelineStrip
+                    mode={currentTimeContext().mode}
+                    speed={currentTimeContext().speed}
+                    playing={currentTimeContext().playing}
+                    {playheadFraction}
+                    {atLiveEdge}
+                    ticks={timelineTicks}
+                    regions={timelineRegions}
+                    startLabel={formatClock(timelineWindow.startUs)}
+                    endLabel={formatClock(timelineWindow.endUs)}
+                    playheadLabel={formatClock(currentTimeContext().playheadUs)}
+                    recording={sessionRecording !== null}
+                    onScrub={timelineScrub}
+                    onJumpToLive={timelineJumpToLive}
+                    onTogglePlay={timelineTogglePlay}
+                    onSpeedChange={timelineSetSpeed}
+                    onReprocess={timelineReprocess}
+                />
+            </div>
+        {/if}
     </div>
 
     {#if contextMenu.open}
@@ -3517,6 +4311,9 @@
                 {@render streamRenderer(
                     expandedViewerStreamId ? String(expandedViewerStreamId) : null,
                     false,
+                    expandedViewerNode
+                        ? viewerShowsMarkers(expandedViewerNode)
+                        : false,
                 )}
             </div>
             <div class="viewer-data-footer">
@@ -3528,6 +4325,59 @@
                     <Monitor size={14} />
                     Open in Stream Viewer
                 </button>
+            </div>
+        </div>
+    </div>
+{/if}
+
+{#if expandedExperimentNode && expandedExperimentNode.kind === "experiment"}
+    {@const view = experimentRunView(expandedExperimentNode)}
+    <div
+        class="viewer-data-overlay"
+        role="presentation"
+        onclick={() => (expandedExperimentNodeId = null)}
+        onkeydown={(event) => {
+            if (event.key === "Escape") expandedExperimentNodeId = null;
+        }}
+    >
+        <div
+            class="viewer-data-panel experiment-modal-panel"
+            role="dialog"
+            tabindex="-1"
+            aria-label="Run experiment"
+            onclick={(event) => event.stopPropagation()}
+        >
+            <div class="viewer-data-header">
+                <div>
+                    <p class="eyebrow">Experiment</p>
+                    <h3>{expandedExperimentNode.label}</h3>
+                </div>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    onclick={() => (expandedExperimentNodeId = null)}
+                >
+                    <X size={16} />
+                </button>
+            </div>
+            <div class="viewer-data-body experiment-modal-body">
+                <ExperimentRunner
+                    large
+                    protocolLabel={view.protocolLabel}
+                    classes={view.classes}
+                    recording={view.recording}
+                    recordingElsewhere={view.recordingElsewhere}
+                    elapsedMs={view.elapsedMs}
+                    durationMs={view.durationMs}
+                    activeCue={view.activeCue}
+                    nextCue={view.nextCue}
+                    summary={view.summary}
+                    onRecord={() =>
+                        startSessionRecording(
+                            expandedExperimentNode as StreamGraphExperimentNode,
+                        )}
+                    onStop={() => finishSessionRecording(false)}
+                />
             </div>
         </div>
     </div>
@@ -3882,6 +4732,85 @@
         min-width: 0;
     }
 
+    .timeline-dock {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 25;
+        box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.3);
+    }
+
+    .experiment-library {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 14px;
+        background: #0b1219;
+        border-top: 1px solid #1e2a36;
+        color: #94a3b8;
+        font-size: 12px;
+        overflow-x: auto;
+    }
+
+    .lib-title {
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #64748b;
+        white-space: nowrap;
+    }
+
+    .lib-refresh {
+        display: inline-flex;
+        background: #1e293b;
+        color: #cbd5e1;
+        border: 1px solid #334155;
+        border-radius: 6px;
+        padding: 3px 6px;
+        cursor: pointer;
+    }
+
+    .lib-empty {
+        color: #64748b;
+        font-style: italic;
+    }
+
+    .lib-list {
+        display: flex;
+        gap: 8px;
+    }
+
+    .lib-item {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        background: #16212e;
+        border: 1px solid #24313f;
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .lib-item:hover {
+        background: #1d2a3a;
+    }
+
+    .lib-item.selected {
+        border-color: #60a5fa;
+    }
+
+    .lib-item-name {
+        color: #e2e8f0;
+        font-weight: 600;
+    }
+
+    .lib-item-meta {
+        color: #64748b;
+        font-size: 11px;
+    }
+
     .graph-toolbar {
         position: absolute;
         top: 14px;
@@ -3924,6 +4853,38 @@
         background: rgba(255, 176, 32, 0.15);
         color: #ffcf85;
         font-size: 0.8rem;
+    }
+
+    .conn-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        border-radius: 999px;
+        padding: 0.22rem 0.7rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        border: 1px solid rgba(114, 142, 255, 0.22);
+        color: #9dafdf;
+        background: rgba(8, 13, 26, 0.7);
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .conn-pill .conn-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+    }
+
+    .conn-pill.connected {
+        color: #8ef2bf;
+        border-color: rgba(142, 242, 191, 0.3);
+    }
+
+    .conn-pill.connecting {
+        color: #ffcf85;
+        border-color: rgba(255, 176, 32, 0.3);
     }
 
     .action-btn {
@@ -3988,6 +4949,110 @@
         stroke-width: 3;
         cursor: pointer;
         transition: stroke 0.15s ease, stroke-width 0.15s ease;
+    }
+
+    /* Part C: per-edge topic badge (positioned in graph coords in .graph-stage). */
+    .edge-badge-wrap {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        z-index: 6;
+    }
+    .edge-badge {
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 999px;
+        border: 1px solid rgba(104, 215, 255, 0.55);
+        background: #10222b;
+        color: #cbeefb;
+        font: 600 11px/1 var(--mono, ui-monospace, monospace);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .edge-badge:hover {
+        background: #16303c;
+        border-color: #89f4ff;
+    }
+    .edge-badge.multi {
+        border-color: rgba(180, 145, 255, 0.75);
+        color: #e4d7ff;
+    }
+    .edge-badge.filtered {
+        border-color: rgba(255, 205, 120, 0.8);
+        color: #f2d69a;
+    }
+    .edge-badge-hint {
+        font-size: 10px;
+        color: #7f9098;
+        padding: 1px 2px 4px;
+        border-bottom: 1px solid rgba(104, 215, 255, 0.14);
+        margin-bottom: 2px;
+    }
+    .edge-badge-row input[type="checkbox"] {
+        flex: 0 0 auto;
+        margin: 0;
+        cursor: pointer;
+        accent-color: #68d7ff;
+    }
+    .edge-badge-row {
+        cursor: pointer;
+    }
+    .edge-badge-row.row-hidden {
+        opacity: 0.5;
+    }
+    .edge-badge-menu {
+        position: absolute;
+        top: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 210px;
+        background: #0e1a20;
+        border: 1px solid rgba(104, 215, 255, 0.35);
+        border-radius: 8px;
+        padding: 6px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        z-index: 20;
+    }
+    .edge-badge-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+    .badge-type {
+        flex: 0 0 auto;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 700;
+        font-family: var(--mono, ui-monospace, monospace);
+        background: rgba(104, 215, 255, 0.16);
+        color: #9fe0f5;
+    }
+    .badge-type-marker {
+        background: rgba(180, 145, 255, 0.18);
+        color: #d3c1ff;
+    }
+    .badge-type-meta {
+        background: rgba(255, 205, 120, 0.16);
+        color: #f2d69a;
+    }
+    .badge-schema {
+        flex: 1 1 auto;
+        color: #b9c6cd;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .badge-id {
+        flex: 0 0 auto;
+        color: #6f8088;
+        font-family: var(--mono, ui-monospace, monospace);
     }
 
     .graph-edge:hover {
@@ -4306,6 +5371,17 @@
         background: rgba(8, 13, 26, 0.98);
         border: 1px solid rgba(110, 138, 255, 0.24);
         box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+    }
+
+    .experiment-modal-panel {
+        width: min(92vw, 1100px);
+    }
+
+    .experiment-modal-body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 50vh;
     }
 
     .viewer-data-header {
