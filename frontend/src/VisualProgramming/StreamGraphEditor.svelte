@@ -1900,9 +1900,18 @@
     }
 
     function startSelectedGraph() {
-        if (draftGraph.graph_id) {
-            startStreamGraph(draftGraph.graph_id);
+        if (!draftGraph.graph_id) {
+            return;
         }
+        // Persist any unsaved edits first — the backend starts the STORED graph,
+        // so starting a dirty draft (e.g. right after a train job auto-filled the
+        // classifier's model path) would otherwise run the stale saved version.
+        // Messages are processed in order on the connection, so save-then-start
+        // is safe.
+        if (graphDirty) {
+            saveDraftGraph();
+        }
+        startStreamGraph(draftGraph.graph_id);
     }
 
     function stopSelectedGraph() {
