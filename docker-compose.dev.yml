@@ -21,8 +21,13 @@ services:
       # Phase 5: the backend is the sole client of the ML control plane and
       # proxies it over /ws/stream_viewer (browser no longer hits :8786 directly).
       NATKIT_ML_CONTROL_PLANE_URL: ws://natkit-v0-ml-control-plane:8786
+      # Persist saved stream graphs on a named volume so they survive container
+      # recreate (the default ./data/stream_graphs.json lives in the ephemeral
+      # container layer and is lost on `down`/rebuild).
+      NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
     volumes:
       - natkit-v0-auth:/auth
+      - natkit-v0-graphs:/graphs
       # Read trained models the control plane persists here (Phase 5, slice C)
       # so a classify node can load model_path directly.
       - natkit-v0-models:/models:ro
@@ -68,6 +73,15 @@ services:
       - --scratch-root
       - /state/scratch
     restart: always
+    environment:
+      # The worker authenticates to the shared auth store by logging in against
+      # the backend's /api/auth/login. derive_auth_base_url() would point this at
+      # the control-plane host (which doesn't serve auth) in this topology, so set
+      # it explicitly to the backend. Credentials come from .env and must match a
+      # real account (see NATKIT_ML_WORKER_AUTH_* there).
+      NATKIT_AUTH_BASE_URL: http://natkit-v0-backend:7409
+      NATKIT_AUTH_USERNAME: ${NATKIT_ML_WORKER_AUTH_USERNAME:-}
+      NATKIT_AUTH_PASSWORD: ${NATKIT_ML_WORKER_AUTH_PASSWORD:-}
     volumes:
       - ./uploads/ml-worker-a:/state:Z
     networks:
@@ -95,5 +109,6 @@ services:
 
 volumes:
   natkit-v0-auth:
+  natkit-v0-graphs:
   natkit-v0-frontend-node-modules:
   natkit-v0-models:

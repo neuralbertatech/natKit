@@ -1,0 +1,82 @@
+FROM docker.io/library/python:3.12-bookworm
+
+ARG NATKIT_CMAKE_BUILD_PARALLEL
+# Propagate the job cap to the nested libnatkit-core ExternalProject build so a
+# small Docker VM (macOS) doesn't OOM. Empty => CMake falls back to its default.
+ENV CMAKE_BUILD_PARALLEL_LEVEL=${NATKIT_CMAKE_BUILD_PARALLEL}
+
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        libgomp1 \
+        # librdkafka is built from the vendored third-party submodule by
+        # scripts/install_librdkafka.sh (./configure --install-deps); these are
+        # its build/runtime dependencies for the Kafka C ABI (Phase 4).
+        libssl-dev \
+        zlib1g-dev \
+        libsasl2-dev \
+        libzstd-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY natVR/pyproject.toml /workspace/natVR/pyproject.toml
+COPY natVR/README.md /workspace/natVR/README.md
+COPY natVR/src /workspace/natVR/src
+COPY libnatkit/scripts /workspace/libnatkit/scripts
+COPY libnatkit/lib/libnatkit-core /workspace/libnatkit/lib/libnatkit-core
+
+RUN pip install /workspace/natVR
+
+RUN rm -rf /workspace/libnatkit/lib/libnatkit-core/build \
+    && cmake \
+        -S /workspace/libnatkit/lib/libnatkit-core \
+        -B /workspace/libnatkit/lib/libnatkit-core/build \
+        -DSTANDARD_BUILD=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+    && sh -lc 'jobs="${NATKIT_CMAKE_BUILD_PARALLEL:-}"; \
+        if [ -z "$jobs" ]; then \
+          detected="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)"; \
+          jobs=$((detected > 2 ? detected - 4 : 1)); \
+        fi; \
+        cmake --build /workspace/libnatkit/lib/libnatkit-core/build --parallel "$jobs"'
+
+ENV LIBNATKIT_CORE_PATH=/workspace/libnatkit/lib/libnatkit-core/build/liblibnatkit-core.so
+
+# --- Kafka C ABI shim (Phase 4) --------------------------------------------
+# Build liblibnatkit-kafka.so via the lean BUILD_KAFKA_ABI_ONLY path, which
+# compiles only libnatkit-util-cxx + libnatkit-core-kafka-cxx + the shim + a
+# from-source librdkafka, and skips the mosquitto/mqtt/bridge/tools + drogon
+# backend subtrees. The additional source the lean build needs beyond
+# lib/libnatkit-core (already copied above): the top-level CMake orchestration,
+# the util + kafka + public-header subtrees, and the vendored third-party deps
+# (librdkafka source + nlohmann). NOTE: the from-source librdkafka build is the
+# heaviest step in this image; it is why the apt build-deps above are installed.
+COPY libnatkit/CMakeLists.txt /workspace/libnatkit/CMakeLists.txt
+COPY libnatkit/cmake /workspace/libnatkit/cmake
+COPY libnatkit/libnatkit /workspace/libnatkit/libnatkit
+COPY libnatkit/third-party /workspace/libnatkit/third-party
+
+RUN cmake \
+        -S /workspace/libnatkit \
+        -B /workspace/libnatkit/build \
+        -DBUILD_KAFKA_ABI_ONLY=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+    && sh -lc 'jobs="${NATKIT_CMAKE_BUILD_PARALLEL:-}"; \
+        if [ -z "$jobs" ]; then \
+          detected="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc)"; \
+          jobs=$((detected > 2 ? detected - 2 : 1)); \
+        fi; \
+        cmake --build /workspace/libnatkit/build --target libnatkit-kafka --parallel "$jobs"'
+
+ENV LIBNATKIT_KAFKA_PATH=/workspace/libnatkit/build/libnatkit/core/kafka/src/liblibnatkit-kafka.so
+
+RUN mkdir -p /state
+
+EXPOSE 8786
+
+CMD ["sh", "-lc", "exec python /workspace/libnatkit/scripts/natkit_ml_control_plane.py --host 0.0.0.0 --broker \"${NATKIT_ML_CONTROL_PLANE_BROKER:-natkit-v0-kafka:9092}\" --state-db /state/scheduler.sqlite3 --scratch-root /state/scratch ${NATKIT_ML_CONTROL_PLANE_WORKER_THREADS:+--worker-threads ${NATKIT_ML_CONTROL_PLANE_WORKER_THREADS}} ${NATKIT_ML_CONTROL_PLANE_MAX_WORKER_RESTART_ATTEMPTS:+--max-worker-restart-attempts ${NATKIT_ML_CONTROL_PLANE_MAX_WORKER_RESTART_ATTEMPTS}}"]
