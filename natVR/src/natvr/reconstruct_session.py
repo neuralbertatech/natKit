@@ -743,17 +743,38 @@ def discover_device_ids_for_window(
         direct_assign=args.direct_assign,
         partition=args.partition,
     )
+    # Stop once we scan past the session window (8 frames beyond end_us), NOT just
+    # on idle: the live source publishes continuously, so an idle-only drain would
+    # never terminate (it would chase the live tail forever). We only need the
+    # device(s) active inside [start_us, end_us].
+    device_ids: set[str] = set()
+    idle_polls = max(1, int(args.idle_timeout_s / 0.25))
+    idle_count = 0
+    overrun_streak = 0
+    end_streak_required = 8
     try:
-        frames = drain_historical(consumer.poll, idle_timeout_s=args.idle_timeout_s)
+        while True:
+            item = consumer.poll(timeout=0.25)
+            if item is None:
+                idle_count += 1
+                if idle_count >= idle_polls:
+                    break
+                continue
+            idle_count = 0
+            if not isinstance(item, EmgFrameEnvelope):
+                continue
+            frame_ts_us = int(item.frame.device_ts_us)
+            if start_us <= frame_ts_us <= end_us:
+                device_ids.add(item.frame.device_id)
+            if frame_ts_us > end_us:
+                overrun_streak += 1
+                if overrun_streak >= end_streak_required:
+                    break
+            else:
+                overrun_streak = 0
     finally:
         consumer.close()
 
-    device_ids = {
-        envelope.frame.device_id
-        for envelope in frames
-        if isinstance(envelope, EmgFrameEnvelope)
-        and start_us <= envelope.frame.device_ts_us <= end_us
-    }
     return sorted(device_ids)
 
 
