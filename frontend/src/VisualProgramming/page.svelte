@@ -519,10 +519,11 @@
         }
     }
 
-    // Pick a compute thread slot to run a train job in. Prefer a slot on the
-    // control plane's own (in-process) worker so the trained model + bundle
-    // persist to /models; fall back to any usable slot. Among candidates, pick
-    // the least busy. Returns null if none are usable.
+    // Pick a compute thread slot to run a train job in. Prefer a slot on a
+    // *worker* process (embedded subprocess or remote) rather than the control
+    // plane's own in-process worker: worker slots actually drain their queue and
+    // now persist the model + bundle to the shared /models. Among candidates,
+    // pick the least busy. Returns null if none are usable.
     function pickThreadSlot(): string | null {
         const usable = mlThreadSlots.filter((slot) => {
             const mode = slot.access_mode ?? "shared";
@@ -533,12 +534,12 @@
             );
         });
         if (usable.length === 0) return null;
-        const local = usable.filter(
+        const workerSlots = usable.filter(
             (slot) =>
-                mlControlPlaneWorkerId &&
-                slot.worker_id === mlControlPlaneWorkerId,
+                !mlControlPlaneWorkerId ||
+                slot.worker_id !== mlControlPlaneWorkerId,
         );
-        const pool = local.length > 0 ? local : usable;
+        const pool = workerSlots.length > 0 ? workerSlots : usable;
         const busy = (slot: ThreadSlotSummary) =>
             (slot.queue_depth ?? 0) + (slot.running_job_count ?? 0);
         return [...pool].sort((a, b) => busy(a) - busy(b))[0]?.slot_id ?? null;
