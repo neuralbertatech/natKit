@@ -4041,7 +4041,8 @@
                                     type="button"
                                     class="action-btn"
                                     disabled={cfg.families.length === 0 ||
-                                        cfg.train_runs.length === 0}
+                                        cfg.train_runs.length === 0 ||
+                                        cfg.eval_runs.length === 0}
                                     onclick={() =>
                                         submitTrainJob(selectedTrainNode.config)}
                                 >

@@ -41,7 +41,10 @@
         DataSchemaDescriptor,
         LiveStreamData,
     } from "../StreamViewer/types";
-    import type { RecordedRunSummary } from "../MlPipeline/types";
+    import type {
+        RecordedRunSummary,
+        ThreadSlotSummary,
+    } from "../MlPipeline/types";
     import type { SessionPublishBundleInput } from "../StreamViewer/experiment";
 
     const STATUS_REFRESH_INTERVAL_MS = 500;
@@ -90,6 +93,12 @@
         min_accuracy: number;
         mean_coverage: number;
     } | null>(null);
+    // Phase 5: compute thread slots the control plane advertises (a train job
+    // must target one). Captured from proxied thread_slots pushes so submit can
+    // auto-pick a slot — no manual slot selection in the walk-up flow.
+    let mlThreadSlots = $state<ThreadSlotSummary[]>([]);
+    let mlControlPlaneWorkerId = $state<string | null>(null);
+    let mlControlPlanePrincipalId = $state<string | null>(null);
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     // Phase 4: individual profiles (person -> saved classify graph).
     let profiles = $state<Profile[]>([]);
@@ -468,7 +477,16 @@
                 selected_mean_coverage?: number | null;
             } | null;
             runs?: RecordedRunSummary[];
+            worker_id?: string;
+            principal_id?: string | null;
+            slots?: ThreadSlotSummary[];
         };
+        if (msg.type === "thread_slots") {
+            mlThreadSlots = msg.slots ?? [];
+            mlControlPlaneWorkerId = msg.worker_id ?? null;
+            mlControlPlanePrincipalId = msg.principal_id ?? null;
+            return;
+        }
         if (msg.type === "recorded_runs") {
             // Experiment library (Phase 6): recorded runs discovered by natVR's
             // reconstruct_session, surfaced through the ML proxy.
@@ -501,12 +519,52 @@
         }
     }
 
+    // Pick a compute thread slot to run a train job in. Prefer a slot on the
+    // control plane's own (in-process) worker so the trained model + bundle
+    // persist to /models; fall back to any usable slot. Among candidates, pick
+    // the least busy. Returns null if none are usable.
+    function pickThreadSlot(): string | null {
+        const usable = mlThreadSlots.filter((slot) => {
+            const mode = slot.access_mode ?? "shared";
+            if (mode === "shared") return true;
+            return (
+                !!mlControlPlanePrincipalId &&
+                slot.dedicated_username === mlControlPlanePrincipalId
+            );
+        });
+        if (usable.length === 0) return null;
+        const local = usable.filter(
+            (slot) =>
+                mlControlPlaneWorkerId &&
+                slot.worker_id === mlControlPlaneWorkerId,
+        );
+        const pool = local.length > 0 ? local : usable;
+        const busy = (slot: ThreadSlotSummary) =>
+            (slot.queue_depth ?? 0) + (slot.running_job_count ?? 0);
+        return [...pool].sort((a, b) => busy(a) - busy(b))[0]?.slot_id ?? null;
+    }
+
     // Submit a train_validate job through the backend ML proxy (Phase 5).
     function submitTrainJob(config: import(
         "../StreamViewer/types"
     ).TrainNodeConfig): void {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
+            return;
+        }
+        if (config.eval_runs.length === 0) {
+            trainJobStatus =
+                "error: pick at least one Eval run (you can reuse the training run)";
+            return;
+        }
+        const threadSlotId = pickThreadSlot();
+        if (!threadSlotId) {
+            trainJobStatus =
+                "error: no compute slot available (waiting for the ML control plane / worker)";
+            wsManager.sendMlAction({
+                action: "list_thread_slots",
+                request_id: crypto.randomUUID(),
+            });
             return;
         }
         trainModelPath = null;
@@ -516,6 +574,7 @@
         wsManager.sendMlAction({
             action: "start_train_validate_job",
             request_id: crypto.randomUUID(),
+            thread_slot_id: threadSlotId,
             train_runs: config.train_runs,
             eval_runs: config.eval_runs,
             families: config.families,
@@ -639,6 +698,12 @@
                     });
                     listStreamGraphs();
                     listProfiles();
+                    // Ask the control plane (via the proxy) for compute slots so a
+                    // train submit can auto-pick one; periodic pushes keep it fresh.
+                    wsManager?.sendMlAction({
+                        action: "list_thread_slots",
+                        request_id: `thread-slots:${Date.now()}`,
+                    });
                     // Re-issue every live subscription that was dropped because
                     // the socket wasn't open yet (subscribeToStream fires without
                     // waiting for the connection), or lost across a reconnect.
