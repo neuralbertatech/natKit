@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit ADR 002 - Site Auth Bootstrap</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; margin-bottom: 10px; }
+  h3 { font-size: 16px; margin-bottom: 8px; }
+  p + p, ul, table { margin-top: 10px; }
+  .eyebrow, .meta, code { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  ul { padding-left: 20px; }
+  li { margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit ADR 002 · auth · users · June 30 2026</div>
+  <h1>Local User Accounts With Bootstrap Admin Creation</h1>
+  <p class="meta">
+    Status: accepted for the current browser backend. First surface:
+    <code>libnatkit-natkit-backend</code> and the frontend SPA shell.
+  </p>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Introduce local site users before broadening more operator-facing features.</li>
+      <li>Use a cookie-backed session on the Drogon backend for both HTTP and WebSocket access.</li>
+      <li>Require bootstrap of the first enabled admin account before the site can be used.</li>
+      <li>Support two bootstrap modes: a random backend-logged password or automatic first-admin creation.</li>
+      <li>Expose a small admin panel so enabled admins can create, update, disable, and delete users.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Context</h2>
+    <p>
+      The Stream Viewer and related browser tools have become operational control surfaces rather
+      than passive demos. Existing APIs and the browser WebSocket currently assume an anonymous
+      caller, which is enough for early prototyping but weakens any future scheduling, ownership,
+      or audit model.
+    </p>
+    <p>
+      ADR 001 already called out future authentication as an architectural dependency for slot
+      ownership and worker scheduling. This ADR adds the first concrete user concept so later
+      authorization does not have to be retrofitted into a larger, more fragmented API surface.
+    </p>
+  </section>
+
+  <section>
+    <h2>Bootstrap model</h2>
+    <table>
+      <tr>
+        <th>Mode</th>
+        <th>Behavior</th>
+      </tr>
+      <tr>
+        <td><code>password</code></td>
+        <td>The backend generates or accepts a bootstrap password and logs it. The first admin creation request must present that password.</td>
+      </tr>
+      <tr>
+        <td><code>auto_admin</code></td>
+        <td>If no users exist, the first bootstrap request directly creates the initial admin and signs that browser in.</td>
+      </tr>
+    </table>
+    <p>
+      The default is <code>password</code> because it prevents silent takeover when a shared dev
+      backend becomes reachable before an operator is ready.
+    </p>
+  </section>
+
+  <section>
+    <h2>Authorization scope</h2>
+    <ul>
+      <li>All existing browser backend API routes require an authenticated session.</li>
+      <li>The Stream Viewer WebSocket handshake uses the same session cookie and rejects anonymous clients.</li>
+      <li>User management routes require an enabled admin account.</li>
+      <li>The system must never allow the last enabled admin to be disabled, demoted, or deleted.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Initial constraints</h2>
+    <ul>
+      <li>User state is stored locally in a backend-managed JSON file. This is acceptable for the current single-process deployment shape, but not the long-term clustered model.</li>
+      <li>Password hashing is intentionally lightweight compared with a dedicated identity service. It is adequate for the current local-admin slice, but not the final identity architecture.</li>
+      <li>No per-feature RBAC exists yet beyond authenticated user versus admin.</li>
+      <li>ML control-plane principal ownership still remains a separate concept and is not unified by this ADR yet.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Next implications</h2>
+    <ul>
+      <li>When worker-slot ownership moves fully into authenticated user identity, this site account can become the principal source instead of placeholder strings.</li>
+      <li>Once backend state becomes multi-node, user and session persistence will need a shared store instead of local JSON state.</li>
+      <li>Operator-visible audit events should eventually record the authenticated username for control actions such as transform creation, drain/resume, and job submission.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

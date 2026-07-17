@@ -6,7 +6,7 @@
     import * as Command from "$lib/components/ui/command";
     import * as Popover from "$lib/components/ui/popover";
     import { Button } from "$lib/components/ui/button";
-    import { cn } from "$lib/utils.ts";
+    import { cn } from "$lib/utils.js";
     import { tick } from "svelte";
     import {
         SensorPosition,
@@ -26,7 +26,6 @@
         stream_position_mapping: SvelteMap<number, SensorPosition>;
     } = $props();
 
-    console.log("stream selection", stream_position_mapping);
     //let stream_position_mapping_context = $state(new Map<number, SensorPosition>());
     //setContext("stream_position_mapping", stream_position_mapping_context);
     //console.log("Set stream thing ", stream_position_mapping_context);
@@ -196,8 +195,11 @@
         ),
     );
 
-    function sensor_checkbox_clicked(state: boolean, index: number) {
-        if (state === false) {
+    function sensor_checkbox_clicked(
+        state: boolean | "indeterminate",
+        index: number,
+    ) {
+        if (state !== true) {
             dropdown_enabled[index] = false;
             dropdown_open[index] = false;
             dropdown_values[index] = SensorPosition.None;
@@ -244,7 +246,7 @@
                     >
                         <Checkbox
                             bind:checked={dropdown_enabled[index]}
-                            onCheckedChange={(state: boolean) =>
+                            onCheckedChange={(state) =>
                                 sensor_checkbox_clicked(state, index)}
                         />
                         <Accordion.Trigger>{stream.id}</Accordion.Trigger>

@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>natKit Project Context</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #102033;
+      --muted: #536273;
+      --line: #d7e0ea;
+      --accent: #0b67d0;
+      --accent-soft: #eaf3ff;
+      --ok: #0f7b49;
+      --warn: #a76400;
+      --code: #0f172a;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+
+    .hero {
+      background: linear-gradient(180deg, #0f1d32 0%, #152844 100%);
+      color: #f8fbff;
+      border-radius: 10px;
+      padding: 28px 28px 24px;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      color: #cbd8ea;
+      max-width: 900px;
+    }
+
+    .meta {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.09);
+      color: #dce8f8;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px 18px 16px;
+    }
+
+    .panel h2, .panel h3 {
+      margin: 0 0 10px;
+      line-height: 1.2;
+    }
+
+    .panel h2 { font-size: 18px; }
+    .panel h3 { font-size: 15px; }
+
+    .toc ul,
+    .flat-list,
+    .tree,
+    .notes {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .toc li,
+    .flat-list li,
+    .tree li,
+    .notes li {
+      margin: 6px 0;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    .section:last-child {
+      margin-bottom: 0;
+    }
+
+    .section p {
+      margin: 0 0 12px;
+      color: var(--text);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .callout {
+      background: var(--accent-soft);
+      border: 1px solid #c9defd;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 12px 0 0;
+    }
+
+    .status-ok { color: var(--ok); font-weight: 700; }
+    .status-warn { color: var(--warn); font-weight: 700; }
+
+    pre, code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      color: var(--code);
+    }
+
+    pre {
+      margin: 10px 0 0;
+      padding: 12px 14px;
+      overflow: auto;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 10px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    @media (max-width: 860px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>natKit Project Context</h1>
+      <p>
+        Maintainer and onboarding context for the natKit repository. natKit should be understood as
+        a channel-based data platform built around C/C++ core libraries, Kafka-backed replayable
+        streams, and Svelte frontend tools, with <code>natVR/</code>, <code>natKit-IMU/</code>,
+        and <code>natMuse/</code> as first-class example projects.
+      </p>
+      <div class="meta">
+        <span class="chip">Repo: /home/zach/code/natKit</span>
+        <span class="chip">Updated for current tree</span>
+        <span class="chip">As of 2026-06-29</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <aside class="panel toc">
+        <h2>Contents</h2>
+        <ul>
+          <li><a href="#summary">Project Summary</a></li>
+          <li><a href="#repo-map">Repository Map</a></li>
+          <li><a href="#architecture">Architecture</a></li>
+          <li><a href="#channels">Channels and Streams</a></li>
+          <li><a href="#schemas">Schemas and Records</a></li>
+          <li><a href="#languages">Language Strategy</a></li>
+          <li><a href="#frontend">Frontend</a></li>
+          <li><a href="#backend">Backend</a></li>
+          <li><a href="#examples">Example Projects</a></li>
+          <li><a href="#workflows">Core Workflows</a></li>
+          <li><a href="#entrypoints">Important Entrypoints</a></li>
+          <li><a href="#constraints">Known Constraints</a></li>
+        </ul>
+      </aside>
+
+      <main>
+        <section id="summary" class="panel section">
+          <h2>Project Summary</h2>
+          <p>
+            <strong>natKit</strong> is a hardware, data, and analysis platform. It started as a
+            platform for BCI and other bio-sensor data, and has been expanding toward a broader
+            IoT-like system where any source that can generate meaningful data is in scope.
+          </p>
+          <p>
+            The framework can be broken down into three main segments:
+            <strong>sensor</strong>, <strong>processing</strong>, and
+            <strong>visualization</strong>. Data usually flows left-to-right through those stages,
+            but control traffic can also flow right-to-left when a user or service needs to change
+            sensor configuration or trigger remote actions.
+          </p>
+          <p>
+            The target audience is people who work with and analyze data: academics doing research,
+            engineers building sensing systems, and curious individuals who want to inspect and
+            process their own data.
+          </p>
+          <p>
+            The core unit of the framework is the <strong>channel</strong>. A channel is a bundle
+            of related streams that together describe one source of data or one derived processing
+            result. Channels are meant to preserve each stage of data handling instead of mutating
+            prior results in place.
+          </p>
+          <ul class="flat-list">
+            <li>A source such as a sensor typically creates one new channel</li>
+            <li>A transform such as filtering or featurization should create a new derived channel</li>
+            <li>Metadata, markers, logs, and control traffic are side facets of the same channel model</li>
+            <li>Immutable Kafka-backed records allow historical replay through the same path as live processing</li>
+          </ul>
+          <div class="callout">
+            The rule that matters most is simple: <strong>timestamps are the join contract</strong>.
+            With NTP-synchronized clocks, payload timestamps should be treated as canonical for
+            channel stitching and sensor fusion. Kafka receive time is diagnostic only.
+          </div>
+        </section>
+
+        <section id="repo-map" class="panel section">
+          <h2>Repository Map</h2>
+          <p>
+            Read through <code>ADR/</code> before making architecture-sensitive changes. Those
+            records capture the current direction for worker execution, auth, shared state, and
+            compute-policy decisions that may not be obvious from older code paths alone.
+          </p>
+          <ul class="tree">
+            <li><code>frontend/</code>: Svelte applications, including Stream Viewer and ML-facing UI</li>
+            <li><code>libnatkit/</code>: primary C/C++ framework code for transport, Kafka integration, backend services, tools, and host-side libraries</li>
+            <li><code>libnatkit/lib/libnatkit-core/</code>: core libnatkit fragment for shared primitives, stream contracts, serialization, and other functionality that must stay usable in constrained microcontroller environments as well as larger hosts</li>
+            <li><code>natVR/</code>: first-class EMG/VR example project built on natKit infrastructure</li>
+            <li><code>natKit-IMU/</code>: first-class IMU example project and related device work</li>
+            <li><code>natMuse/</code>: first-class Muse example project</li>
+            <li><code>natKit-hand-tracking/</code>: hand-tracking project subtree</li>
+            <li><code>ADR/</code>: architecture decision records for platform changes</li>
+            <li><code>plans/</code>: HTML planning documents for ongoing work</li>
+          <li><code>docker-compose.yml</code> and overrides: local Kafka, MQTT, and supporting infrastructure</li>
+          <li><code>docker-compose.dev.yml</code>: local frontend, backend, ML control-plane, and optional worker development services</li>
+          </ul>
+        </section>
+
+        <section id="architecture" class="panel section">
+          <h2>Architecture</h2>
+          <h3>System shape</h3>
+          <pre>sensor/device -> gateway/bridge -> Kafka channel streams -> processing workers -> frontend / downstream clients
+user / frontend / service -> backend control plane -> gateway/bridge -> sensor/device</pre>
+
+          <p>
+            The root stack currently revolves around Kafka, Mosquitto, NTP, and bridge services
+            that normalize ingress from device-facing protocols into natKit channel streams. The
+            local development setup is still often single-node, but the intended direction is
+            clustered deployment rather than permanent single-box operation.
+          </p>
+
+          <h3>Channel lifecycle</h3>
+          <p>
+            A channel is normally created for each source of data, typically a sensor. Each time a
+            channel is transformed, for example by running a band-pass filter on source data, the
+            result should become a whole new channel. That design preserves every step of the data
+            lineage and allows different kinds of processing and analysis to run in parallel over
+            the same upstream history.
+          </p>
+
+          <h3>Timing ownership</h3>
+          <p>
+            The NTP server is important infrastructure, not an incidental convenience. Temporal
+            accuracy matters when multiple sensors need to be fused or compared. NTP is the current
+            baseline for synchronization, but future workloads will likely need tighter
+            synchronization mechanisms in some environments.
+          </p>
+        </section>
+
+        <section id="channels" class="panel section">
+          <h2>Channels and Streams</h2>
+          <p>
+            natKit works with bundles of related streams, and that bundle should be called a
+            <strong>channel</strong>. Each stream inside a channel provides a different facet of
+            information about the same source or derived data product.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Facet</th>
+                <th>Role</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>DATA</code></td>
+                <td>Primary payload stream</td>
+                <td>Typically raw sensor data or a downstream derivative of earlier source data</td>
+              </tr>
+              <tr>
+                <td><code>META</code></td>
+                <td>Metadata stream</td>
+                <td>Describes the channel, hardware, sessions, and other cluster-level context</td>
+              </tr>
+              <tr>
+                <td><code>MARKERS</code></td>
+                <td>Timestamped event annotations</td>
+                <td>Used to indicate that something happened during a given timestamp; some existing code paths still use the singular enum/topic form <code>Marker</code></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>
+            There are also extensions to the stream types that can be enabled when a given channel
+            or subsystem needs them.
+          </p>
+          <ul class="flat-list">
+            <li><strong>Execution extension</strong>: streams used for executing remote commands on other devices</li>
+            <li><strong>Hardware extension</strong>: streams for hardware configuration and hardware state</li>
+            <li><strong>Logging extension</strong>: streams for logs and heartbeats, including <code>LOGGING_HEARTBEAT</code> traffic that indicates a source is still connected</li>
+          </ul>
+          <p>
+            The purpose of the channel model is to keep these facets separate without losing
+            coherence. Consumers can subscribe only to what they need, while still reconstructing a
+            cohesive stream of information for one source or one processing stage.
+          </p>
+        </section>
+
+        <section id="schemas" class="panel section">
+          <h2>Schemas and Records</h2>
+          <p>
+            Data schemas are important because they define how messages are serialized, sent, and
+            then deserialized again. They are one of the central contracts that let firmware,
+            backends, workers, and frontends exchange data coherently.
+          </p>
+          <p>
+            Topic naming currently follows the natKit convention
+            <code>Type-StreamId-Serialization-Schema</code>. The broader direction is that message
+            types should be rooted in C++ classes in <code>libnatkit-core</code>, with serialization
+            format treated as an implementation detail that can change without changing the higher
+            level record model.
+          </p>
+          <p>
+            For metadata in particular, the <code>META</code> stream is expected to carry a family
+            of typed records rather than a single hard-coded payload. The intended model is a
+            registry of C++ record types where each metadata structure is associated with an
+            identifier and can be serialized in different formats without changing its conceptual
+            ownership.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Concern</th>
+                <th>Primary schema/topic</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Raw source data</td>
+                <td><code>Data-...-Json-&lt;Schema&gt;</code></td>
+                <td>Primary channel payloads such as EMG, IMU, EEG, or derived feature/classification outputs</td>
+              </tr>
+              <tr>
+                <td>Metadata records</td>
+                <td><code>Meta-...-Json-MetaRecord</code></td>
+                <td>Generic metadata carrier; session, hardware, and other channel-scoped records should be rooted in core C++ types</td>
+              </tr>
+              <tr>
+                <td>Markers</td>
+                <td><code>Marker-...-Json-MarkerEventV1</code></td>
+                <td>Timestamped annotations for session boundaries, cues, state changes, and other events</td>
+              </tr>
+              <tr>
+                <td>Heartbeats and logs</td>
+                <td><code>LoggingHeartbeat-...-...</code> and related logging extension topics</td>
+                <td>Health and debug traffic for source liveness and operational tracing</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>Core ownership</h3>
+          <ul class="flat-list">
+            <li><code>libnatkit-core</code> should own stream types, topic parsing, schema registration, and record definitions</li>
+            <li>Higher-level libraries should reuse those contracts instead of re-declaring them</li>
+            <li>Timestamp-based stitching and interleaving should be library functionality rather than ad hoc script logic</li>
+            <li>Bindings should expose those same core types into Python, C#, and other environments when needed</li>
+          </ul>
+        </section>
+
+        <section id="languages" class="panel section">
+          <h2>Language Strategy</h2>
+          <p>
+            The bulk of the framework is, and should remain, C/C++ for server, backend, and
+            embedded code, and Svelte for frontend interfaces. That is the intended center of
+            gravity for the platform.
+          </p>
+          <p>
+            Python may continue to exist around ML and workflow glue, but core framework logic
+            should stay in the shared library layer when practical. When other languages are
+            necessary, the preferred approach is bindings instead of duplicated implementations.
+          </p>
+          <ul class="flat-list">
+            <li>Use C/C++ for core framework behavior, schemas, transport, processing, and embedded support</li>
+            <li>Use Svelte for operator-facing and browser-facing tools</li>
+            <li>Use Python where it materially helps and does not pull core ownership away from the libraries</li>
+            <li>For Unity/VR and similar integrations, prefer C# bindings into shared code instead of reimplementing the same logic</li>
+          </ul>
+        </section>
+
+        <section id="frontend" class="panel section">
+          <h2>Frontend</h2>
+          <p>
+            The main live data surface today is <code>frontend/src/StreamViewer/</code>. It is no
+            longer just a passive viewer; it is also part of the control plane for experiment
+            publication, transform creation, and operator workflows around live channels.
+          </p>
+          <p>
+            The current Stream Viewer has three active tabs:
+          </p>
+          <ul class="flat-list">
+            <li><strong>Live</strong>: stream list, subscription control, and live sensor views</li>
+            <li><strong>Experiment</strong>: browser-owned EMG experiment flow that publishes session metadata and markers</li>
+            <li><strong>Transforms</strong>: request derived EMG transform streams from the backend</li>
+          </ul>
+          <p>
+            The browser WebSocket manager lives in <code>frontend/src/StreamViewer/websocket.ts</code>.
+            Stream state orchestration lives in <code>frontend/src/StreamViewer/page.svelte</code>.
+            The browser does not speak Kafka directly; it uses the backend WebSocket layer as its
+            access point into live channel traffic and experiment publication.
+          </p>
+        </section>
+
+        <section id="backend" class="panel section">
+          <h2>Backend</h2>
+          <p>
+            The current browser backend is the Drogon executable under
+            <code>libnatkit/libnatkit/tools/src/main/cxx/libnatkit/tools/</code>.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>NatKitBackend.cpp</code></td>
+                <td>Process entrypoint, HTTP handlers, listener setup, and broker initialization</td>
+              </tr>
+              <tr>
+                <td><code>StreamViewerWebSocket.cpp</code></td>
+                <td>WebSocket controller, Kafka subscriptions, session publication path, and EMG transforms</td>
+              </tr>
+              <tr>
+                <td><code>StreamViewerWebSocket.hpp</code></td>
+                <td>Controller interface and supported browser-facing operations</td>
+              </tr>
+              <tr>
+                <td><code>libnatkit/scripts/natkit_ml_control_plane.py</code></td>
+                <td>ML control plane service and the first worker-slot scheduling surface for queued processing jobs</td>
+              </tr>
+              <tr>
+                <td><code>libnatkit/scripts/natkit_ml_worker_operator.py</code></td>
+                <td>Operator-facing worker inspection plus drain/resume wrapper around the ML control-plane WebSocket protocol</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>Current notable WebSocket actions include:</p>
+          <ul class="flat-list">
+            <li><code>get_streams</code></li>
+            <li><code>subscribe</code> / <code>unsubscribe</code></li>
+            <li><code>publish_session_bundle</code></li>
+            <li><code>create_emg_transform</code></li>
+            <li><code>list_emg_transforms</code> / <code>stop_emg_transform</code></li>
+          </ul>
+
+          <p>Current notable ML control-plane actions include:</p>
+          <ul class="flat-list">
+            <li><code>list_recorded_runs</code></li>
+            <li><code>list_workers</code></li>
+            <li><code>list_thread_slots</code></li>
+            <li><code>list_jobs</code></li>
+            <li><code>start_train_validate_job</code></li>
+            <li><code>assign_thread_slots</code> / <code>release_thread_slots</code></li>
+            <li><code>update_worker_status</code> / <code>wait_worker_drain_ready</code></li>
+            <li><code>register_worker</code> / <code>worker_heartbeat</code> / <code>sync_worker_slots</code> / <code>unregister_worker</code></li>
+            <li><code>claim_worker_slot_job</code> / <code>report_worker_job_state</code></li>
+            <li><code>update_job</code> / <code>stop_job</code> / <code>recover_job</code> / <code>recover_worker</code></li>
+          </ul>
+
+          <p>
+            The backend port defaults to <code>7409</code> and can be overridden with
+            <code>NATKIT_BACKEND_PORT</code>.
+          </p>
+          <p>
+            In the current local development stack, the ML control plane is a separate
+            service on <code>8786</code> rather than part of the Drogon backend process.
+          </p>
+          <p>
+            The compose override can also start an opt-in standalone ML worker profile that
+            connects back to the control plane over the container network and mirrors a
+            small remote slot inventory for scheduler testing. That override now forwards
+            runtime environment overrides such as
+            <code>NATKIT_ML_CONTROL_PLANE_WORKER_THREADS</code> into the dedicated control
+            plane container, so the stack can run in an external-worker-only mode with zero
+            embedded execution slots while standalone workers mirror the scheduler-visible
+            slot inventory.
+          </p>
+          <p>
+            The backend direction is to move long-running processing off the browser backend
+            process and onto worker nodes with stable logical thread slots. The current ML control
+            plane is now the first implementation surface for that scheduler model.
+          </p>
+          <p>
+            The current control plane can also persist slot ownership and job history to a JSON
+            snapshot file or a SQLite state database, exposes embedded worker summaries with
+            heartbeat timestamps and slot capacity rollups, enforces placeholder-principal
+            ownership for job mutation, supports explicit slot release plus safer reassignment
+            rules when active work is present, now requires jobs to target slots already assigned
+            to the submitting principal, and now has an explicit external worker registry plus
+            heartbeat actions so separate worker processes can start appearing in the control-plane
+            summary before slot ownership fully moves out of process. The SQLite-backed state path
+            now also persists scheduler rows through incremental per-row upserts with key-only
+            stale-row probes instead of rereading entire table bodies before each save. External
+            workers can now also
+            mirror slot inventory into the scheduler and claim/report queued ML jobs for those
+            slots through the control plane, and
+            <code>libnatkit/scripts/natkit_ml_worker.py</code> now provides the first standalone
+            runtime for that path, including automatic reconnect with deferred terminal-state
+            replay after transient disconnects plus running-state resync for surviving in-flight
+            jobs after a control-plane reconnect. The remote-worker protocol now also carries a
+            per-process worker session id so the control plane can distinguish a normal reconnect
+            from a true worker-process restart; when that restart happens under the same worker id,
+            the control plane requeues the worker's in-flight jobs for a clean rerun instead of
+            treating them as silently continued execution. Job state now also carries a persisted
+            restart count so those reruns are visible in scheduler payloads and the ML Pipeline UI,
+            and worker plus slot summaries now expose cumulative restart-attempt counts for a
+            coarse instability signal above the per-job detail. Automatic reruns are now bounded by
+            a control-plane restart-attempt cap, and when that cap is exhausted the job is marked
+            failed so the existing ML Pipeline job-status and error-banner flow acts as the current
+            user notification path. The control plane and ML Pipeline frontend now also expose
+            explicit worker drain/resume control so deployment or operator actions can stop new job
+            claims on a worker without forcibly interrupting work that is already running, and
+            worker summaries now report whether a draining worker still has active work attached or
+            is ready to stop cleanly. The control plane now also exposes an explicit
+            <code>wait_worker_drain_ready</code> action so deployment tooling can block on that
+            state instead of polling the worker list manually, and
+            <code>libnatkit/scripts/natkit_ml_worker_operator.py</code> now wraps that
+            worker inspection plus drain/resume flow in a small operator CLI for scripts and
+            manual maintenance work, including repeated-worker maintenance commands for coordinated
+            multi-worker drain or resume operations plus a fail-fast mode that stops on the first
+            hard request error during those coordinated runs. That CLI now also accepts newline-
+            delimited worker-id files so deployment tooling can pass generated worker inventories
+            without expanding long repeated flag lists in shell, and it now also accepts
+            structured JSON worker manifests with optional group filtering for richer rollout
+            metadata handoff. The operator CLI now also writes optional structured result JSON
+            artifacts, including resolved requested worker ids, the subset actually processed
+            before any fail-fast stop, aggregate exit state, and per-worker outcomes, so
+            deployment automation can archive maintenance results without scraping stdout. When the
+            control plane reloads persisted state after a restart, it now also writes back any
+            normalized recovered in-flight job state immediately, so shared SQLite readers see the
+            same recoverable-or-failed view that the restarted control plane is serving from
+            memory. The external-worker protocol now also requires the active
+            <code>worker_session_id</code> on worker heartbeats, slot-inventory sync, job-claim
+            requests, job-state reports, and unregister requests whenever a worker already has a
+            recorded live session, so stale or competing processes cannot keep mutating scheduler
+            state after a newer worker session has taken ownership.
+            The ML Pipeline frontend now also exposes
+            principal-scoped slot counts plus filters for all, mine, claimable, submittable,
+            and active slots. The remaining gap is deployment and shared
+            scheduler-state behavior, plus richer recovery for in-flight work across control-plane
+            restarts, so external workers become the default execution mode rather than an
+            incremental add-on beside the embedded runner. Running ML jobs stop at pipeline
+            checkpoints rather than always running to completion after a stop request.
+          </p>
+          <p>
+            The Stream Viewer EMG transform path is also starting to adopt that model. It now has
+            explicit local worker-slot capacity, a listable set of active transform workers, and a
+            stop action instead of only spawning detached transform threads with no visible limit.
+            The UI and protocol also expose per-transform slot ids plus lightweight activity data
+            such as frames processed and last-frame timestamps, with the frontend polling live
+            transform state while active work is present. The local worker summary now also reports
+            available slots, heartbeat time, and a coarse worker status.
+          </p>
+        </section>
+
+        <section id="examples" class="panel section">
+          <h2>Example Projects</h2>
+          <p>
+            <code>natVR/</code>, <code>natKit-IMU/</code>, and <code>natMuse/</code> are all
+            first-class example projects that leverage shared natKit infrastructure.
+          </p>
+
+          <h3>natVR</h3>
+          <p>
+            <code>natVR/</code> is the EMG/VR project-local package. It is intentionally separate
+            from shared transport infrastructure so EMG- and Quest-specific assumptions do not leak
+            into generic natKit code too early.
+          </p>
+          <p>
+            The natVR Python scripts still exist and remain useful for some glue and current
+            workflows, but they are not the preferred long-term home for core ML logic. Since ONNX
+            support has been added to libnatkit, the architectural direction is to move training
+            and classification ownership toward shared library code and bindings rather than growing
+            more Python-only implementations.
+          </p>
+
+          <h3>Important natVR commands</h3>
+          <ul class="flat-list">
+            <li><code>natvr-emg-record</code>: record raw EMG from Kafka to Parquet</li>
+            <li><code>natvr-emg-capture</code>: cue-driven labeled capture</li>
+            <li><code>natvr-emg-publish-session</code>: publish metadata and session lifecycle markers</li>
+            <li><code>natvr-emg-reconstruct</code>: rebuild a historical session from Kafka</li>
+            <li><code>natvr-emg-featurize</code>: convert source data plus markers into feature windows</li>
+            <li><code>natvr-emg-calibrate</code>: build normalization profiles</li>
+            <li><code>natvr-emg-train</code>: train models in the current natVR workflow</li>
+            <li><code>natvr-emg-classifier</code>: live classifier against Kafka inputs</li>
+            <li><code>natvr-emg-classify-replay</code>: offline replay classifier</li>
+            <li><code>natvr-emg-replay-eval</code>: compare replay classification against cue labels</li>
+            <li><code>natvr-hand-state-bridge</code>: Kafka hand-state to WebSocket bridge</li>
+          </ul>
+
+          <h3>Other example projects</h3>
+          <ul class="flat-list">
+            <li><code>natKit-IMU/</code>: IMU-oriented sensing and device work</li>
+            <li><code>natMuse/</code>: Muse-oriented acquisition and analysis built on the same transport and schema model</li>
+          </ul>
+        </section>
+
+        <section id="workflows" class="panel section">
+          <h2>Core Workflows</h2>
+          <h3>Browser experiment to training data</h3>
+          <pre>1. Open Stream Viewer
+2. Select an EMG source channel
+3. Run the EMG experiment flow
+4. Frontend publishes session metadata and marker records into channel side streams
+5. Raw EMG remains on its source data stream
+6. Reconstruct the session by stitching source data, metadata, and markers on timestamps
+7. Featurize or otherwise transform into derived channels or offline artifacts
+8. Train, calibrate, classify, or replay against the same immutable record history</pre>
+
+          <h3>Reconstruction flow</h3>
+          <p>
+            Reconstruction is required because the primary source data stream is source-scoped while
+            session and labeling context is carried in metadata and marker side streams. The
+            reconstruction path:
+          </p>
+          <ul class="flat-list">
+            <li>reads metadata records for the target session or channel context</li>
+            <li>reads the marker stream for the same context</li>
+            <li>derives the relevant time window from session markers and timestamps</li>
+            <li>scans the source data stream and joins records by producer time</li>
+            <li>trims or interleaves records into a coherent reconstructed view</li>
+            <li>writes outputs that the rest of the processing and training stack can consume</li>
+          </ul>
+
+          <h3>Timestamp alignment rule</h3>
+          <p>
+            Marker stitching, reconstruction, replay, feature labeling, and cross-stream
+            interleaving all align on producer timestamps such as <code>device_ts_us</code> and
+            <code>emitted_at_us</code>. Kafka receive time remains diagnostic only.
+          </p>
+        </section>
+
+        <section id="entrypoints" class="panel section">
+          <h2>Important Entrypoints</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Why it matters</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>frontend/src/StreamViewer/page.svelte</code></td>
+                <td>Frontend root for live streams, experiments, and transform creation</td>
+              </tr>
+              <tr>
+                <td><code>frontend/src/StreamViewer/EmgExperiment.svelte</code></td>
+                <td>Browser-owned cue session capture and session bundle publication</td>
+              </tr>
+              <tr>
+                <td><code>frontend/src/StreamViewer/EmgTransforms.svelte</code></td>
+                <td>Derived EMG stream creation UI</td>
+              </tr>
+              <tr>
+                <td><code>libnatkit/lib/libnatkit-core/include/libnatkit-core.hpp</code></td>
+                <td>Shared core schema, stream, and serialization contract definitions</td>
+              </tr>
+              <tr>
+                <td><code>libnatkit/libnatkit/tools/src/main/cxx/libnatkit/tools/StreamViewerWebSocket.cpp</code></td>
+                <td>Browser backend behavior, including subscriptions, transforms, and session publishing</td>
+              </tr>
+              <tr>
+                <td><code>natVR/src/natvr/topics.py</code></td>
+                <td>Current topic derivation rules for natVR-side workflows</td>
+              </tr>
+              <tr>
+                <td><code>natVR/src/natvr/models.py</code></td>
+                <td>Python payload models used in existing natVR workflows</td>
+              </tr>
+              <tr>
+                <td><code>natVR/src/natvr/reconstruct_session.py</code></td>
+                <td>Kafka-to-offline session reconstruction path</td>
+              </tr>
+              <tr>
+                <td><code>natVR/src/natvr/featurize.py</code></td>
+                <td>Conversion from reconstructed session data into feature windows</td>
+              </tr>
+              <tr>
+                <td><code>natVR/src/natvr/train_model.py</code></td>
+                <td>Current natVR model training entrypoint</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="constraints" class="panel section">
+          <h2>Known Constraints</h2>
+          <ul class="notes">
+            <li>
+              <span class="status-warn">Local broker caveat:</span>
+              the current single-broker local stack has consumer-group limitations around
+              <code>__consumer_offsets</code>. Several smoke flows use direct partition assignment.
+            </li>
+            <li>
+              <span class="status-ok">Schema ownership:</span>
+              message types should remain rooted in <code>libnatkit-core</code>, with other
+              languages consuming bindings rather than reimplementing contracts.
+            </li>
+            <li>
+              <span class="status-ok">Channel replay model:</span>
+              immutable Kafka records are a feature. They are what allow live and historical
+              processing to converge on the same execution path.
+            </li>
+            <li>
+              <span class="status-warn">Do not join on Kafka receive time</span> except for diagnostics.
+            </li>
+            <li>
+              Frontend and backend have both grown beyond a passive viewer; the Stream Viewer is now
+              also a control plane for experiment publication and derived stream creation.
+            </li>
+            <li>
+              The framework still uses many single-node components today, but the target is larger:
+              multi-node Kafka clusters storing channels, worker nodes processing channels, and
+              multiple protocol gateways such as MQTT, BLE, cellular, LoRa, or other ingress paths.
+            </li>
+            <li>
+              The intended deployment ceiling is larger than a single lab machine. The framework
+              should eventually scale to environments such as university departments with multiple
+              brokers, workers, and gateways.
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

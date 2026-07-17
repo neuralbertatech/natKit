@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit ADR 001 - Worker Node Processing</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p { margin: 10px 0 0; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, code, pre, .status {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 900px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    margin-top: 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin-top: 12px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  pre {
+    margin: 12px 0 0;
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit ADR 001 · backend · workers · June 29 2026</div>
+  <h1>Worker-Node Execution With User-Assignable Thread Slots</h1>
+  <p class="subtitle">
+    Move long-running processing out of the browser backend process and into
+    worker nodes that expose a fixed set of logical thread slots. Each worker
+    node defaults its slot count to the machine thread count, allows slots to be
+    assigned to future users, and schedules jobs by slot with priority, queue
+    visibility, and utilization reporting.
+  </p>
+  <div class="meta">
+    Status: accepted for incremental implementation. First surface:
+    <code>libnatkit/scripts/natkit_ml_control_plane.py</code> and
+    <code>frontend/src/MlPipeline/</code>.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Use worker nodes for backend processing instead of spawning ad hoc threads inside the browser backend.</li>
+      <li>Model user-visible execution lanes as stable logical <code>thread_slot_id</code> values, not raw OS thread identities.</li>
+      <li>Default the worker slot count to <code>std::thread::hardware_concurrency()</code> or the host equivalent, with an explicit override.</li>
+      <li>Allow multiple jobs to be assigned to a slot through queueing, while running at most one job at a time per slot in the initial design.</li>
+      <li>Require job creation flows to name a target slot once slot ownership exists in the UI.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Context</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>What exists now</h3>
+        <ul>
+          <li>The Drogon backend still performs some processing in-process.</li>
+          <li>EMG transform creation starts local worker threads in the WebSocket server.</li>
+          <li>The ML control plane already owns job orchestration, but job state is still process-local.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Why change</h3>
+        <ul>
+          <li>The project direction already assumes clustered workers and replayable Kafka-backed processing.</li>
+          <li>Per-process thread spawning does not give durable ownership, capacity accounting, or slot visibility.</li>
+          <li>User-facing scheduling requires a stable resource model that survives reconnects and supports future authentication.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>The existing ML pipeline is the most practical first implementation path.</li>
+          <li>We do not have users yet, so owner assignment must be designed before auth exists.</li>
+          <li>The first slice should avoid forcing a full cluster-state store redesign in one step.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Execution Model</h2>
+    <pre>frontend / service
+  -> control plane
+    -> worker node
+      -> thread slot queue
+        -> job runner
+
+worker node
+  -> slot-1
+  -> slot-2
+  -> ...
+  -> slot-N  (N defaults to machine thread count)</pre>
+    <p>
+      A slot is a logical scheduling lane. It has stable identity, owner
+      metadata, queue state, and utilization metrics. The runtime may back a
+      slot with different pool workers across restarts, but the product surface
+      stays stable.
+    </p>
+  </section>
+
+  <section>
+    <h2>Why Logical Slots Instead Of Raw Threads</h2>
+    <table>
+      <tr>
+        <th>Option</th>
+        <th>Result</th>
+        <th>Decision</th>
+      </tr>
+      <tr>
+        <td>Expose OS thread ids</td>
+        <td>Unstable across restarts, awkward for ownership, poor UX</td>
+        <td>Rejected</td>
+      </tr>
+      <tr>
+        <td>Expose logical slot ids</td>
+        <td>Stable identifiers, easy ownership, clean queue semantics</td>
+        <td>Accepted</td>
+      </tr>
+      <tr>
+        <td>Hide execution lanes entirely</td>
+        <td>Removes the user's ability to intentionally place work</td>
+        <td>Rejected</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Initial Scheduling Semantics</h2>
+    <ul>
+      <li>A worker node creates <code>N</code> slots by default, where <code>N</code> equals the machine thread count.</li>
+      <li>Each slot runs one job at a time in the initial implementation.</li>
+      <li>Each slot may hold multiple assigned jobs through a priority queue.</li>
+      <li>Priority sorts first, then FIFO inside equal priority.</li>
+      <li>Queued jobs may be reprioritized or cancelled before they start.</li>
+      <li>Running jobs may be requested to stop, subject to the job runner's ability to cooperate.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Required State</h2>
+    <table>
+      <tr>
+        <th>Entity</th>
+        <th>Purpose</th>
+      </tr>
+      <tr>
+        <td><code>worker_node</code></td>
+        <td>Identifies one execution host and its capacity</td>
+      </tr>
+      <tr>
+        <td><code>thread_slot</code></td>
+        <td>Stable user-visible execution lane on a worker</td>
+      </tr>
+      <tr>
+        <td><code>slot_assignment</code></td>
+        <td>Maps a future user or principal to one or more slots</td>
+      </tr>
+      <tr>
+        <td><code>job</code></td>
+        <td>Owns payload, status, priority, slot target, and result summary</td>
+      </tr>
+      <tr>
+        <td><code>job_event</code></td>
+        <td>Timeline of state changes and progress messages</td>
+      </tr>
+      <tr>
+        <td><code>slot_utilization_sample</code></td>
+        <td>Busy ratio and queue state for oversubscription visibility</td>
+      </tr>
+    </table>
+  </section>
+
+  <section class="warn">
+    <h2>Consequences</h2>
+    <ul>
+      <li>The browser backend should stop spawning persistent transform threads as the preferred execution model.</li>
+      <li>The ML control plane becomes the seed of a broader scheduler instead of a one-off service.</li>
+      <li>Authentication is not required to start, but slot ownership needs a stable principal field now.</li>
+      <li>Some current APIs that assume one active job per page will need to be widened to multi-slot, multi-job responses.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Status</h2>
+    <div class="status">Initial slice implemented</div>
+    <ul>
+      <li>The existing ML control plane now exposes worker, worker-slot, and job-list actions.</li>
+      <li>The current protocol includes embedded worker summaries with slot capacity counts and heartbeat timestamps, which preserves the frontend contract for a later control-plane and worker-process split.</li>
+      <li>The current frontend ML workspace now targets slots and shows slot/job scheduler state.</li>
+      <li>The Stream Viewer EMG transform path now has explicit local slot capacity, active-transform listing, stop control, per-transform slot identity, and lightweight runtime activity metrics, which replaces the previous unbounded spawn-only behavior with a visible resource boundary.</li>
+      <li>Ownership is still placeholder-principal-based rather than real authenticated user identity.</li>
+      <li>Explicit slot release now exists, and slot reassignment is blocked while active work owned by another principal is still attached.</li>
+      <li>The current placeholder policy now also requires jobs to run only on slots already assigned to the submitting principal; unassigned slots must be claimed first.</li>
+      <li>The control plane now also has explicit external worker registration, heartbeat, and unregister actions, which lets multi-process worker identity show up in worker summaries before external slot inventories are fully synchronized.</li>
+      <li>External workers can now mirror logical slot inventories into scheduler state and claim/report queued jobs for those slots through the control plane, and <code>libnatkit/scripts/natkit_ml_worker.py</code> now provides the first standalone runtime for that execution path.</li>
+      <li>The standalone worker now retries control-plane connectivity with backoff and can replay deferred terminal job reports after reconnect, so the remaining implementation gap in this slice is no longer the basic remote-execution loop or transient reconnect handling.</li>
+      <li>The remaining implementation gap is deployment topology, richer recovery for in-flight work across control-plane restarts, and moving scheduler durability beyond control-plane-local state.</li>
+      <li>Queued-job reprioritization and stop requests are now owner-scoped under that placeholder-principal model.</li>
+      <li>Running-job cancellation now stops at pipeline checkpoints between substantial work units; hard interruption inside an individual reconstruction or model-training call is still not implemented.</li>
+      <li>The current single-node service now has both lightweight JSON snapshots and a stronger SQLite-backed persistence path for slot ownership and job history, but this is still a bridge toward shared multi-process scheduler state.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Deferred Decisions</h2>
+    <ul>
+      <li>Whether mutable scheduler state lives in Kafka topics, a relational store, or both.</li>
+      <li>Whether future slots should permit bounded concurrent execution greater than one.</li>
+      <li>How multi-process worker-node discovery and heartbeats should integrate with the rest of cluster metadata beyond the current embedded-worker heartbeat.</li>
+      <li>Whether long-lived streaming transforms should queue, reject, or preempt when all slots are occupied.</li>
+      <li>How job editing should be limited once execution has started.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This ADR accepts the logical slot model now so the control plane, frontend,
+  and future user model can converge on one scheduler surface.
+</footer>
+</body>
+</html>

@@ -6,7 +6,7 @@
     import * as Command from "$lib/components/ui/command";
     import * as Popover from "$lib/components/ui/popover";
     import { Button } from "$lib/components/ui/button";
-    import { cn } from "$lib/utils.ts";
+    import { cn } from "$lib/utils.js";
     import { tick, onMount } from "svelte";
     import { RefreshCw } from "lucide-svelte";
     import { SvelteMap } from "svelte/reactivity";
@@ -263,8 +263,11 @@
         ),
     );
 
-    function sensor_checkbox_clicked(state: boolean, index: number) {
-        if (state === false) {
+    function sensor_checkbox_clicked(
+        state: boolean | "indeterminate",
+        index: number,
+    ) {
+        if (state !== true) {
             dropdown_enabled[index] = false;
             dropdown_open[index] = false;
             dropdown_values[index] = SensorPosition.None;
@@ -279,7 +282,7 @@
 
     // Check if all 7 required positions are assigned
     function areAllPositionsAssigned(): boolean {
-        const assignedPositions = new Set(
+        const assignedPositions = new Set<SensorPosition>(
             dropdown_values.filter((v) => v !== SensorPosition.None),
         );
         return REQUIRED_SENSOR_POSITIONS.every((pos) =>
@@ -341,7 +344,7 @@
                     <div class="stream-row">
                         <Checkbox
                             bind:checked={dropdown_enabled[index]}
-                            onCheckedChange={(state: boolean) =>
+                            onCheckedChange={(state) =>
                                 sensor_checkbox_clicked(state, index)}
                         />
                         <Accordion.Trigger class="stream-id"
@@ -500,10 +503,6 @@
         align-items: center;
         gap: 1em;
         padding-left: 1em;
-    }
-
-    .stream-id {
-        flex: 1;
     }
 
     .topic-list {

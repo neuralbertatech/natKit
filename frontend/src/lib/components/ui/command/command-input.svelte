@@ -3,7 +3,9 @@
 	import Search from "lucide-svelte/icons/search";
 	import { cn } from "$lib/utils.js";
 
-	type $$Props = CommandPrimitive.InputProps;
+	type $$Props = Omit<CommandPrimitive.InputProps, "class"> & {
+		class?: string | null | undefined;
+	};
 
 	let className: string | undefined | null = undefined;
 	export { className as class };

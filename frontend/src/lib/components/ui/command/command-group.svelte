@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { Command as CommandPrimitive } from "cmdk-sv";
 	import { cn } from "$lib/utils.js";
-	type $$Props = CommandPrimitive.GroupProps;
+	type $$Props = Omit<CommandPrimitive.GroupProps, "class"> & {
+		class?: string | null | undefined;
+	};
 
 	let className: string | undefined | null = undefined;
 	export { className as class };
