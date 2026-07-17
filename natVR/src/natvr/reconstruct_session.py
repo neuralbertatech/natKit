@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +31,10 @@ from natvr.topics import marker_stream, meta_session
 T = TypeVar("T")
 META_TOPIC_SUFFIX = "-Json-MetaRecord"
 MARKER_TOPIC_SUFFIX = "-Json-MarkerEventV1"
+# record_type_id of a SessionMetadataRecord on a `-Json-MetaRecord` topic. Other
+# MetaRecord kinds (e.g. TransformProvenanceRecord == 2) share the same topic
+# suffix; discovery must skip them rather than fail to decode.
+_SESSION_METADATA_RECORD_TYPE_ID = 1
 EMG_TOPIC_SUFFIXES = (
     "-Json-ExgPillEmgDataSchemaV1",
 )
@@ -237,6 +242,23 @@ def _marker_attr_tuple(marker: MarkerEventV1 | None, key: str) -> tuple[str, ...
     return (raw_text,) if raw_text else ()
 
 
+def _decode_session_metadata_or_skip(payload: bytes, **kwargs: object):
+    # discover_runs points this at EVERY `-Json-MetaRecord` topic, but transform
+    # nodes publish TransformProvenanceRecords (record_type_id 2) on such topics
+    # too. Peek at the record type and skip anything that isn't session metadata,
+    # so one provenance record doesn't abort the whole discovery scan.
+    try:
+        header = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    if (
+        not isinstance(header, dict)
+        or header.get("record_type_id") != _SESSION_METADATA_RECORD_TYPE_ID
+    ):
+        return None
+    return decode_session_metadata_message(payload, **kwargs)
+
+
 def load_stream_history(
     args: argparse.Namespace,
     *,
@@ -269,7 +291,7 @@ def load_stream_history(
             bootstrap_servers=args.broker,
             group_id=f"{args.group_id}-discover-meta",
             topics=meta_topics,
-            decoders={topic: decode_session_metadata_message for topic in meta_topics},
+            decoders={topic: _decode_session_metadata_or_skip for topic in meta_topics},
             auto_offset_reset="earliest",
             direct_assign=args.direct_assign,
             partition=args.partition,
