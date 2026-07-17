@@ -1599,6 +1599,26 @@
         });
     }
 
+    // The run selector the train pipeline expects: "<session-id>:<run-index>".
+    function runSelector(run: RecordedRunSummary): string {
+        return `${run.session_id}:${run.run_index}`;
+    }
+
+    // Toggle a discovered run in/out of the selected train node's train_runs or
+    // eval_runs — click a run in the picker instead of typing "session:run".
+    function toggleRunSelection(run: RecordedRunSummary, list: "train" | "eval") {
+        if (!selectedTrainNode) {
+            return;
+        }
+        const selector = runSelector(run);
+        const key = list === "train" ? "train_runs" : "eval_runs";
+        const current = selectedTrainNode.config[key];
+        const next = current.includes(selector)
+            ? current.filter((entry) => entry !== selector)
+            : [...current, selector];
+        updateTrainConfig({ [key]: next });
+    }
+
     const selectedSessionSummary = $derived.by(() => {
         if (!selectedSessionNode) {
             return null;
@@ -3909,6 +3929,63 @@
                                         })}
                                 />
                             </label>
+                            <div class="run-picker">
+                                <div class="run-picker-head">
+                                    <span>Recorded runs</span>
+                                    <button
+                                        type="button"
+                                        class="icon-btn"
+                                        onclick={requestRecordedRuns}
+                                        title="Refresh recorded experiments"
+                                    >
+                                        <RefreshCw size={13} />
+                                    </button>
+                                </div>
+                                {#if recordedRuns.length === 0}
+                                    <p class="muted-text">
+                                        No recorded runs yet. Record a session, then
+                                        refresh.
+                                    </p>
+                                {:else}
+                                    {#each recordedRuns as run}
+                                        {@const sel = runSelector(run)}
+                                        <div class="run-pick-row">
+                                            <span class="run-pick-label">
+                                                {run.session_id} · run {run.run_index}
+                                                <span class="run-pick-meta">
+                                                    {run.marker_count} markers{run.protocol_id
+                                                        ? ` · ${run.protocol_id}`
+                                                        : ""}
+                                                </span>
+                                            </span>
+                                            <button
+                                                type="button"
+                                                class="run-pick-btn"
+                                                class:active={cfg.train_runs.includes(
+                                                    sel,
+                                                )}
+                                                onclick={() =>
+                                                    toggleRunSelection(run, "train")}
+                                                title="Use as a training run"
+                                            >
+                                                Train
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="run-pick-btn"
+                                                class:active={cfg.eval_runs.includes(
+                                                    sel,
+                                                )}
+                                                onclick={() =>
+                                                    toggleRunSelection(run, "eval")}
+                                                title="Use as a validation run"
+                                            >
+                                                Eval
+                                            </button>
+                                        </div>
+                                    {/each}
+                                {/if}
+                            </div>
                             <label>
                                 <span>Train runs (session:run, comma-separated)</span>
                                 <input
@@ -4880,6 +4957,63 @@
         display: flex;
         align-items: stretch;
         gap: 0.35rem;
+    }
+
+    .run-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        border: 1px solid #26324d;
+        border-radius: 8px;
+        padding: 0.5rem;
+        max-height: 200px;
+        overflow: auto;
+    }
+
+    .run-picker-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: #9dafdf;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .run-pick-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+
+    .run-pick-label {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        font-size: 0.78rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .run-pick-meta {
+        color: #6b7a99;
+        font-size: 0.68rem;
+    }
+
+    .run-pick-btn {
+        border: 1px solid #34406080;
+        background: transparent;
+        color: #9dafdf;
+        border-radius: 6px;
+        padding: 0.15rem 0.5rem;
+        font-size: 0.72rem;
+        cursor: pointer;
+    }
+
+    .run-pick-btn.active {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #fff;
     }
 
     .profile-load {
