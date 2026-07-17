@@ -1807,7 +1807,12 @@
     // drag doesn't thrash the hot path.
     let reactiveRestartTimer: ReturnType<typeof setTimeout> | null = null;
     function scheduleReactiveRestart(nodeId: string | null) {
-        if (!nodeId || selectedGraphStatus?.run_state !== "running") {
+        // Fire while the graph is active — both "running" and "stalled" count. A
+        // graph whose classify node is idle-waiting-for-a-model reports "stalled",
+        // and that's exactly when a train job auto-fills the model path and we
+        // need to restart the node to pick it up.
+        const runState = selectedGraphStatus?.run_state;
+        if (!nodeId || (runState !== "running" && runState !== "stalled")) {
             return;
         }
         const graphId = draftGraph.graph_id;
@@ -1823,6 +1828,26 @@
             restartStreamGraphNode(graphId, nodeId);
         }, 350);
     }
+
+    // Manually restart the selected node (+ its downstream) without stopping the
+    // whole graph — e.g. to apply a just-filled model path to a stalled classify
+    // node. Saves any pending edits first so the restarted node uses them.
+    function restartSelectedNode() {
+        const nodeId = selectedNodeId;
+        const graphId = draftGraph.graph_id;
+        if (!nodeId || !graphId) {
+            return;
+        }
+        if (graphDirty) {
+            saveDraftGraph();
+        }
+        restartStreamGraphNode(graphId, nodeId);
+    }
+
+    const selectedGraphActive = $derived(
+        selectedGraphStatus?.run_state === "running" ||
+            selectedGraphStatus?.run_state === "stalled",
+    );
 
     function updateTransformConfigField(
         field: TransformCapabilityConfigField,
@@ -3658,6 +3683,19 @@
                                     config={selectedTransformNode.config}
                                     onChange={updateTransformConfigField}
                                 />
+                            {/if}
+                            {#if selectedGraphActive}
+                                <div class="inspector-action-row">
+                                    <button
+                                        type="button"
+                                        class="action-btn"
+                                        title="Restart just this node (and its downstream) to apply the current config — e.g. a newly trained model — without stopping the graph"
+                                        onclick={restartSelectedNode}
+                                    >
+                                        <RefreshCw size={15} />
+                                        Restart node
+                                    </button>
+                                </div>
                             {/if}
                         {/if}
 
