@@ -82,8 +82,13 @@ services:
       NATKIT_AUTH_BASE_URL: http://natkit-v0-backend:7409
       NATKIT_AUTH_USERNAME: ${NATKIT_ML_WORKER_AUTH_USERNAME:-}
       NATKIT_AUTH_PASSWORD: ${NATKIT_ML_WORKER_AUTH_PASSWORD:-}
+      # Durable model artifacts dir, shared rw with the backend/control plane so a
+      # job that lands on this remote worker can persist its model + bundle where
+      # the backend loads them (matches the control plane's NATKIT_ML_ARTIFACTS_DIR).
+      NATKIT_ML_ARTIFACTS_DIR: /models
     volumes:
       - ./uploads/ml-worker-a:/state:Z
+      - natkit-v0-models:/models
     networks:
       - natkit-v0-kafka-network
     depends_on:
