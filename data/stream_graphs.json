@@ -1,0 +1,24 @@
+{
+  "graphs": [
+    {
+      "created_at_us": 1783119645195000,
+      "description": "socket smoke test",
+      "edges": [],
+      "graph_id": "stream-graph-codex-smoke",
+      "graph_version": 1,
+      "label": "Codex Smoke Graph",
+      "nodes": [],
+      "notes": [],
+      "ui": {
+        "selected_node_id": null,
+        "viewport": {
+          "x": 0.0,
+          "y": 0.0,
+          "zoom": 1.0
+        }
+      },
+      "updated_at_us": 1783119645199541
+    }
+  ],
+  "store_version": 1
+}

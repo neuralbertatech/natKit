@@ -23,22 +23,15 @@
     }
 
     function connect_to_broker(address: string) {
-        fetch(`/api/set_streams`, {
+        fetch(`/api/start_calibration`, {
             mode: "cors",
             method: "POST",
-            body: JSON.stringify({
-                stream_ids: get_stream_ids(),
-            }),
             headers: {
                 "Content-type": "application/json; charset=UTF-8",
             },
-        }).then((_response) => {
-            fetch(`/api/start_calibration`, {
-                mode: "cors",
-                method: "POST",
-            }).then((_inner_response) => {
-                swtichToCalibrationTab();
-            });
+            body: JSON.stringify({
+                broker_address: address,
+            }),
         });
     }
 </script>

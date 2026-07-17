@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { Button as ButtonPrimitive } from "bits-ui";
-	import { type Events, type Props, buttonVariants } from "./index.js";
+	import { type Events, buttonVariants } from "./index.js";
 	import { cn } from "$lib/utils.js";
 
-	type $$Props = Props;
 	type $$Events = Events;
 
-	let className: $$Props["class"] = undefined;
-	export let variant: $$Props["variant"] = "default";
-	export let size: $$Props["size"] = "default";
-	export let builders: $$Props["builders"] = [];
+	let className: string | undefined | null = undefined;
+	export let variant: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link" =
+		"default";
+	export let size: "default" | "sm" | "lg" | "icon" = "default";
+	export let builders: any[] = [];
 	export { className as class };
 </script>
 

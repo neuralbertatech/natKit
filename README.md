@@ -45,6 +45,16 @@ Start the docker server:
 docker compose up -d
 ```
 
+To build the repo-owned container images locally instead of pulling the natKit
+service images from a registry, use the development override:
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+This keeps the third-party infrastructure images (`cp-kafka`, `mosquitto`, and
+`ntp`) as registry pulls, but builds the natKit services from the local source
+tree.
+
 ## Getting Started
 
 Now to get started go to the bin/ folder and run some scripts, for example:

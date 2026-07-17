@@ -2,7 +2,9 @@
 	import { Command as CommandPrimitive } from "cmdk-sv";
 	import { cn } from "$lib/utils.js";
 
-	type $$Props = CommandPrimitive.ItemProps;
+	type $$Props = Omit<CommandPrimitive.ItemProps, "class"> & {
+		class?: string | null | undefined;
+	};
 
 	export let asChild = false;
 

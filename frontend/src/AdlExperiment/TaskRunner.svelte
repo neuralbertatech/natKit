@@ -35,7 +35,7 @@
     let restTimeRemaining = $state(REST_PERIOD_SECONDS);
     let sessionId: string | null = $state(null);
     let isPaused = $state(false);
-    let intervalId: number | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
 
     // Current task derived
     let currentTask = $derived(ADL_TASKS[currentTaskIndex]);

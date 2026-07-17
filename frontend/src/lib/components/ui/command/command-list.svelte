@@ -2,7 +2,9 @@
 	import { Command as CommandPrimitive } from "cmdk-sv";
 	import { cn } from "$lib/utils.js";
 
-	type $$Props = CommandPrimitive.ListProps;
+	type $$Props = Omit<CommandPrimitive.ListProps, "class"> & {
+		class?: string | null | undefined;
+	};
 	let className: string | undefined | null = undefined;
 	export { className as class };
 </script>

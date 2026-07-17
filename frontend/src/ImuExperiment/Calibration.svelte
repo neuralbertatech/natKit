@@ -9,7 +9,7 @@
         onStart = () => {},
     }: {
         stream_position_mapping: SvelteMap<number, SensorPosition>;
-        onStart: () => void;
+        onStart?: () => void;
     } = $props();
 
     let calibration_statuses: Map<SensorPosition, CalibrationStatus> = $state(
@@ -405,10 +405,6 @@
 </div>
 
 <style>
-    td {
-        /* padding: 0.5em; */
-    }
-
     .small-dot {
         height: 10px;
         width: 10px;

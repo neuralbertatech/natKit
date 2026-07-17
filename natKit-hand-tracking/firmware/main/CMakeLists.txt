@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "Bno08xProvider.cpp"
+        "TransportPublisher.cpp"
+        "main.cpp"
+    INCLUDE_DIRS
+        "."
+        "../include"
+    REQUIRES
+        esp_timer
+        esp_adc
+        esp_driver_gpio
+        esp_driver_spi
+        nvs_flash
+        bt
+        mqtt
+        bno08x_sh2
+)
