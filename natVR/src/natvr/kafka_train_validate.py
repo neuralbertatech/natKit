@@ -22,6 +22,7 @@ from natvr.reconstruct_session import (
     reconstruct_run,
     render_run_choice,
 )
+from natvr.calibration import build_calibration_output_path
 from natvr.model import LdaModel
 from natvr.model_bundle import (
     build_model_bundle,
@@ -29,7 +30,7 @@ from natvr.model_bundle import (
     write_model_bundle,
 )
 from natvr.replay_eval import evaluate_replay_session
-from natvr.select_model import MODEL_FAMILIES, ensure_calibration_path, select_best_model, train_model_family
+from natvr.select_model import MODEL_FAMILIES, select_best_model, train_model_family
 
 T = TypeVar("T")
 ProgressCallback = Callable[[str], None]
@@ -217,10 +218,13 @@ def prompt_multi_select(
     runs: list[DiscoveredRun],
     *,
     disallowed: set[tuple[str, int]] | None = None,
+    allow_empty: bool = False,
 ) -> list[DiscoveredRun]:
     disallowed = disallowed or set()
     while True:
         raw = input(prompt).strip()
+        if not raw and allow_empty:
+            return []
         try:
             indexes = parse_index_selection(raw, max_index=len(runs))
         except ValueError as exc:
@@ -247,32 +251,37 @@ def resolve_train_eval_runs(
     train_runs = unique_runs([find_run_by_selector(runs, raw) for raw in (args.train_runs or [])])
     eval_runs = unique_runs([find_run_by_selector(runs, raw) for raw in (args.eval_runs or [])])
 
-    if train_runs and eval_runs:
+    # The validation set is OPTIONAL. A model fits on the training runs alone;
+    # the validation runs are only used to report held-out accuracy and to pick
+    # between model families. So we require at least one training run but allow
+    # zero validation runs (e.g. only one session was recorded). A validation
+    # set can always be added later for a real accuracy estimate.
+    if not train_runs and not sys.stdin.isatty():
+        raise RuntimeError(
+            "at least one training run (--train-run) is required when stdin is not a TTY"
+        )
+
+    if sys.stdin.isatty() and (not train_runs or not eval_runs):
+        print_discovered_runs(runs)
+        if not train_runs:
+            train_runs = prompt_multi_select(
+                "Select training runs [e.g. 1,3-5]: ",
+                runs,
+            )
+        if not eval_runs:
+            eval_runs = prompt_multi_select(
+                "Select validation runs (optional — leave blank to skip) [e.g. 2,6]: ",
+                runs,
+                disallowed=set(map(run_identity, train_runs)),
+                allow_empty=True,
+            )
+
+    if not train_runs:
+        raise RuntimeError("at least one training run is required")
+    if eval_runs:
         overlap = set(map(run_identity, train_runs)) & set(map(run_identity, eval_runs))
         if overlap:
             raise RuntimeError("training and validation runs must be disjoint")
-        return train_runs, eval_runs
-
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            "both --train-run and --eval-run are required when stdin is not a TTY"
-        )
-
-    print_discovered_runs(runs)
-    if not train_runs:
-        train_runs = prompt_multi_select(
-            "Select training runs [e.g. 1,3-5]: ",
-            runs,
-        )
-    if not eval_runs:
-        eval_runs = prompt_multi_select(
-            "Select validation runs [e.g. 2,6]: ",
-            runs,
-            disallowed=set(map(run_identity, train_runs)),
-        )
-
-    if not train_runs or not eval_runs:
-        raise RuntimeError("at least one training run and one validation run are required")
     return train_runs, eval_runs
 
 
@@ -383,6 +392,24 @@ def evaluate_family(
         active_gesture=args.active_gesture,
     )
     check_cancelled(should_stop)
+    # Evaluate against the TRAINING calibration profile — the same one the LDA was
+    # fit with and that the live bundle bakes in (build_training_calibration_profile).
+    # A per-eval-session calibration (the old ensure_calibration_path(eval_parquet))
+    # normalizes with a *different* scale_rms than the model was trained on: on a
+    # channel where fist barely exceeds rest that scale collapses toward zero, the
+    # normalized features land far off the model's training distribution, and
+    # accuracy drops to ~chance while live serving (which uses the baked training
+    # profile) does not. Reusing the training profile keeps train/eval/serve aligned.
+    train_calibration_profile = build_training_calibration_profile(
+        feature_paths,
+        rest_gesture=args.rest_gesture,
+        active_gesture=args.active_gesture,
+    )
+    train_calibration_path = build_calibration_output_path(feature_paths[0])
+    train_calibration_path.write_text(
+        json.dumps(train_calibration_profile.to_dict(), indent=2) + "\n",
+        encoding="utf-8",
+    )
     replay_reports = []
     accuracies: list[float] = []
     coverages: list[float] = []
@@ -395,11 +422,7 @@ def evaluate_family(
                 f"{artifact.run.session_id} run {artifact.run.run_index}"
             ),
         )
-        calibration_path = ensure_calibration_path(
-            artifact.parquet_path,
-            rest_gesture=args.rest_gesture,
-            active_gesture=args.active_gesture,
-        )
+        calibration_path = train_calibration_path
         check_cancelled(should_stop)
         report = evaluate_replay_session(
             artifact.parquet_path,
@@ -566,9 +589,12 @@ def run_pipeline(
         "results": results,
         "selected_family": selected["family"],
         "selected_model_path": selected["model_path"],
-        "selected_mean_accuracy": selected["mean_accuracy"],
-        "selected_min_accuracy": selected["min_accuracy"],
-        "selected_mean_coverage": selected["mean_coverage"],
+        # Accuracy/coverage are only meaningful with a held-out validation set.
+        # With none, the model still trains — report null rather than a
+        # misleading 0% (the family is chosen by preference, not accuracy).
+        "selected_mean_accuracy": selected["mean_accuracy"] if eval_runs else None,
+        "selected_min_accuracy": selected["min_accuracy"] if eval_runs else None,
+        "selected_mean_coverage": selected["mean_coverage"] if eval_runs else None,
         # Self-describing live-inference bundle for emg_gesture_classify (LDA-only).
         "bundle_path": bundle_path,
         "bundle_family": "lda" if bundle_path else None,

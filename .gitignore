@@ -150,3 +150,6 @@ nathacks_env/
 client.env
 server.env
 natVR/firmware/main/DevConfig.hpp
+
+# Machine-local environment context for LLMs/agents (not project state)
+ENVIRONMENT.html

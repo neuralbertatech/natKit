@@ -93,6 +93,17 @@
         min_accuracy: number;
         mean_coverage: number;
     } | null>(null);
+    // Phase 4 (provenance edges): the last completed train job as a compact model
+    // record. The editor associates it with the submitting train node so a
+    // train→classify provenance edge can offer a re-selectable model dropdown.
+    let completedTrainJob = $state<{
+        job_id: string;
+        bundle_path: string | null;
+        model_path: string | null;
+        family: string | null;
+        accuracy: number | null;
+        completed_at_us: number;
+    } | null>(null);
     // Phase 5: compute thread slots the control plane advertises (a train job
     // must target one). Captured from proxied thread_slots pushes so submit can
     // auto-pick a slot — no manual slot selection in the walk-up flow.
@@ -514,6 +525,19 @@
                     mean_coverage: msg.report.selected_mean_coverage ?? 0,
                 };
             }
+            if (msg.status === "completed" && msg.job_id) {
+                completedTrainJob = {
+                    job_id: msg.job_id,
+                    bundle_path: msg.report?.bundle_path ?? null,
+                    model_path: msg.report?.model_path ?? null,
+                    family: msg.report?.selected_family ?? null,
+                    accuracy:
+                        typeof msg.report?.selected_mean_accuracy === "number"
+                            ? msg.report.selected_mean_accuracy
+                            : null,
+                    completed_at_us: Date.now() * 1000,
+                };
+            }
         } else if (msg.type === "error") {
             trainJobStatus = `error: ${msg.error ?? msg.message ?? "unknown"}`;
         }
@@ -544,11 +568,13 @@
             lastError = "Visual Programming WebSocket is not connected";
             return;
         }
-        if (config.eval_runs.length === 0) {
+        if (config.train_runs.length === 0) {
             trainJobStatus =
-                "error: pick at least one Eval run (you can reuse the training run)";
+                "error: pick at least one training run";
             return;
         }
+        // Validation runs are optional — the model fits on the training runs
+        // alone; eval only reports held-out accuracy + picks between families.
         const threadSlotId = pickThreadSlot();
         if (!threadSlotId) {
             trainJobStatus =
@@ -941,6 +967,7 @@
         {trainModelPath}
         {trainBundlePath}
         {trainAccuracy}
+        {completedTrainJob}
         {validateStreamGraph}
         {startStreamGraph}
         {stopStreamGraph}

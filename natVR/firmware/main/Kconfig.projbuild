@@ -1,0 +1,33 @@
+menu "natVR Transport"
+
+choice NATVR_TRANSPORT
+    prompt "natVR transport"
+    default NATVR_TRANSPORT_WIRELESS
+    help
+        Selects how EMG frames leave the device. This seeds the runtime transport
+        mode at boot (see TransportMode in main/main.cpp). It is a build-time
+        choice: switching modes is a rebuild + reflash, not a live booth flip.
+
+config NATVR_TRANSPORT_WIRELESS
+    bool "Wireless (WiFi/MQTT)"
+    help
+        Primary path: publish every frame over WiFi/MQTT. Serial off. This is
+        today's default and normal operation on good RF.
+
+config NATVR_TRANSPORT_AUTO
+    bool "Auto (wireless, serial fallback)"
+    help
+        Wireless-first: publish over MQTT while connected, and transparently fall
+        back to the USB-serial console only while MQTT is down (debounced), then
+        return to MQTT when it recovers. Recommended for the convention booth --
+        it self-manages with no operator action.
+
+config NATVR_TRANSPORT_SERIAL
+    bool "Serial (USB backup)"
+    help
+        Force the wired USB-serial path; WiFi/NTP/MQTT are never brought up. Use
+        on known-bad RF. Pair with the host shim (natvr-serial-bridge).
+
+endchoice
+
+endmenu

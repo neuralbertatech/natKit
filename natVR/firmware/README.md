@@ -97,32 +97,74 @@ For ESP32-C3:
 - set `NATVR_ADC_CHANNEL_COUNT 2` for `GPIO4` + `GPIO3`
 - set `NATVR_ADC_CHANNEL_COUNT 3` for `GPIO4` + `GPIO3` + `GPIO1`
 
-## Serial backup transport
+## Transport mode (wireless-primary, serial backup)
 
-When WiFi/MQTT is unavailable (e.g. a locked-down convention network), build the
-serial-backup image:
+Transport is a **runtime mode** held in one firmware image, seeded at boot from a
+menuconfig choice. WiFi/MQTT is always the primary path; USB-serial is an optional
+backup for a hostile RF environment (e.g. a convention floor). Three modes:
+
+| Mode       | Wireless (MQTT)                    | Serial (USB)                              | Use |
+|------------|------------------------------------|-------------------------------------------|-----|
+| `WIRELESS` | primary — publishes every frame    | off                                       | normal operation / good RF |
+| `AUTO`     | primary — while MQTT is connected  | engages only while MQTT is down (debounced) | booth: wireless-first, serial catches any dropout with no operator action |
+| `SERIAL`   | off                                | always emits                              | known-bad RF: force the wired path |
+
+A frame goes to MQTT **or** the console, never both, so a device never
+double-publishes a `(device_id, seq_no)`.
+
+### Selecting the mode
+
+Interactively, `idf.py menuconfig` → **natVR Transport** → *natVR transport*.
+Headless (the one-command demo build, pins `AUTO`):
 
 ```sh
-idf.py fullclean
-idf.py -DNATVR_TRANSPORT_SERIAL=1 build
+idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.demo" build
 idf.py -p <PORT> flash monitor
 ```
 
-In this mode the firmware brings up **no** WiFi, NTP, or MQTT. It writes the exact
-same `exg.pill.emg.data.v1` (and `device.firmware.status.v1`) JSON frames as
-newline-delimited lines to the USB serial console instead of publishing them over
-MQTT. Logs are quieted to error level so the frame stream stays clean.
+`AUTO` is the recommended booth default — it needs no live toggle. The choice is
+build-time, so changing modes is a rebuild + reflash. (Back-compat: the old
+`idf.py -DNATVR_TRANSPORT_SERIAL=1 build` still works and maps to `SERIAL`.)
 
-On the host, run the companion shim to republish those lines onto the standard
-MQTT topics so the bridge -> Kafka path is byte-identical to the WiFi transport:
+### What each mode does on the device
+
+In `WIRELESS`/`AUTO` the firmware brings up WiFi/NTP/MQTT (non-fatally — a device
+still boots and, in `AUTO`, falls back to serial even if it never associates). In
+`SERIAL` it brings up **no** WiFi/NTP/MQTT. Whenever serial is emitting, the
+firmware writes the exact same `exg.pill.emg.data.v1` (and
+`device.firmware.status.v1`) JSON frames as newline-delimited lines to the USB
+console and quiets logs to error level so the stream stays clean. In `AUTO`, the
+switchover is debounced (serial after MQTT has been down ~2 s; back to wireless
+after it has been stable ~3 s) and each transition is logged. The status frame
+carries `transport_mode` and `serial_active` so natKit can show the active path.
+
+### Host shim
+
+On the host the device is plugged into, run the companion shim to republish the
+serial lines onto the standard MQTT topics so the bridge → Kafka path is
+byte-identical to WiFi:
 
 ```sh
+# fixed port
 natvr-serial-bridge --serial-port /dev/ttyACM0 --mqtt-host <broker>
+# or auto-detect the port (scan ttyACM*/ttyUSB* / known ESP32 USB VIDs),
+# de-dupe the switchover seam, and stamp host time for an NTP-less device:
+natvr-serial-bridge --serial-port auto --mqtt-host <broker> --stamp-host-time
 ```
 
-Timestamps in serial mode come from the device's local monotonic clock (no NTP),
-which is fine for a single-device capture where alignment is intra-session. If you
-need cross-device time correlation, use the WiFi/MQTT transport.
+The shim also auto-reconnects when the cable is bumped/replugged. The bridge
+running **is** the host-side "serial enabled" toggle — keep it off by default and
+start it (paired with an `AUTO`/`SERIAL` device) when you want the wired backup.
+
+### Timestamps across the seam
+
+In `AUTO`, WiFi stays associated during a broker-only outage, so NTP keeps running
+and serial frames still carry NTP-synced time — only a full WiFi loss forces the
+local monotonic clock. A `SERIAL`-only device (no NTP) produces session-local
+timestamps: fine for the windowed EMG classifier (alignment is intra-session), but
+cross-device combine and absolute-time replay degrade. For the record path,
+`--stamp-host-time` restores a wall-clock reference (it re-serializes the frame, so
+it is no longer byte-identical — opt-in only).
 
 ## Current behavior
 

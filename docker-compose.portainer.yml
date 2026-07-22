@@ -1,0 +1,210 @@
+# natKit — production stack for Portainer.
+#
+# Pull-based (no `build:` — images come from your Docker Hub auto-builds), with
+# persistent named volumes and real authentication (none of the dev bypasses from
+# docker-compose.dev.yml). Deploy this as a Portainer Stack.
+#
+# ---------------------------------------------------------------------------
+# Stack environment variables to set in Portainer (Stack > Environment):
+#   NATKIT_REGISTRY                 image namespace           (default docker.io/natnl)
+#   NATKIT_IMAGE_TAG                image tag to deploy       (default latest; pin to a
+#                                                              git-sha tag for real deploys)
+#   NATKIT_WEB_PORT                 host port for the web UI  (default 8080)
+#   NATKIT_HOST_IP                  this host's LAN IP        (only needed for remote Kafka
+#                                                              clients; devices use MQTT)
+#   NATKIT_ML_WORKER_AUTH_USERNAME  admin account the ML worker logs in as
+#   NATKIT_ML_WORKER_AUTH_PASSWORD  its password
+#   NATKIT_ML_WORKER_THREADS_A      remote worker thread count (default 4)
+#   NATKIT_ML_CONTROL_PLANE_WORKER_THREADS  in-process worker threads (default: unset)
+#
+# FIRST-RUN AUTH BOOTSTRAP (production enforces login):
+#   1. Deploy the stack. The backend logs a one-time bootstrap password
+#      ("Auth bootstrap required. Initial admin bootstrap password: …") —
+#      read it from the natkit-v0-backend container logs.
+#   2. Open the web UI (http://<host>:<NATKIT_WEB_PORT>), create the first admin
+#      using that bootstrap password.
+#   3. Set NATKIT_ML_WORKER_AUTH_USERNAME/PASSWORD to that account (or a dedicated
+#      user you create in the admin panel) and redeploy/restart the worker. Until
+#      the account exists the worker retries (restart: unless-stopped) — harmless.
+#
+# SELinux hosts (Fedora/RHEL/Rocky): append `:z` to the mosquitto bind mounts.
+# ---------------------------------------------------------------------------
+
+services:
+  # --- Kafka (KRaft, single node) ------------------------------------------
+  natkit-v0-kafka:
+    image: confluentinc/cp-kafka:7.8.0
+    hostname: natkit-v0-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_ID: 1
+      CLUSTER_ID: ReR6t0tUSZGaK6IO8K4lwA
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@natkit-v0-kafka:9093"
+      KAFKA_LISTENERS: "DOCKER_NETWORK_LISTENER://0.0.0.0:9092,CONTROLLER_LISTENER://0.0.0.0:9093,LOCALHOST_LISTENER://0.0.0.0:29092,REMOTE_LISTENER://0.0.0.0:29093"
+      KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://${NATKIT_HOST_IP:-127.0.0.1}:29093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER_NETWORK_LISTENER"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER_LISTENER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
+      # Persist KRaft data on a named volume (dev used /tmp — lost on restart).
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    volumes:
+      - natkit-v0-kafka-data:/var/lib/kafka/data
+    # Kafka is reached internally by service name (natkit-v0-kafka:9092); it is not
+    # published to the host. Uncomment to allow remote Kafka clients (set NATKIT_HOST_IP):
+    # ports:
+    #   - "29093:29093"
+    networks:
+      - natkit-v0-net
+
+  # --- MQTT broker + Kafka bridge (hardware device ingestion) --------------
+  # EMG/IMU devices publish to MQTT; the bridge forwards to Kafka. Drop mosquitto
+  # + bridge if you are not ingesting from physical devices.
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    hostname: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      # Config comes from the repo — deploy this stack from Git so these resolve,
+      # or place the files on the host at these paths.
+      - ./mosquitto/etc:/etc/mosquitto
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - natkit-v0-mosquitto-log:/mosquitto/log
+    networks:
+      - natkit-v0-net
+
+  ntp:
+    image: cturra/ntp:latest
+    restart: unless-stopped
+    ports:
+      - "123:123/udp"
+    environment:
+      - NTP_SERVERS=pool.ntp.org
+      - LOG_LEVEL=0
+
+  natkit-v0-bridge:
+    image: ${NATKIT_REGISTRY:-docker.io/natnl}/natkit-bridge:${NATKIT_IMAGE_TAG:-latest}
+    hostname: natkit-v0-bridge
+    restart: unless-stopped
+    environment:
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 9092
+      LIBNATKIT_MQTT_BROKER_ADDRESS: mosquitto
+      LIBNATKIT_MQTT_BROKER_PORT: 1883
+    networks:
+      - natkit-v0-net
+    depends_on:
+      - natkit-v0-kafka
+      - mosquitto
+
+  # --- Backend (drogon API + WebSocket + stream-graph engine) --------------
+  natkit-v0-backend:
+    image: ${NATKIT_REGISTRY:-docker.io/natnl}/natkit-backend:${NATKIT_IMAGE_TAG:-latest}
+    hostname: natkit-v0-backend
+    container_name: natkit-v0-backend
+    restart: unless-stopped
+    environment:
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 9092
+      # Shared auth DB with the control plane so one login validates on both.
+      NATKIT_AUTH_DB_PATH: /auth/auth.sqlite3
+      # Backend is the sole client of the ML control plane (proxied over /ws).
+      NATKIT_ML_CONTROL_PLANE_URL: ws://natkit-v0-ml-control-plane:8786
+      # Persist saved stream graphs.
+      NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
+      # NOTE: auth is ENFORCED here (no NATKIT_AUTH_DISABLED). Bootstrap the first
+      # admin on first run (see header). Default bootstrap mode = password.
+    volumes:
+      - natkit-v0-auth:/auth
+      - natkit-v0-graphs:/graphs
+      - natkit-v0-models:/models:ro
+      - natkit-v0-backend-log:/logs
+    networks:
+      - natkit-v0-net
+    depends_on:
+      - natkit-v0-kafka
+
+  # --- ML control plane (training/inference scheduler) ---------------------
+  natkit-v0-ml-control-plane:
+    image: ${NATKIT_REGISTRY:-docker.io/natnl}/natkit-ml-control-plane:${NATKIT_IMAGE_TAG:-latest}
+    hostname: natkit-v0-ml-control-plane
+    restart: unless-stopped
+    environment:
+      NATKIT_ML_CONTROL_PLANE_BROKER: natkit-v0-kafka:9092
+      NATKIT_ML_CONTROL_PLANE_WORKER_THREADS: ${NATKIT_ML_CONTROL_PLANE_WORKER_THREADS:-}
+      NATKIT_AUTH_DB_PATH: /auth/auth.sqlite3
+      NATKIT_ML_ARTIFACTS_DIR: /models
+    volumes:
+      - natkit-v0-cp-state:/state
+      - natkit-v0-auth:/auth
+      - natkit-v0-models:/models
+    networks:
+      - natkit-v0-net
+    depends_on:
+      - natkit-v0-kafka
+
+  # --- ML remote worker (optional extra capacity) --------------------------
+  # The control plane also runs in-process workers; this is additional capacity.
+  # It needs a REAL admin account (see first-run bootstrap in the header) — until
+  # NATKIT_ML_WORKER_AUTH_* match an existing user it retries and stays down.
+  natkit-v0-ml-worker-a:
+    image: ${NATKIT_REGISTRY:-docker.io/natnl}/natkit-ml-control-plane:${NATKIT_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command:
+      - python
+      - /workspace/libnatkit/scripts/natkit_ml_worker.py
+      - --control-plane-url
+      - ws://natkit-v0-ml-control-plane:8786
+      - --worker-id
+      - worker-remote-a
+      - --worker-threads
+      - "${NATKIT_ML_WORKER_THREADS_A:-4}"
+      - --scratch-root
+      - /state/scratch
+    environment:
+      # derive_auth_base_url() targets the control-plane host, which doesn't serve
+      # auth, so point it explicitly at the backend.
+      NATKIT_AUTH_BASE_URL: http://natkit-v0-backend:7409
+      NATKIT_AUTH_USERNAME: ${NATKIT_ML_WORKER_AUTH_USERNAME:-}
+      NATKIT_AUTH_PASSWORD: ${NATKIT_ML_WORKER_AUTH_PASSWORD:-}
+      NATKIT_ML_ARTIFACTS_DIR: /models
+    volumes:
+      - natkit-v0-worker-a-state:/state
+      - natkit-v0-models:/models
+    networks:
+      - natkit-v0-net
+    depends_on:
+      - natkit-v0-ml-control-plane
+      - natkit-v0-backend
+
+  # --- Frontend (nginx; serves the UI + proxies /api and /ws to the backend) -
+  # This is the only service you browse to. nginx reverse-proxies API/WS to the
+  # backend over the internal network, so the backend needs no published port.
+  natkit-v0-frontend:
+    image: ${NATKIT_REGISTRY:-docker.io/natnl}/natkit-frontend:${NATKIT_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${NATKIT_WEB_PORT:-8080}:80"
+    networks:
+      - natkit-v0-net
+    depends_on:
+      - natkit-v0-backend
+
+networks:
+  natkit-v0-net:
+    driver: bridge
+
+volumes:
+  natkit-v0-kafka-data:
+  natkit-v0-auth:
+  natkit-v0-graphs:
+  natkit-v0-models:
+  natkit-v0-backend-log:
+  natkit-v0-cp-state:
+  natkit-v0-worker-a-state:
+  natkit-v0-mosquitto-log:

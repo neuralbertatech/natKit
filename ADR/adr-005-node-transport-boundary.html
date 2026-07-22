@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit ADR 005 - Node Transport Boundary</title>
+<style>
+  :root { --bg:#f5f7f6; --panel:#fff; --ink:#16211c; --muted:#57655f; --line:#d9e1dc; --accent:#0b7a53; --accent-soft:#e1f2ea; --warn:#9b5c12; --warn-soft:#f7ecd9; --risk:#9a3324; --risk-soft:#f6e3df; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --sans:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 var(--sans); }
+  header, main { width:min(1080px, calc(100vw - 32px)); margin:0 auto; }
+  header { padding:32px 0 16px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; margin:18px 0; }
+  h1,h2,p { margin:0; }
+  h1 { font-size:clamp(30px,4vw,42px); line-height:1.1; }
+  h2 { font-size:22px; margin-bottom:10px; }
+  p + p, ul, table { margin-top:10px; }
+  .eyebrow,.meta,code { font-family:var(--mono); }
+  .eyebrow { color:var(--accent); text-transform:uppercase; letter-spacing:.12em; font-size:12px; }
+  .meta { color:var(--muted); margin-top:10px; font-size:12px; }
+  .callout { border-left:4px solid var(--accent); background:var(--accent-soft); }
+  .warn { border-left-color:var(--warn); background:var(--warn-soft); }
+  .risk { border-left-color:var(--risk); background:var(--risk-soft); }
+  ul { padding-left:20px; }
+  li { margin:8px 0; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  code { background:#edf3ef; border-radius:4px; padding:.08em .35em; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit ADR 005 · backend · transport · July 9 2026</div>
+  <h1>Node Transport Boundary: Colocation-Based In-Process vs Kafka</h1>
+  <p class="meta">
+    Status: accepted as direction; implementation deferred (see plans/in-process-transport-plan.html). Interim correctness fix already landed.
+  </p>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>The transport for a graph edge is chosen by <strong>provable colocation of its endpoints on the same worker slot/node</strong>, and the choice is made by the scheduler &mdash; <strong>not</strong> by whether the edge is internal to a composite.</li>
+      <li>Kafka remains the default transport and the only transport for streams that cross nodes or that must be durable, replayable, discoverable, tap-able, or recordable. Composite input/output ports, top-level edges, and any stream a viewer/session/train node consumes stay on Kafka.</li>
+      <li>An in-process message queue may carry an edge only when the scheduler proves both endpoints run in the same process <em>and</em> the edge is private (not exposed as a composite port, not tapped by a viewer/sink, not recorded or replayed).</li>
+      <li>Composite grouping is a UI construct. Grouping, ungrouping, or regrouping a subgraph must never change its transport semantics or its runtime correctness.</li>
+      <li>Intra-graph input-topic resolution must not depend on Kafka broker metadata. Topic names are deterministic; the runtime resolves an upstream node's output topic from what it already knows, not by waiting for the first frame to materialize the topic.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Context</h2>
+    <p>
+      A user-reported failure exposed a startup race in chained transforms. The stream-graph runtime
+      starts nodes in topological order, and each transform resolved its input topic by scanning live
+      Kafka broker metadata (<code>findTransformSourceTopicForStream</code> &rarr; <code>getAllStreams</code>).
+      A transform's output topic does not appear in that metadata until the worker has produced its first
+      frame, but downstream workers are created microseconds after their upstream &mdash; before any data has
+      flowed. Deep pipelines therefore failed at the first stage whose upstream had not yet produced, with
+      &ldquo;Could not locate a compatible JSON numeric channel topic for source_stream_id&rdquo;, cascading into
+      &ldquo;Blocked: upstream node ... failed to start&rdquo; for everything downstream.
+    </p>
+    <p>
+      Diagnosing that led to a broader question: should composite-internal edges bypass Kafka entirely and
+      use a lighter transport? The instinct is sound &mdash; a 13-stage composite pays 13 broker round-trips of
+      latency per frame and litters stream discovery with purely internal intermediate topics. But the cut
+      &ldquo;websocket for composite internals&rdquo; is wrong on two counts, and the direction in ADR 001 constrains the
+      answer: the project already assumes clustered workers and replayable Kafka-backed processing, and EMG
+      transforms are migrating from in-process threads onto independently scheduled worker slots.
+    </p>
+  </section>
+
+  <section>
+    <h2>Why not transport-by-composite, and why not websockets</h2>
+    <ul>
+      <li><strong>Composite membership is not colocation.</strong> Under ADR 001 a transform becomes an independently scheduled job on a worker slot, and slots may live on different nodes. A composite can be ungrouped, and nothing pins its internal nodes to one host. Keying transport off composite membership bakes in a colocation assumption the roadmap contradicts.</li>
+      <li><strong>Websockets are the wrong second transport.</strong> Today the internal nodes are threads in one process, so a websocket between them is loopback networking &mdash; pure serialization and socket overhead over what an in-process queue does for free. If the endpoints are genuinely on different nodes, the needed cross-node data plane (discovery, backpressure, replay) is exactly what Kafka already provides; adding websockets would reimplement it and fight the replayable-Kafka principle.</li>
+      <li><strong>The race is not a transport problem.</strong> Topic names are deterministic and the upstream worker is already known to the runtime; resolving from that removes the race on any transport. Transport choice and startup correctness are separate concerns and must stay separate.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What in-process transport buys, and what it must not cost</h2>
+    <table>
+      <tr><th>Property</th><th>Kafka edge</th><th>In-process edge (private, colocated)</th></tr>
+      <tr><td>Latency / overhead</td><td>Broker round-trip + JSON serialize per hop</td><td>Direct in-memory handoff</td></tr>
+      <tr><td>Cross-node</td><td>Yes</td><td>No &mdash; same process only</td></tr>
+      <tr><td>Durable / replayable</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Discoverable / tap-able by a viewer</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Recordable by a session node</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Topic clutter in stream discovery</td><td>One topic per intermediate</td><td>None</td></tr>
+    </table>
+    <p class="meta">
+      Because tap-ability, recording, and replay are lost on an in-process edge, an edge must be promoted back
+      to Kafka the moment it is exposed as a composite port or consumed by a viewer, sink, session, or train
+      node. This ADR&rsquo;s very motivating graph exposes an internal node (the linear envelope) as a second output
+      port &mdash; a reminder that the internal/external line is porous and must be enforced at edge-classification
+      time, not assumed from composite structure.
+    </p>
+  </section>
+
+  <section class="warn">
+    <h2>Interim state (already implemented)</h2>
+    <p>
+      To unblock users immediately and decouple correctness from the transport decision, intra-graph input
+      resolution no longer depends on Kafka metadata. When broker discovery cannot yet see an upstream
+      transform/combine output topic, the runtime resolves that node's deterministic output
+      <code>BasicTopicInformation</code> directly from the in-process worker registries
+      (<code>findGraphInternalOutputTopicForStream</code> in <code>StreamViewerWebSocket.cpp</code>). Kafka discovery
+      remains the path for genuine hardware <code>stream_source</code> inputs. Deep pipelines now start
+      deterministically without racing the first frame through each stage.
+    </p>
+  </section>
+
+  <section class="risk">
+    <h2>Consequences</h2>
+    <ul>
+      <li>A transport-selection responsibility is added to the scheduler, gated on a colocation proof. Until that lands, all edges remain on Kafka and the interim fix keeps them correct.</li>
+      <li>Edge classification (private vs published) becomes a first-class concept the runtime must compute, and must react to graph edits that expose a previously private edge.</li>
+      <li>In-process edges need a bounded-buffer backpressure policy; unlike Kafka they have no broker-side buffering. See the plan for the drop-vs-block decision.</li>
+      <li>This ADR refines, and does not replace, ADR 001. It defines the transport boundary that ADR 001&rsquo;s Phase 4 (moving EMG transforms onto workers) will have to honor.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

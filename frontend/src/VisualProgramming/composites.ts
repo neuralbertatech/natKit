@@ -311,7 +311,11 @@ export function flattenGraph(
             missingInstances.has(edge.source_node_id) ||
             missingInstances.has(edge.target_node_id) ||
             paramNodeIds.has(edge.source_node_id) ||
-            paramNodeIds.has(edge.target_node_id)
+            paramNodeIds.has(edge.target_node_id) ||
+            // Provenance (lineage/control) edges are dropped from the executed
+            // graph — they resolve node config at author/submit time, not at
+            // runtime (mirrors param-node dropping above).
+            edge.edge_kind === "provenance"
         ) {
             continue;
         }

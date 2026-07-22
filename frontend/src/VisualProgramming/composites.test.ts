@@ -360,3 +360,22 @@ describe("flattenGraph param nodes (Phase 7)", () => {
         expect(flat.edges[0].id).toBe("e1");
     });
 });
+
+describe("flattenGraph provenance edges", () => {
+    it("drops provenance edges from the executed graph (data edges stay)", () => {
+        const graph = baseGraph(
+            [sourceNode("src"), transformNode("tf", "tf-out")],
+            [
+                edge("data", "src", "data", "tf", "input"),
+                {
+                    ...edge("prov", "src", "data", "tf", "prov_model"),
+                    edge_kind: "provenance",
+                },
+            ],
+        );
+        const { graph: flat } = flattenGraph(graph, () => undefined);
+        // The provenance edge is excluded; only the data edge is executed.
+        expect(flat.edges).toHaveLength(1);
+        expect(flat.edges[0].id).toBe("data");
+    });
+});

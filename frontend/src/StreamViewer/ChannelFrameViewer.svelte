@@ -2,7 +2,7 @@
     import { onMount } from "svelte";
     import Chart from "chart.js/auto";
     import type { Chart as ChartInstance, ChartDataset } from "chart.js";
-    import type { BufferedEmgSample } from "./types";
+    import type { BufferedEmgSample, BufferedMarkerEvent } from "./types";
 
     interface Props {
         samples: BufferedEmgSample[];
@@ -10,6 +10,10 @@
         // Compact mode drops the summary + per-channel table and shrinks the
         // chart so the viewer fits inside an on-canvas node.
         compact?: boolean;
+        // Topic-aware channels (Part D): when the viewer is fed a "stream"
+        // channel (data + markers), the markers are overlaid on the waveform as
+        // labeled vertical lines, aligned to the rolling axis by arrival time.
+        markers?: BufferedMarkerEvent[];
     }
 
     interface ChartRenderState {
@@ -38,7 +42,80 @@
     ];
     const MAX_POINTS_PER_CHANNEL = 1600;
 
-    let { samples, formatNumber, compact = false }: Props = $props();
+    let { samples, formatNumber, compact = false, markers = [] }: Props =
+        $props();
+
+    // A marker's position on the rolling axis: seconds relative to "now" (x=0),
+    // aligned by wall-clock arrival for live (the plan's live reference). Recom-
+    // puted each redraw; read by the overlay plugin below via closure.
+    interface MarkerDraw {
+        x: number;
+        label: string;
+        color: string;
+    }
+    let markerDraws: MarkerDraw[] = [];
+
+    function markerColor(marker: BufferedMarkerEvent): string {
+        const type = (marker.marker_type ?? "").toLowerCase();
+        const event = (marker.event ?? "").toLowerCase();
+        // Session lifecycle markers read as region boundaries (amber); cue/other
+        // markers are event lines (violet).
+        if (type.includes("session") || event.includes("session")) {
+            return "#f59e0b";
+        }
+        return "#7c3aed";
+    }
+
+    function computeMarkerDraws(nowMs: number, windowMs: number): MarkerDraw[] {
+        const draws: MarkerDraw[] = [];
+        for (const marker of markers) {
+            const x = (marker.received_at_ms - nowMs) / 1000;
+            if (x < -(windowMs / 1000) - 0.001 || x > 0.001) {
+                continue; // outside the visible rolling window
+            }
+            draws.push({
+                x,
+                label: marker.label || marker.event || marker.marker_type || "cue",
+                color: markerColor(marker),
+            });
+        }
+        return draws;
+    }
+
+    // Inline Chart.js plugin: draw each marker as a vertical line + short label.
+    // Kept inline (not chartjs-plugin-annotation) to avoid a new dependency.
+    const markerOverlayPlugin = {
+        id: "natkitMarkerOverlay",
+        afterDatasetsDraw(chartInstance: ChartInstance<"line", SeriesPoint[]>) {
+            if (markerDraws.length === 0) return;
+            const { ctx, chartArea, scales } = chartInstance;
+            const xScale = scales.x;
+            if (!xScale || !chartArea) return;
+            ctx.save();
+            ctx.font = "10px ui-monospace, monospace";
+            ctx.textBaseline = "top";
+            for (const draw of markerDraws) {
+                const px = xScale.getPixelForValue(draw.x);
+                if (px < chartArea.left - 1 || px > chartArea.right + 1) continue;
+                ctx.beginPath();
+                ctx.moveTo(px, chartArea.top);
+                ctx.lineTo(px, chartArea.bottom);
+                ctx.lineWidth = 1.5;
+                ctx.strokeStyle = draw.color;
+                ctx.setLineDash([4, 3]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                if (!compact) {
+                    ctx.fillStyle = draw.color;
+                    ctx.save();
+                    ctx.translate(px + 3, chartArea.top + 2);
+                    ctx.fillText(draw.label, 0, 0);
+                    ctx.restore();
+                }
+            }
+            ctx.restore();
+        },
+    };
 
     let chartCanvas = $state<HTMLCanvasElement | null>(null);
     let selectedWindowMs = $state(10000);
@@ -357,6 +434,7 @@
             selectedWindowMs,
         );
 
+        markerDraws = computeMarkerDraws(renderClockMs, selectedWindowMs);
         chart.data.datasets = datasets;
         chart.options.scales = {
             x: {
@@ -418,6 +496,7 @@
     $effect(() => {
         selectedWindowMs;
         samples;
+        markers;
         syncChart();
     });
 
@@ -431,6 +510,7 @@
             data: {
                 datasets: [],
             },
+            plugins: [markerOverlayPlugin],
             options: {
                 responsive: true,
                 maintainAspectRatio: false,

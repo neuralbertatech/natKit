@@ -7,6 +7,7 @@
     import EmgTransforms from "./EmgTransforms.svelte";
     import MuseViewer from "./MuseViewer.svelte";
     import ClassificationViewer from "./ClassificationViewer.svelte";
+    import MarkerViewer from "./MarkerViewer.svelte";
     import SchemaDescriptorInspector from "./SchemaDescriptorInspector.svelte";
     import { router } from "tinro";
     import {
@@ -14,7 +15,7 @@
         descriptorSupportsNumericChannelFrames,
         findCompatibleTransformInputMappingId,
     } from "./schemaDescriptor";
-    import { chooseViewerRenderer } from "./viewerRegistry";
+    import { chooseViewerRenderer, MARKER_SCHEMA_NAME } from "./viewerRegistry";
     import type {
         DataSchemaDescriptor,
         StreamListMessage,
@@ -31,6 +32,8 @@
         MuseBulkDataMessage,
         EmgDataMessage,
         BufferedEmgSample,
+        MarkerMessage,
+        BufferedMarkerEvent,
         TransformProvenanceMessage,
         ImuSample,
         MuseSample,
@@ -76,6 +79,8 @@
     let imuBuffers = $state<Map<string, ImuSample[]>>(new Map());
     let museBuffers = $state<Map<string, MuseSample[]>>(new Map());
     let emgBuffers = $state<Map<string, BufferedEmgSample[]>>(new Map());
+    // Marker streams (MarkerEventV1) buffer their cue/session events here (Phase 2).
+    let markerBuffers = $state<Map<string, BufferedMarkerEvent[]>>(new Map());
     let transformProvenanceByStream = $state<
         Map<string, TransformProvenanceMessage>
     >(new Map());
@@ -231,6 +236,18 @@
                     frame_duration_ms: frameDurationMs,
                 });
             },
+            onMarker: (message: MarkerMessage) => {
+                addMarkerToBuffer(String(message.stream_id), {
+                    session_id: message.session_id,
+                    marker_type: message.marker_type,
+                    marker_id: message.marker_id,
+                    event: message.event,
+                    label: message.label,
+                    emitted_at_us: message.emitted_at_us,
+                    attributes: message.attributes ?? {},
+                    received_at_ms: Date.now(),
+                });
+            },
             onTransformProvenance: (message: TransformProvenanceMessage) => {
                 const nextMap = new Map(transformProvenanceByStream);
                 nextMap.set(String(message.stream_id), message);
@@ -324,6 +341,16 @@
         markStreamDataReceived(streamId);
     }
 
+    function addMarkerToBuffer(streamId: string, marker: BufferedMarkerEvent) {
+        const existing = markerBuffers.get(streamId) || [];
+        const next = [...existing, marker];
+        const capped = next.length > 2000 ? next.slice(-2000) : next;
+        const newMap = new Map(markerBuffers);
+        newMap.set(streamId, capped);
+        markerBuffers = newMap;
+        markStreamDataReceived(streamId);
+    }
+
     function toggleStreamSubscription(streamId: string) {
         if (subscribedStreams.has(streamId)) {
             wsManager?.unsubscribe([streamId]);
@@ -334,6 +361,8 @@
             museBuffers = new Map(museBuffers);
             emgBuffers.delete(streamId);
             emgBuffers = new Map(emgBuffers);
+            markerBuffers.delete(streamId);
+            markerBuffers = new Map(markerBuffers);
             transformProvenanceByStream.delete(streamId);
             transformProvenanceByStream = new Map(transformProvenanceByStream);
             streamTypes.delete(streamId);
@@ -783,6 +812,7 @@
                             {@const imuBuffer = imuBuffers.get(streamId) || []}
                             {@const museBuffer = museBuffers.get(streamId) || []}
                             {@const emgBuffer = emgBuffers.get(streamId) || []}
+                            {@const markerBuffer = markerBuffers.get(streamId) || []}
                             {@const latestImuSample =
                                 imuBuffer[imuBuffer.length - 1]}
                             {@const latestMuseSample =
@@ -817,6 +847,9 @@
                                           channel_labels:
                                               latestEmgSample.channel_labels,
                                       }
+                                    : undefined,
+                                markerBuffer.length > 0
+                                    ? MARKER_SCHEMA_NAME
                                     : undefined,
                             )}
                             {@const isExpanded = expandedStreams.has(streamId)}
@@ -905,6 +938,10 @@
                                                 </p>
                                             </div>
                                         {/if}
+                                    {:else if rendererKind === "marker"}
+                                        <div class="card-content">
+                                            <MarkerViewer markers={markerBuffer} />
+                                        </div>
                                     {:else if rendererKind === "classification" || rendererKind === "feature_vector" || rendererKind === "channel_frame"}
                                         {#if latestEmgSample}
                                             <div class="card-content">

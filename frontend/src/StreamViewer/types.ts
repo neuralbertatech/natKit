@@ -493,6 +493,18 @@ export interface SessionProtocol {
 // Config for a train node (Phase 5): mirrors the control-plane
 // start_train_validate_job payload. The dataset is selected by run selectors
 // ("<session_id>:<run_index>"); field selection is descriptor channel paths.
+// A model a train node produced (provenance edges, Phase 4). Stored on the
+// train node's config so it round-trips through editor_metadata; a
+// train→classify provenance edge lets a classify node pick from this list.
+export interface TrainedModel {
+  job_id: string;
+  bundle_path: string | null;
+  model_path: string | null;
+  family: string | null;
+  accuracy: number | null;
+  completed_at_us: number;
+}
+
 export interface TrainNodeConfig {
   families: string[];
   train_runs: string[];
@@ -505,6 +517,9 @@ export interface TrainNodeConfig {
   min_hold_windows: number;
   rest_gesture: string;
   active_gesture: string;
+  // Models this train node has produced (most-recent-appended). Populated on
+  // each completed job; surfaced as the train→classify model dropdown.
+  models?: TrainedModel[];
 }
 
 export type StreamGraphNodeKind =
@@ -626,6 +641,13 @@ export interface StreamGraphEdge {
   // channel flows. Toggled from the edge topic badge; honored by the target's
   // input resolution (viewer overlay, combine merge lanes).
   hidden_topic_types?: string[];
+  // Provenance edges express data lineage / control wiring (source->experiment,
+  // experiment->train, train->classify) rather than a streaming data path. They
+  // persist with the graph but are EXCLUDED from the executed data-flow — they
+  // resolve node configuration at author/submit time. "data" (default) is a
+  // normal streaming edge; "provenance" is dropped by flattenGraph (like param
+  // nodes) so the executed graph stays purely data edges.
+  edge_kind?: "data" | "provenance";
 }
 
 export interface StreamGraphDefinition {
