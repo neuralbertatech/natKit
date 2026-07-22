@@ -30,10 +30,7 @@ services:
       - natkit-v0-graphs:/graphs
       # Read trained models the control plane persists here (Phase 5, slice C)
       # so a classify node can load model_path directly.
-      # :z relabels the shared volume so this container can read files written by
-      # the control-plane/worker under SELinux (Fedora). Shared (:z), not private
-      # (:Z), because control-plane + worker + backend all use it.
-      - natkit-v0-models:/models:ro,z
+      - natkit-v0-models:/models:ro
 
   natkit-v0-ml-control-plane:
     image: natkit-ml-control-plane:dev
@@ -56,7 +53,7 @@ services:
     volumes:
       - ./uploads/ml-control-plane:/state:Z
       - natkit-v0-auth:/auth
-      - natkit-v0-models:/models:z
+      - natkit-v0-models:/models
     networks:
       - natkit-v0-kafka-network
     depends_on:
@@ -85,13 +82,8 @@ services:
       NATKIT_AUTH_BASE_URL: http://natkit-v0-backend:7409
       NATKIT_AUTH_USERNAME: ${NATKIT_ML_WORKER_AUTH_USERNAME:-}
       NATKIT_AUTH_PASSWORD: ${NATKIT_ML_WORKER_AUTH_PASSWORD:-}
-      # Durable model artifacts dir, shared rw with the backend/control plane so a
-      # job that lands on this remote worker can persist its model + bundle where
-      # the backend loads them (matches the control plane's NATKIT_ML_ARTIFACTS_DIR).
-      NATKIT_ML_ARTIFACTS_DIR: /models
     volumes:
       - ./uploads/ml-worker-a:/state:Z
-      - natkit-v0-models:/models:z
     networks:
       - natkit-v0-kafka-network
     depends_on:

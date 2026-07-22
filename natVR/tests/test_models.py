@@ -554,6 +554,71 @@ def test_reconstruct_session_supplements_marker_runs_with_metadata_only_runs() -
     assert [run.marker_count for run in runs] == [0, 2, 0]
 
 
+def test_reconstruct_session_folds_finish_metadata_without_end_marker() -> None:
+    # Regression: a recording's start + finish bundles both publish a metadata
+    # record with created_at_us == the session start. When the session/end marker
+    # is lost, the run is left "open" and the finish record's updated_at_us (the
+    # recording end-time) can fall past the last marker. Previously that finish
+    # record was minted as a phantom second run with marker_count=0. It must fold
+    # into the one real run instead, closing it at the finish record's updated_at.
+    markers = [
+        MarkerEventV1(
+            session_id="demo",
+            marker_type="session",
+            marker_id="session:demo",
+            event="start",
+            label="training",
+            emitted_at_us=1_000,
+            attributes={"device_ids": ["emg01"], "participant_id": "p1"},
+        ),
+        MarkerEventV1(
+            session_id="demo",
+            marker_type="cue",
+            marker_id="cue:1",
+            event="start",
+            label="fist",
+            emitted_at_us=2_000,
+            attributes={},
+        ),
+        MarkerEventV1(
+            session_id="demo",
+            marker_type="cue",
+            marker_id="cue:1",
+            event="end",
+            label="fist",
+            emitted_at_us=2_500,
+            attributes={},
+        ),
+    ]
+    records = [
+        # start bundle
+        SessionMetadataRecord(
+            session_id="demo",
+            participant_id="p1",
+            device_ids=("emg01",),
+            created_at_us=1_000,
+            updated_at_us=1_000,
+        ),
+        # finish bundle: updated_at is the recording end-time, past the last marker
+        SessionMetadataRecord(
+            session_id="demo",
+            participant_id="p1",
+            device_ids=("emg01",),
+            created_at_us=1_000,
+            updated_at_us=9_000,
+        ),
+    ]
+
+    runs = build_runs_for_session("demo", markers, records)
+
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.run_index == 1
+    assert run.start_us == 1_000
+    assert run.end_us == 9_000  # closed from the finish record despite no end marker
+    assert run.marker_count == 3
+
+
 def test_discover_runs_includes_metadata_only_sessions(monkeypatch) -> None:
     args = argparse.Namespace(
         broker="127.0.0.1:29092",

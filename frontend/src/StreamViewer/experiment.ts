@@ -74,6 +74,33 @@ export const EMG_GESTURE_PROTOCOL: SessionProtocol = {
     seed: 1,
 };
 
+// Finger-counting gestures — a digit-movement task where each cue is the hand
+// held at a finger count (1–5 extended). `rest` (relaxed/closed hand) is the
+// inter-cue filler class. Used as the default protocol for a new experiment node.
+export const FINGER_COUNTING_OPTIONS = [
+    "rest",
+    "count_1",
+    "count_2",
+    "count_3",
+    "count_4",
+    "count_5",
+] as const;
+
+export const FINGER_COUNTING_PROTOCOL: SessionProtocol = {
+    protocol_id: "finger-counting-v1",
+    label: "Finger counting",
+    // The cued classes are the five finger counts; `rest` is the filler between
+    // cues (so rest windows are still labeled without being a prompted gesture).
+    classes: ["count_1", "count_2", "count_3", "count_4", "count_5"],
+    rest_class: "rest",
+    repetitions: 3,
+    hold_s: 2,
+    rest_s: 2,
+    lead_in_s: 3,
+    tail_rest_s: 2,
+    seed: 1,
+};
+
 // Build a cue schedule from a generic protocol. The hold cues cycle the
 // protocol's class vocabulary; lead-in/rest/tail cues use its rest_class.
 export function buildCueScheduleForProtocol(

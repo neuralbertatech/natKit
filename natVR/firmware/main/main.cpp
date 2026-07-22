@@ -34,20 +34,78 @@
 #error "natVR firmware currently supports classic ESP32 and ESP32-C3 targets only"
 #endif
 
-// Transport selection: 0 = WiFi/MQTT (default), 1 = USB-serial backup.
-// Build the serial-backup image with -DNATVR_TRANSPORT_SERIAL=1 (or define it in
-// DevConfig.hpp). In serial mode the firmware writes the *same* newline-delimited
-// JSON frames to the USB serial console instead of publishing over MQTT, and WiFi
-// / NTP / MQTT are never brought up. A host shim (natvr-serial-bridge) reads the
-// lines and republishes them verbatim onto the standard MQTT topics, so the
-// bridge -> Kafka path is byte-identical to the WiFi transport.
-#ifndef NATVR_TRANSPORT_SERIAL
-#define NATVR_TRANSPORT_SERIAL 0
-#endif
+// Transport is a *runtime* mode (see TransportMode below) held in one firmware
+// image, seeded at boot from the menuconfig choice (main/Kconfig.projbuild ->
+// CONFIG_NATVR_TRANSPORT_*). In the serial path the firmware writes the *same*
+// newline-delimited JSON frames to the USB serial console instead of publishing
+// over MQTT; a host shim (natvr-serial-bridge) reads the lines and republishes
+// them verbatim onto the standard MQTT topics, so the bridge -> Kafka path is
+// byte-identical to the WiFi transport.
 
 namespace {
 
 constexpr char kTag[] = "natvr-emg-fw";
+
+// --- Transport mode -------------------------------------------------------
+// One firmware image, three runtime transports. The mode is seeded at boot from
+// the menuconfig choice and, in AUTO, flips between MQTT and the USB-serial
+// console per frame:
+//   WIRELESS - MQTT only (today's default); serial off.
+//   AUTO     - MQTT while connected; serial covers any MQTT outage (debounced).
+//   SERIAL   - USB-serial only; WiFi/NTP/MQTT are never brought up.
+enum class TransportMode { kWireless, kAuto, kSerial };
+
+// Seed from the Kconfig choice. Back-compat: an old `-DNATVR_TRANSPORT_SERIAL=1`
+// build (the previous mutually-exclusive serial image) still maps to SERIAL.
+constexpr TransportMode kDefaultTransportMode =
+#if defined(NATVR_TRANSPORT_SERIAL) && (NATVR_TRANSPORT_SERIAL)
+    TransportMode::kSerial;
+#elif defined(CONFIG_NATVR_TRANSPORT_SERIAL)
+    TransportMode::kSerial;
+#elif defined(CONFIG_NATVR_TRANSPORT_AUTO)
+    TransportMode::kAuto;
+#else
+    TransportMode::kWireless;
+#endif
+
+TransportMode g_transport_mode = kDefaultTransportMode;
+
+// In AUTO this tracks whether the serial fallback is currently emitting; it
+// flips (debounced) as MQTT drops and recovers. Written only by the publish
+// task's debounce evaluator, read by both the publish and heartbeat tasks.
+std::atomic<bool> g_serial_active{false};
+
+// AUTO debounce/hysteresis: emit serial only after MQTT has been down this long,
+// and return to MQTT only after it has been back up this long. Keeps a brief
+// reconnect blip from flapping the transport. Measured on the monotonic clock.
+constexpr uint64_t kAutoFallbackDebounceUs = 2'000'000;
+constexpr uint64_t kAutoRecoveryDebounceUs = 3'000'000;
+
+const char* transport_mode_name(TransportMode mode) {
+  switch (mode) {
+    case TransportMode::kWireless:
+      return "wireless";
+    case TransportMode::kAuto:
+      return "auto";
+    case TransportMode::kSerial:
+      return "serial";
+  }
+  return "unknown";
+}
+
+// True when the *current* frame should go to the USB-serial console instead of
+// MQTT: SERIAL always; AUTO while the debounced fallback is engaged.
+bool transport_wants_serial() {
+  switch (g_transport_mode) {
+    case TransportMode::kWireless:
+      return false;
+    case TransportMode::kSerial:
+      return true;
+    case TransportMode::kAuto:
+      return g_serial_active.load();
+  }
+  return false;
+}
 
 #if CONFIG_IDF_TARGET_ESP32
 constexpr uint32_t kMaxSupportedChannels = 4;
@@ -179,7 +237,6 @@ bool serialize_frame_json(const EmgFrameBuffer& frame, char** out_json) {
   return *out_json != nullptr;
 }
 
-#if NATVR_TRANSPORT_SERIAL
 // Writes one newline-delimited JSON frame to the USB serial console. puts() emits
 // the string plus a trailing '\n' in a single locked stdio call, so frames from
 // the publish and heartbeat tasks never interleave mid-line, and the host shim
@@ -188,7 +245,53 @@ void emit_serial_line(const char* json) {
   puts(json);
   fflush(stdout);
 }
-#endif
+
+// Flip the AUTO serial-fallback state on an edge: adjust the console log level so
+// the serial JSON stream stays clean while serial is emitting, and log the
+// transition (edge-triggered, so naturally rate-limited) for the booth operator.
+// ESP_LOGE still prints at ERROR level, so the operator sees the fallback notice.
+void set_serial_active(bool active) {
+  if (g_serial_active.exchange(active) == active) {
+    return;
+  }
+  if (active) {
+    esp_log_level_set("*", ESP_LOG_ERROR);
+    ESP_LOGE(kTag, "AUTO: MQTT down -> serial fallback engaged");
+  } else {
+    esp_log_level_set("*", ESP_LOG_INFO);
+    ESP_LOGI(kTag, "AUTO: wireless recovered -> serial fallback disengaged");
+  }
+}
+
+// AUTO transport evaluator, called once per publish-task loop. Applies the
+// debounce/hysteresis timers around the MQTT connected state and, on an edge,
+// engages/disengages the serial fallback via set_serial_active(). Only the
+// publish task calls this, so the static timers need no locking.
+void update_auto_serial_state() {
+  static uint64_t mqtt_down_since_us = 0;
+  static uint64_t mqtt_up_since_us = 0;
+  const uint64_t now_us = static_cast<uint64_t>(esp_timer_get_time());
+
+  if (networking_mqtt_is_connected()) {
+    mqtt_down_since_us = 0;
+    if (mqtt_up_since_us == 0) {
+      mqtt_up_since_us = now_us;
+    }
+    if (g_serial_active.load() &&
+        now_us - mqtt_up_since_us >= kAutoRecoveryDebounceUs) {
+      set_serial_active(false);
+    }
+  } else {
+    mqtt_up_since_us = 0;
+    if (mqtt_down_since_us == 0) {
+      mqtt_down_since_us = now_us;
+    }
+    if (!g_serial_active.load() &&
+        now_us - mqtt_down_since_us >= kAutoFallbackDebounceUs) {
+      set_serial_active(true);
+    }
+  }
+}
 
 bool serialize_status_json(char** out_json) {
   cJSON* root = cJSON_CreateObject();
@@ -199,6 +302,12 @@ bool serialize_status_json(char** out_json) {
   cJSON_AddStringToObject(root, "schema_version", "device.firmware.status.v1");
   cJSON_AddStringToObject(root, "device_id", NATVR_EMG_DEVICE_ID);
   cJSON_AddStringToObject(root, "status_device_id", NATVR_STATUS_DEVICE_ID);
+  // Transport visibility: which mode the image ships in, and (for AUTO) whether
+  // the serial fallback is currently carrying frames. natKit surfaces these so an
+  // operator can see the active path per device.
+  cJSON_AddStringToObject(root, "transport_mode",
+                          transport_mode_name(g_transport_mode));
+  cJSON_AddBoolToObject(root, "serial_active", transport_wants_serial());
   cJSON_AddNumberToObject(root, "sample_rate_hz", kSampleRateHzPerChannel);
   cJSON_AddNumberToObject(root, "samples_per_channel",
                           kSamplesPerChannelPerFrame);
@@ -241,12 +350,20 @@ bool serialize_status_json(char** out_json) {
 
 void publish_task(void* /*param*/) {
   while (true) {
-#if !NATVR_TRANSPORT_SERIAL
-    if (!networking_mqtt_is_connected()) {
+    // Re-evaluate the AUTO fallback each loop (no-op in WIRELESS/SERIAL), then
+    // decide this frame's transport once. A frame goes to MQTT *or* the console,
+    // never both, so one device can't double-publish a (device_id, seq_no).
+    if (g_transport_mode == TransportMode::kAuto) {
+      update_auto_serial_state();
+    }
+    const bool emit_serial = transport_wants_serial();
+
+    // On the wireless path (WIRELESS, or AUTO before fallback engages) hold
+    // frames while MQTT is down; the serial console has no such gate.
+    if (!emit_serial && !networking_mqtt_is_connected()) {
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
-#endif
 
     EmgFrameBuffer frame{};
     if (xQueuePeek(g_frame_queue, &frame, pdMS_TO_TICKS(100)) != pdTRUE) {
@@ -268,21 +385,20 @@ void publish_task(void* /*param*/) {
       continue;
     }
 
-#if NATVR_TRANSPORT_SERIAL
-    emit_serial_line(json);
-    cJSON_free(json);
-#else
-    const int result = networking_mqtt_publish(
-        g_mqtt_topic, reinterpret_cast<const uint8_t*>(json), std::strlen(json),
-        0, false);
-    cJSON_free(json);
-
-    if (result != 0) {
-      g_counters.mqtt_publish_failures.fetch_add(1);
-      vTaskDelay(pdMS_TO_TICKS(50));
-      continue;
+    if (emit_serial) {
+      emit_serial_line(json);
+      cJSON_free(json);
+    } else {
+      const int result = networking_mqtt_publish(
+          g_mqtt_topic, reinterpret_cast<const uint8_t*>(json),
+          std::strlen(json), 0, false);
+      cJSON_free(json);
+      if (result != 0) {
+        g_counters.mqtt_publish_failures.fetch_add(1);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        continue;
+      }
     }
-#endif
 
     (void)xQueueReceive(g_frame_queue, &frame, 0);
     g_counters.frames_published.fetch_add(1);
@@ -292,11 +408,12 @@ void publish_task(void* /*param*/) {
 void heartbeat_task(void* /*param*/) {
   while (true) {
     vTaskDelay(pdMS_TO_TICKS(kHeartbeatIntervalMs));
-#if !NATVR_TRANSPORT_SERIAL
-    if (!networking_mqtt_is_connected()) {
+    // Ride the same transport the publish task chose (AUTO fallback state is
+    // owned there); the status frame goes wherever the data frames are going.
+    const bool emit_serial = transport_wants_serial();
+    if (!emit_serial && !networking_mqtt_is_connected()) {
       continue;
     }
-#endif
 
     char* json = nullptr;
     if (!serialize_status_json(&json)) {
@@ -304,18 +421,18 @@ void heartbeat_task(void* /*param*/) {
       continue;
     }
 
-#if NATVR_TRANSPORT_SERIAL
-    emit_serial_line(json);
-    cJSON_free(json);
-#else
-    const int result = networking_mqtt_publish(
-        g_status_topic, reinterpret_cast<const uint8_t*>(json),
-        std::strlen(json), 0, false);
-    cJSON_free(json);
-    if (result != 0) {
-      g_counters.mqtt_publish_failures.fetch_add(1);
+    if (emit_serial) {
+      emit_serial_line(json);
+      cJSON_free(json);
+    } else {
+      const int result = networking_mqtt_publish(
+          g_status_topic, reinterpret_cast<const uint8_t*>(json),
+          std::strlen(json), 0, false);
+      cJSON_free(json);
+      if (result != 0) {
+        g_counters.mqtt_publish_failures.fetch_add(1);
+      }
     }
-#endif
   }
 }
 
@@ -451,35 +568,44 @@ void init_adc() {
 }  // namespace
 
 extern "C" void app_main(void) {
-  ESP_LOGI(kTag, "natVR EMG firmware starting");
+  ESP_LOGI(kTag, "natVR EMG firmware starting (transport=%s)",
+           transport_mode_name(g_transport_mode));
   configure_topics();
 
-#if NATVR_TRANSPORT_SERIAL
-  // Serial backup transport: no WiFi / NTP / MQTT. Quiet the logs so the JSON
-  // frame stream on the USB serial console stays clean for the host shim
-  // (error-level diagnostics still print; the shim skips any non-JSON line).
-  // Timestamps come from the local monotonic clock (gettimeofday, unsynced) —
-  // fine for a single-device serial capture where alignment is intra-session.
-  esp_log_level_set("*", ESP_LOG_ERROR);
-#else
-  ESP_ERROR_CHECK(networking_init() == 0 ? ESP_OK : ESP_FAIL);
-  ESP_ERROR_CHECK(networking_wifi_connect(WIFI_SSID, WIFI_PASSWORD, 30000) == 0
-                      ? ESP_OK
-                      : ESP_FAIL);
-  ESP_ERROR_CHECK(networking_ntp_init(NATVR_NTP_SERVER) == 0 ? ESP_OK
-                                                             : ESP_FAIL);
-  if (networking_ntp_wait_sync(60000) != 0) {
-    ESP_LOGW(kTag, "NTP sync timed out; continuing with local clock");
+  if (g_transport_mode == TransportMode::kSerial) {
+    // Serial-only backup: no WiFi / NTP / MQTT. Quiet the logs so the JSON frame
+    // stream on the USB serial console stays clean for the host shim (error-level
+    // diagnostics still print; the shim skips any non-JSON line). Timestamps come
+    // from the local monotonic clock (unsynced) — fine for a single-device serial
+    // capture where alignment is intra-session.
+    esp_log_level_set("*", ESP_LOG_ERROR);
+  } else {
+    // WIRELESS and AUTO both ride the wireless path as primary. Bring-up is
+    // best-effort and *non-fatal*: a demo device still boots (and, in AUTO, can
+    // fall back to serial) even if the hostile convention RF never lets it
+    // associate. The networking layer background-reconnects, so a later join or
+    // broker recovery still brings the primary path back on its own.
+    if (networking_init() != 0) {
+      ESP_LOGE(kTag,
+               "networking_init failed; continuing (AUTO can fall back to serial)");
+    } else {
+      if (networking_wifi_connect(WIFI_SSID, WIFI_PASSWORD, 30000) != 0) {
+        ESP_LOGW(kTag, "WiFi connect timed out; background reconnect will continue");
+      }
+      if (networking_ntp_init(NATVR_NTP_SERVER) != 0) {
+        ESP_LOGW(kTag, "NTP init failed; timestamps use the local clock until sync");
+      } else if (networking_ntp_wait_sync(60000) != 0) {
+        ESP_LOGW(kTag, "NTP sync timed out; continuing with local clock");
+      }
+      if (networking_mqtt_init(MQTT_BROKER_HOST, MQTT_BROKER_PORT, g_client_id,
+                               kMqttPayloadBufferSize) != 0) {
+        ESP_LOGE(kTag,
+                 "MQTT init failed; continuing (AUTO can fall back to serial)");
+      } else if (networking_mqtt_connect(30000) != 0) {
+        ESP_LOGW(kTag, "MQTT connect timed out; background reconnect will continue");
+      }
+    }
   }
-
-  ESP_ERROR_CHECK(networking_mqtt_init(MQTT_BROKER_HOST, MQTT_BROKER_PORT,
-                                       g_client_id, kMqttPayloadBufferSize) == 0
-                      ? ESP_OK
-                      : ESP_FAIL);
-  if (networking_mqtt_connect(30000) != 0) {
-    ESP_LOGW(kTag, "MQTT connect timed out; background reconnect will continue");
-  }
-#endif
 
   g_frame_queue = xQueueCreate(kFrameQueueDepth, sizeof(EmgFrameBuffer));
   if (g_frame_queue == nullptr) {

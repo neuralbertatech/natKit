@@ -92,7 +92,12 @@
         getOutputDescriptorForNode,
         getPortPosition,
         graphRunStateClass,
+        isProvenancePort,
         sanitizeIdentifier,
+        PROVENANCE_PORT_SOURCE,
+        PROVENANCE_PORT_EXPERIMENT,
+        PROVENANCE_PORT_MODELS,
+        PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
     } from "./streamGraph";
     import {
@@ -133,6 +138,7 @@
         StreamGraphExperimentNode,
         StreamGraphTrainNode,
         TrainNodeConfig,
+        TrainedModel,
         LiveStreamData,
         OutputChannelTopic,
         ChannelKind,
@@ -180,6 +186,17 @@
             mean_accuracy: number;
             min_accuracy: number;
             mean_coverage: number;
+        } | null;
+        // Phase 4 (provenance edges): the last completed train job as a model
+        // record, associated with the submitting train node for the classify
+        // model dropdown.
+        completedTrainJob: {
+            job_id: string;
+            bundle_path: string | null;
+            model_path: string | null;
+            family: string | null;
+            accuracy: number | null;
+            completed_at_us: number;
         } | null;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
         startStreamGraph: (graphId: string, startOffset?: number) => boolean;
@@ -229,6 +246,7 @@
         trainModelPath,
         trainBundlePath,
         trainAccuracy,
+        completedTrainJob,
         validateStreamGraph,
         startStreamGraph,
         stopStreamGraph,
@@ -248,6 +266,13 @@
     let draftGraph = $state<EditorGraphDefinition>(createEmptyGraph());
     let draftGraphLoadedKey = $state("");
     let graphDirty = $state(false);
+    // Once the user has picked/created/loaded a graph, the reconciliation effect
+    // must never auto-switch the draft to a DIFFERENT graph — otherwise a
+    // freshly-saved new graph (e.g. a starter template) gets clobbered in the
+    // window between sending the save and its reply landing in graphDefinitions
+    // (its id isn't in the list yet, so the old fallback jumped to another graph
+    // / a blank board). The effect still refreshes the SAME selected graph.
+    let userTouchedSelection = false;
     let selectedNodeId = $state<string | null>(null);
     let selectedNodeIds = $state<Set<string>>(new Set());
     let selectedEdgeId = $state<string | null>(null);
@@ -357,7 +382,11 @@
 
     $effect(() => {
         if (graphDefinitions.length === 0) {
-            if (!graphDirty) {
+            // Seed a blank board only on genuine first mount (nothing persisted
+            // and the user hasn't started anything). Never reseed over a draft
+            // the user is building or has just saved but whose save reply hasn't
+            // repopulated the list yet.
+            if (!graphDirty && !userTouchedSelection) {
                 const nextDraftGraph = createEmptyGraph();
                 draftGraph = nextDraftGraph;
                 selectedGraphId = nextDraftGraph.graph_id;
@@ -369,14 +398,27 @@
             return;
         }
 
-        const matchingGraph =
-            graphDefinitions.find((graph) => graph.graph_id === selectedGraphId) ??
-            graphDefinitions[0];
-        const graphKey = `${matchingGraph.graph_id}:${matchingGraph.updated_at_us ?? 0}`;
-
-        if (!selectedGraphId) {
-            selectedGraphId = matchingGraph.graph_id;
+        // Initial adoption: before the user has touched anything, follow the
+        // first persisted graph (or re-point off the seeded blank board once
+        // real graphs arrive). After the user picks/creates/loads a graph, the
+        // selection is theirs — we never switch to a different graph_id.
+        const selectionIsPersisted = graphDefinitions.some(
+            (graph) => graph.graph_id === selectedGraphId,
+        );
+        if (!userTouchedSelection && !graphDirty && !selectionIsPersisted) {
+            selectedGraphId = graphDefinitions[0].graph_id;
         }
+
+        const matchingGraph = graphDefinitions.find(
+            (graph) => graph.graph_id === selectedGraphId,
+        );
+        // Selected graph isn't in the persisted list yet (a new/renamed graph
+        // whose save is still in flight, or an unsaved draft) — keep the current
+        // draft; don't fall back to another graph.
+        if (!matchingGraph) {
+            return;
+        }
+        const graphKey = `${matchingGraph.graph_id}:${matchingGraph.updated_at_us ?? 0}`;
 
         if (!graphDirty && draftGraphLoadedKey !== graphKey) {
             const nextDraftGraph = resolveDraftForGraph(matchingGraph);
@@ -419,6 +461,62 @@
         selectedNode?.kind === "train" ? selectedNode : null,
     );
 
+    // Phase 3: experiments wired into the selected train node via an
+    // experiment→train provenance edge (prov_experiment). Their experiment_id is
+    // the recorded session_id, so the run picker can scope to exactly these
+    // sessions instead of listing every run on the broker.
+    const trainLineageExperimentIds = $derived.by(() => {
+        if (!selectedTrainNode) {
+            return [] as string[];
+        }
+        const ids = new Set<string>();
+        for (const edge of draftGraph.edges) {
+            if (
+                edge.edge_kind !== "provenance" ||
+                edge.target_node_id !== selectedTrainNode.id
+            ) {
+                continue;
+            }
+            const src = draftGraph.nodes.find(
+                (n) => n.id === edge.source_node_id,
+            );
+            if (src?.kind === "experiment") {
+                const eid = sanitizeIdentifier(src.config.experiment_id ?? "");
+                if (eid) {
+                    ids.add(eid);
+                }
+            }
+        }
+        return [...ids];
+    });
+
+    // True when a recorded run belongs to an experiment wired into the selected
+    // train node (its session_id matches a bound experiment's id).
+    function isRunInScope(run: RecordedRunSummary): boolean {
+        if (trainLineageExperimentIds.length === 0) {
+            return false;
+        }
+        return trainLineageExperimentIds.includes(
+            sanitizeIdentifier(run.session_id),
+        );
+    }
+
+    // Recorded runs for the picker. When experiment(s) are wired into the train
+    // node, their runs are surfaced FIRST (and badged), but every other recorded
+    // run stays visible below so you can still train across sessions/experiments.
+    // With no experiment wired, this is just every recorded run in order.
+    const trainScopedRuns = $derived.by(() => {
+        if (trainLineageExperimentIds.length === 0) {
+            return recordedRuns;
+        }
+        const inScope: RecordedRunSummary[] = [];
+        const others: RecordedRunSummary[] = [];
+        for (const run of recordedRuns) {
+            (isRunInScope(run) ? inScope : others).push(run);
+        }
+        return [...inScope, ...others];
+    });
+
     const selectedParamNode = $derived(
         selectedNode && isParamNode(selectedNode) ? selectedNode : null,
     );
@@ -457,6 +555,77 @@
               ) ?? null
             : null,
     );
+
+    // Phase 4: models offered to the selected classify node by a train→classify
+    // provenance edge. When the node has an inbound provenance edge into its
+    // prov_model port from a train node, list that trainer's models (newest
+    // first) so the operator picks one instead of pasting a path.
+    const classifyModelOptions = $derived.by(() => {
+        if (!selectedTransformNode) {
+            return [] as TrainedModel[];
+        }
+        const models: TrainedModel[] = [];
+        for (const edge of draftGraph.edges) {
+            if (
+                edge.edge_kind !== "provenance" ||
+                edge.target_node_id !== selectedTransformNode.id ||
+                edge.target_port !== PROVENANCE_PORT_MODEL
+            ) {
+                continue;
+            }
+            const src = draftGraph.nodes.find(
+                (n) => n.id === edge.source_node_id,
+            );
+            if (src?.kind === "train") {
+                models.push(...(src.config.models ?? []));
+            }
+        }
+        // Newest first; a model with a usable path is required to select.
+        return [...models]
+            .filter((m) => m.bundle_path || m.model_path)
+            .sort((a, b) => b.completed_at_us - a.completed_at_us);
+    });
+
+    // Phase 5: the model currently loaded by the selected classify node, matched
+    // back to a wired trainer's model by path — so the inspector shows which
+    // model (label + accuracy) the classifier is serving.
+    const selectedClassifyModel = $derived.by(() => {
+        const path = selectedTransformNode?.config?.model_path;
+        if (!path || classifyModelOptions.length === 0) {
+            return null;
+        }
+        return (
+            classifyModelOptions.find(
+                (m) => m.bundle_path === path || m.model_path === path,
+            ) ?? null
+        );
+    });
+
+    // The path a classify node loads for a given model: emg_gesture_classify
+    // loads the self-describing bundle; a legacy lda_classify loads the raw model
+    // path. Used both as the dropdown option value (so the current selection
+    // reflects) and when applying a pick.
+    function classifyModelPath(model: TrainedModel): string | null {
+        if (selectedTransformNode?.transform_kind === "lda_classify") {
+            return model.model_path ?? model.bundle_path;
+        }
+        return model.bundle_path ?? model.model_path;
+    }
+
+    // Apply a selected model to the classify node: writes config.model_path
+    // (explicit + re-selectable) and restarts if live.
+    function selectClassifyModel(path: string) {
+        if (!selectedTransformNode || !path) {
+            return;
+        }
+        const nodeId = selectedTransformNode.id;
+        updateSelectedNode((node) =>
+            node.kind === "transform"
+                ? { ...node, config: { ...node.config, model_path: path } }
+                : node,
+        );
+        scheduleReactiveRestart(nodeId);
+    }
 
     // Phase 8 (guided flows): transforms compatible with the selected node's
     // OUTPUT descriptor — the "recommended next" nodes a user can add in one
@@ -594,6 +763,7 @@
         nextGraph.ui.selected_node_id = selectedNodeId;
         draftGraph = nextGraph;
         graphDirty = true;
+        userTouchedSelection = true;
     }
 
     function selectGraph(graphId: string) {
@@ -611,6 +781,7 @@
             return;
         }
         selectedGraphId = graphId;
+        userTouchedSelection = true;
         draftGraph = resolveDraftForGraph(matchingGraph);
         draftGraphLoadedKey = `${matchingGraph.graph_id}:${matchingGraph.updated_at_us ?? 0}`;
         graphDirty = false;
@@ -634,6 +805,7 @@
         selectedGraphId = draftGraph.graph_id;
         draftGraphLoadedKey = selectedGraphId;
         graphDirty = true;
+        userTouchedSelection = true;
         selectedNodeId = null;
         selectedNodeIds = new Set();
         selectedEdgeId = null;
@@ -654,6 +826,7 @@
         selectedGraphId = draftGraph.graph_id;
         draftGraphLoadedKey = selectedGraphId;
         graphDirty = true;
+        userTouchedSelection = true;
         selectedNodeId = null;
         selectedNodeIds = new Set();
         selectedEdgeId = null;
@@ -874,6 +1047,12 @@
         }
         const nextGraph = cloneGraph(draftGraph);
         const nodeId = `transform/${sanitizeIdentifier(kind)}-${Date.now()}`;
+        // A classifier transform (one that loads a model bundle — detected by a
+        // model_path config field) can receive a train->classify provenance
+        // edge, so it exposes a prov_model input stub alongside its data input.
+        const takesModel = capability.config_fields.some(
+            (field) => field.id === "model_path",
+        );
         nextGraph.nodes.push({
             id: nodeId,
             kind: "transform",
@@ -885,7 +1064,9 @@
             output_identifier: sanitizeIdentifier(
                 `${draftGraph.graph_id}-${capability.kind}`,
             ),
-            input_port_ids: ["input"],
+            input_port_ids: takesModel
+                ? ["input", PROVENANCE_PORT_MODEL]
+                : ["input"],
             output_port_ids: ["output"],
         });
         selectedNodeId = nodeId;
@@ -1027,6 +1208,11 @@
             kind: "train",
             label: "Train",
             position: { ...position },
+            // Provenance stubs: an experiment wires into prov_experiment (which
+            // sessions to train on); its models flow out of prov_models into a
+            // classify node.
+            input_port_ids: [PROVENANCE_PORT_EXPERIMENT],
+            output_port_ids: [PROVENANCE_PORT_MODELS],
             config: buildDefaultTrainConfig(),
         });
         selectedNodeId = nodeId;
@@ -1064,7 +1250,9 @@
             kind: "experiment",
             label: "Experiment",
             position: { ...position },
-            input_port_ids: [],
+            // prov_source: a source can be wired in to record against this
+            // experiment (source->experiment lineage); no DATA inputs.
+            input_port_ids: [PROVENANCE_PORT_SOURCE],
             output_port_ids: ["markers"],
             config: buildDefaultExperimentConfig(),
         });
@@ -1386,6 +1574,37 @@
             return;
         }
 
+        // Provenance (lineage/control) edge? An edge is provenance when either
+        // endpoint is a provenance-typed port. A node's data output may originate
+        // one (the source-tap end, e.g. source→experiment or experiment→train); a
+        // provenance OUTPUT (train's models) must land on a provenance input.
+        // These edges are dropped from the executed graph — they resolve node
+        // config, not data flow — so they skip the data-edge compatibility rules
+        // below and never dedupe by target port (a train may bind several).
+        const targetIsProvenance = isProvenancePort(portId);
+        const sourceIsProvenance = isProvenancePort(connection.portId);
+        if (targetIsProvenance || sourceIsProvenance) {
+            if (sourceIsProvenance && !targetIsProvenance) {
+                connectionMessage =
+                    "⚠ A model output connects only to a model input.";
+                pendingConnection = null;
+                return;
+            }
+            const nextGraph = cloneGraph(draftGraph);
+            nextGraph.edges.push({
+                id: `edge-${Date.now()}`,
+                source_node_id: connection.nodeId,
+                source_port: connection.portId,
+                target_node_id: nodeId,
+                target_port: portId,
+                edge_kind: "provenance",
+            });
+            connectionMessage = null;
+            pendingConnection = null;
+            markDraftChanged(nextGraph);
+            return;
+        }
+
         // A marker stream (an experiment's `markers` output) is discrete events,
         // not a numeric frame — a transform can't process it. Combine, however,
         // is now a topic-aware merger (Part B): markers feed its marker lane and
@@ -1632,6 +1851,15 @@
         };
     });
 
+    // Phase 5: the device id(s) this experiment records against, resolved from
+    // its source→experiment provenance edge — so the operator can read which
+    // stream the session binds to (and reconstruction reads it directly).
+    const selectedExperimentBoundDevices = $derived.by(() =>
+        selectedSessionNode
+            ? resolveExperimentSourceDeviceIds(selectedSessionNode)
+            : [],
+    );
+
     // --- Session recording (Phase 4, slice C) -------------------------------
     // Recording is client-side: run the protocol cue timeline and publish the
     // session bundle (metadata + lifecycle + cue markers) via the backend under
@@ -1664,6 +1892,50 @@
             : null,
     );
 
+    // Resolve the device_id STRING(s) (e.g. "emg01") of the source(s) wired into
+    // this experiment via a source→experiment provenance edge (prov_source).
+    // Recording these onto the session bundle lets reconstruction read the right
+    // EMG topic directly (resolve_device_id), instead of scanning the broker to
+    // guess "the one device active in the session window" — the scan that hung
+    // and that breaks with more than one EMG device. (Phase 2.)
+    function resolveExperimentSourceDeviceIds(
+        node: StreamGraphExperimentNode,
+    ): string[] {
+        const deviceIds = new Set<string>();
+        for (const edge of draftGraph.edges) {
+            if (
+                edge.edge_kind !== "provenance" ||
+                edge.target_node_id !== node.id ||
+                edge.target_port !== PROVENANCE_PORT_SOURCE
+            ) {
+                continue;
+            }
+            const source = draftGraph.nodes.find(
+                (n) => n.id === edge.source_node_id,
+            );
+            if (!source) {
+                continue;
+            }
+            // The stream key the live device_id map is keyed by: a raw source's
+            // stream_id, or a transform/combine's runtime output stream id.
+            const streamKey =
+                source.kind === "stream_source"
+                    ? source.stream_id
+                        ? String(source.stream_id)
+                        : undefined
+                    : nodeRuntimeStatus(source.id)?.output_stream_id
+                      ? String(nodeRuntimeStatus(source.id)?.output_stream_id)
+                      : undefined;
+            const deviceId = streamKey
+                ? streamDeviceNames[streamKey]
+                : undefined;
+            if (deviceId) {
+                deviceIds.add(deviceId);
+            }
+        }
+        return [...deviceIds];
+    }
+
     function startSessionRecording(node: StreamGraphExperimentNode) {
         if (sessionRecording) {
             return;
@@ -1675,11 +1947,12 @@
                 "Protocol has no cues — add classes and timing first.";
             return;
         }
-        // An experiment is source-like: it emits markers independently of any
-        // data stream, so there are no upstream device ids to record. The raw
-        // data already lives in Kafka; the markers are the deliverable and
-        // anything consuming them correlates by time.
-        const streamIds: string[] = [];
+        // Deterministic session↔stream binding (Phase 2): stamp the resolved
+        // device_id string(s) of the source(s) wired in via a source→experiment
+        // provenance edge, so reconstruction reads the right topic directly. If
+        // no source is bound (or its device_id hasn't been seen live yet), this
+        // is empty and reconstruction falls back to its window scan as before.
+        const streamIds = resolveExperimentSourceDeviceIds(node);
         // Record under the node's stable experiment_id so the published markers
         // land on the same Marker/<experiment_id> topic the `markers` output
         // port resolves to (downstream marker-aware nodes subscribe to it).
@@ -1915,6 +2188,47 @@
         }
         lastAutoFilledBundlePath = bundlePath;
         autofillClassifyModelPath(bundlePath, trainModelPath);
+    });
+
+    // Phase 4: the train node whose job we most recently submitted, so a
+    // completed job can be recorded onto the right node's model list.
+    let pendingTrainNodeId: string | null = null;
+    function submitTrainJobForNode(node: StreamGraphTrainNode) {
+        pendingTrainNodeId = node.id;
+        submitTrainJob(node.config);
+    }
+
+    // Associate each completed train job with the submitting train node: append
+    // it to that node's config.models (deduped by job_id) so it round-trips
+    // through editor_metadata and a train→classify provenance edge can offer it
+    // in a re-selectable model dropdown.
+    let lastRecordedTrainJobId: string | null = null;
+    $effect(() => {
+        const job = completedTrainJob;
+        if (!job || job.job_id === lastRecordedTrainJobId) {
+            return;
+        }
+        lastRecordedTrainJobId = job.job_id;
+        const nodeId = pendingTrainNodeId;
+        if (!nodeId) {
+            return;
+        }
+        const nextGraph = cloneGraph(draftGraph);
+        const target = nextGraph.nodes.find(
+            (n) => n.id === nodeId && n.kind === "train",
+        ) as StreamGraphTrainNode | undefined;
+        if (!target) {
+            return;
+        }
+        const existing = target.config.models ?? [];
+        if (existing.some((m) => m.job_id === job.job_id)) {
+            return;
+        }
+        target.config = {
+            ...target.config,
+            models: [...existing, { ...job }],
+        };
+        markDraftChanged(nextGraph);
     });
 
     // Flatten composites into primitives for the backend (which only understands
@@ -2184,7 +2498,17 @@
         const nextCue = isRecording
             ? nextCueAfterElapsedMs(schedule, elapsedMs)
             : null;
-        const holdCues = schedule.filter((c) => c.phase === "hold").length;
+        const holdCuesList = schedule.filter((c) => c.phase === "hold");
+        const holdCues = holdCuesList.length;
+        // Progress info for the run surface: which repetition we're in, how many
+        // gesture holds are left, so the participant can pace themselves.
+        const holdsDone = isRecording
+            ? holdCuesList.filter((c) => c.end_offset_ms <= elapsedMs).length
+            : 0;
+        const currentRep =
+            activeCue && activeCue.rep_index >= 0
+                ? activeCue.rep_index + 1
+                : null;
         return {
             protocolLabel: protocol.label,
             classes: protocol.classes,
@@ -2194,6 +2518,10 @@
             durationMs,
             activeCue,
             nextCue,
+            totalReps: protocol.repetitions,
+            currentRep,
+            holdsTotal: holdCues,
+            holdsRemaining: Math.max(0, holdCues - holdsDone),
             summary: { holdCues, durationS: Math.round(durationMs / 1000) },
         };
     }
@@ -2838,6 +3166,10 @@
             durationMs={view.durationMs}
             activeCue={view.activeCue}
             nextCue={view.nextCue}
+            totalReps={view.totalReps}
+            currentRep={view.currentRep}
+            holdsRemaining={view.holdsRemaining}
+            holdsTotal={view.holdsTotal}
             summary={view.summary}
             onRecord={() => startSessionRecording(node)}
             onStop={() => finishSessionRecording(false)}
@@ -3298,8 +3630,10 @@
                             <path
                                 class:selected={edge.id === selectedEdgeId}
                                 class:edge-invalid={edgeDiagnostics(edge.id).length > 0}
+                                class:edge-provenance={edge.edge_kind ===
+                                    "provenance"}
                                 class:edge-running={selectedGraphStatus?.run_state ===
-                                    "running"}
+                                    "running" && edge.edge_kind !== "provenance"}
                                 class="graph-edge"
                                 role="button"
                                 tabindex="0"
@@ -3397,7 +3731,7 @@
                         {@const targetNode = draftGraph.nodes.find(
                             (n) => n.id === edge.target_node_id,
                         )}
-                        {#if sourceNode && targetNode}
+                        {#if sourceNode && targetNode && edge.edge_kind !== "provenance"}
                             {@const sp = getPortPoint(
                                 sourceNode,
                                 edge.source_port,
@@ -3678,6 +4012,57 @@
                                     </select>
                                 </label>
 
+                                {#if classifyModelOptions.length > 0}
+                                    <label>
+                                        <span>Model (from wired trainer)</span>
+                                        <select
+                                            value={selectedTransformNode.config
+                                                ?.model_path ?? ""}
+                                            onchange={(event) =>
+                                                selectClassifyModel(
+                                                    (
+                                                        event.currentTarget as HTMLSelectElement
+                                                    ).value,
+                                                )}
+                                        >
+                                            <option value="" disabled
+                                                >Pick a trained model…</option
+                                            >
+                                            {#each classifyModelOptions as model}
+                                                {@const path =
+                                                    classifyModelPath(model)}
+                                                {#if path}
+                                                    <option value={path}>
+                                                        {model.family ?? "model"}
+                                                        {model.accuracy != null
+                                                            ? `· ${(model.accuracy * 100).toFixed(1)}%`
+                                                            : ""}
+                                                        · {new Date(
+                                                            model.completed_at_us /
+                                                                1000,
+                                                        ).toLocaleString()}
+                                                    </option>
+                                                {/if}
+                                            {/each}
+                                        </select>
+                                    </label>
+                                    {#if selectedClassifyModel}
+                                        <p class="run-picker-scope">
+                                            Serving {selectedClassifyModel.family ??
+                                                "model"}{selectedClassifyModel.accuracy !=
+                                            null
+                                                ? ` · ${(selectedClassifyModel.accuracy * 100).toFixed(1)}% val`
+                                                : ""}.
+                                        </p>
+                                    {:else if !selectedTransformNode.config
+                                        ?.model_path}
+                                        <p class="run-picker-scope warn">
+                                            No model selected — pick one to go
+                                            live.
+                                        </p>
+                                    {/if}
+                                {/if}
+
                                 <NodeConfigFields
                                     fields={selectedNodeCapability.config_fields}
                                     config={selectedTransformNode.config}
@@ -3898,7 +4283,19 @@
                                 </div>
                             {/if}
                             <div class="summary-row">
-                                <span>Emits a marker timeline (no inputs)</span>
+                                {#if selectedExperimentBoundDevices.length > 0}
+                                    <span>Records against</span>
+                                    <strong
+                                        >{selectedExperimentBoundDevices.join(
+                                            ", ",
+                                        )}</strong
+                                    >
+                                {:else}
+                                    <span
+                                        >Emits markers; wire a source into its
+                                        lineage port to bind a device</span
+                                    >
+                                {/if}
                             </div>
                             <div class="inspector-action-row">
                                 {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
@@ -3979,17 +4376,39 @@
                                         <RefreshCw size={13} />
                                     </button>
                                 </div>
-                                {#if recordedRuns.length === 0}
-                                    <p class="muted-text">
-                                        No recorded runs yet. Record a session, then
-                                        refresh.
+                                {#if trainLineageExperimentIds.length > 0}
+                                    <p class="run-picker-scope">
+                                        Runs from the wired experiment{trainLineageExperimentIds.length >
+                                        1
+                                            ? "s"
+                                            : ""} ({trainLineageExperimentIds.join(
+                                            ", ",
+                                        )}) are shown first; all recorded runs are
+                                        listed so you can train across sessions.
                                     </p>
                                 {:else}
-                                    {#each recordedRuns as run}
+                                    <p class="run-picker-scope warn">
+                                        No experiment wired — listing every
+                                        recorded run. Draw an experiment→train
+                                        edge to surface its runs first.
+                                    </p>
+                                {/if}
+                                {#if trainScopedRuns.length === 0}
+                                    <p class="muted-text">
+                                        No recorded runs yet. Record a session,
+                                        then refresh.
+                                    </p>
+                                {:else}
+                                    {#each trainScopedRuns as run}
                                         {@const sel = runSelector(run)}
                                         <div class="run-pick-row">
                                             <span class="run-pick-label">
                                                 {run.session_id} · run {run.run_index}
+                                                {#if isRunInScope(run)}
+                                                    <span class="run-pick-scope-badge"
+                                                        >wired</span
+                                                    >
+                                                {/if}
                                                 <span class="run-pick-meta">
                                                     {run.marker_count} markers{run.protocol_id
                                                         ? ` · ${run.protocol_id}`
@@ -4037,7 +4456,10 @@
                                 />
                             </label>
                             <label>
-                                <span>Eval runs (session:run, comma-separated)</span>
+                                <span
+                                    >Eval / validation runs (optional,
+                                    comma-separated)</span
+                                >
                                 <input
                                     value={cfg.eval_runs.join(", ")}
                                     oninput={(event) =>
@@ -4079,15 +4501,21 @@
                                     type="button"
                                     class="action-btn"
                                     disabled={cfg.families.length === 0 ||
-                                        cfg.train_runs.length === 0 ||
-                                        cfg.eval_runs.length === 0}
+                                        cfg.train_runs.length === 0}
                                     onclick={() =>
-                                        submitTrainJob(selectedTrainNode.config)}
+                                        submitTrainJobForNode(selectedTrainNode)}
                                 >
                                     <Cpu size={15} />
                                     Submit training job
                                 </button>
                             </div>
+                            {#if cfg.train_runs.length > 0 && cfg.eval_runs.length === 0}
+                                <p class="run-picker-scope">
+                                    No validation run — trains on the selected
+                                    run(s), no held-out accuracy reported. Add an
+                                    Eval run for an accuracy estimate.
+                                </p>
+                            {/if}
                             {#if trainJobStatus}
                                 <div class="summary-row">
                                     <span>Job</span>
@@ -4642,7 +5070,7 @@
 {#if expandedExperimentNode && expandedExperimentNode.kind === "experiment"}
     {@const view = experimentRunView(expandedExperimentNode)}
     <div
-        class="viewer-data-overlay"
+        class="viewer-data-overlay experiment-modal-overlay"
         role="presentation"
         onclick={() => (expandedExperimentNodeId = null)}
         onkeydown={(event) => {
@@ -4680,6 +5108,10 @@
                     durationMs={view.durationMs}
                     activeCue={view.activeCue}
                     nextCue={view.nextCue}
+                    totalReps={view.totalReps}
+                    currentRep={view.currentRep}
+                    holdsRemaining={view.holdsRemaining}
+                    holdsTotal={view.holdsTotal}
                     summary={view.summary}
                     onRecord={() =>
                         startSessionRecording(
@@ -4805,6 +5237,13 @@
         overflow: auto;
         border-radius: 8px;
         transition: transform 0.18s ease, opacity 0.18s ease;
+    }
+
+    /* Each section keeps its natural height and the sidebar scrolls as a whole.
+       Without this, flexbox shrinks the sections to fit the column height and
+       their (overflow-visible) content spills over and overlaps neighbours. */
+    .graph-sidebar > * {
+        flex-shrink: 0;
     }
 
     /* Floating menus slide off-canvas when hidden so the board fills the page. */
@@ -5018,6 +5457,15 @@
         font-weight: 600;
     }
 
+    .run-picker-scope {
+        margin: 0;
+        color: #8ea2f5;
+        font-size: 0.7rem;
+    }
+    .run-picker-scope.warn {
+        color: #e0b072;
+    }
+
     .run-pick-row {
         display: flex;
         align-items: center;
@@ -5037,6 +5485,17 @@
     .run-pick-meta {
         color: #6b7a99;
         font-size: 0.68rem;
+    }
+
+    .run-pick-scope-badge {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 999px;
+        background: #21406e;
+        color: #9dc3ff;
+        font-size: 0.62rem;
+        vertical-align: middle;
     }
 
     .run-pick-btn {
@@ -5458,6 +5917,20 @@
         animation: edge-flow 0.6s linear infinite;
     }
 
+    /* Provenance edges: lineage/control wiring (source→experiment, experiment→
+       train, train→classify), not a streaming data path. Rendered dashed + blue
+       so they read as distinct from solid data edges; excluded from execution. */
+    .graph-edge.edge-provenance {
+        stroke: rgba(91, 123, 219, 0.85);
+        stroke-width: 2.5;
+        stroke-dasharray: 7 5;
+    }
+    .graph-edge.edge-provenance.selected {
+        stroke: #8ea2f5;
+        stroke-width: 3.5;
+        filter: drop-shadow(0 0 4px rgba(91, 123, 219, 0.6));
+    }
+
     .graph-edge.graph-edge-drag {
         stroke: #ffcf85;
         stroke-dasharray: 5 5;
@@ -5756,15 +6229,29 @@
         box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
     }
 
+    /* Full-screen focus mode: run the experiment edge-to-edge with nothing else
+       on screen (participant/operator focus during a recording session). */
+    .experiment-modal-overlay {
+        padding: 0;
+        background: rgba(3, 6, 14, 0.94);
+    }
+
     .experiment-modal-panel {
-        width: min(92vw, 1100px);
+        width: 100vw;
+        height: 100vh;
+        max-height: 100vh;
+        border: none;
+        border-radius: 0;
+        padding: 1.5rem clamp(1.5rem, 6vw, 6rem);
+        gap: 1.25rem;
     }
 
     .experiment-modal-body {
+        flex: 1;
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 50vh;
+        min-height: 0;
     }
 
     .viewer-data-header {

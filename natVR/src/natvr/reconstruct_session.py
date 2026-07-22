@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
@@ -458,6 +458,66 @@ def record_matches_run_window(
     )
 
 
+def fold_metadata_records_into_runs(
+    session_id: str,
+    runs: list[DiscoveredRun],
+    records: list[SessionMetadataRecord],
+) -> list[DiscoveredRun]:
+    """Attach each metadata record to the run it belongs to instead of spawning a
+    phantom 0-marker run for it.
+
+    A recording publishes a start bundle and a finish bundle whose metadata records
+    BOTH carry ``created_at_us == session start`` — the same value as the run's
+    ``start_us`` (the ``session/start`` marker). Previously the finish record, whose
+    ``updated_at_us`` (recording end-time) can fall past the last marker, failed the
+    window-containment test and was minted as a separate run with ``marker_count=0``.
+
+    Here a record is matched to a run first by ``created_at_us == run.start_us`` (same
+    session start), falling back to window containment. A matched record extends the
+    run's end / last-activity to its ``updated_at_us`` — which also closes a run left
+    "open" (``end_us is None``) by a missing ``session/end`` marker — and upgrades the
+    run's ``selected_record`` to the latest one. Only records matching no run become
+    their own runs (a genuinely separate session start with no markers).
+    """
+    if not records:
+        return runs
+
+    runs_by_start: dict[int, int] = {}
+    for index, run in enumerate(runs):
+        runs_by_start.setdefault(run.start_us, index)
+
+    unmatched: list[SessionMetadataRecord] = []
+    for record in records:
+        index = runs_by_start.get(int(record.created_at_us))
+        if index is None:
+            for run_index, run in enumerate(runs):
+                if record_matches_run_window(record, run):
+                    index = run_index
+                    break
+        if index is None:
+            unmatched.append(record)
+            continue
+
+        run = runs[index]
+        record_end_us = max(record.updated_at_us, record.created_at_us)
+        new_end_us = record_end_us if run.end_us is None else max(run.end_us, record_end_us)
+        selected = run.selected_record
+        if selected is None or record_end_us >= max(
+            selected.updated_at_us, selected.created_at_us
+        ):
+            selected = record
+        runs[index] = replace(
+            run,
+            end_us=new_end_us,
+            last_activity_us=max(run.last_activity_us, record_end_us),
+            selected_record=selected,
+        )
+
+    if unmatched:
+        runs.extend(build_runs_from_metadata_records(session_id, unmatched))
+    return runs
+
+
 def build_runs_for_session(
     session_id: str,
     markers: list[MarkerEventV1],
@@ -496,12 +556,7 @@ def build_runs_for_session(
                 start_marker=None,
             )
         ]
-        uncovered_records = [
-            record
-            for record in records
-            if not any(record_matches_run_window(record, run) for run in runs)
-        ]
-        runs.extend(build_runs_from_metadata_records(session_id, uncovered_records))
+        runs = fold_metadata_records_into_runs(session_id, runs, list(records))
         runs.sort(key=lambda run: (run.start_us, run.last_activity_us, run.end_us or 0))
         return [
             DiscoveredRun(
@@ -580,12 +635,7 @@ def build_runs_for_session(
             )
         )
 
-    uncovered_records = [
-        record
-        for record in records
-        if not any(record_matches_run_window(record, run) for run in runs)
-    ]
-    runs.extend(build_runs_from_metadata_records(session_id, uncovered_records))
+    runs = fold_metadata_records_into_runs(session_id, runs, list(records))
     runs.sort(key=lambda run: (run.start_us, run.last_activity_us, run.end_us or 0))
 
     normalized_runs: list[DiscoveredRun] = []

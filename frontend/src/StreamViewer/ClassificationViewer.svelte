@@ -38,15 +38,25 @@
         }
         const predictedName =
             rows[predictedIndex]?.name ?? `class ${predictedIndex}`;
-        return { predictedName, rows };
+        const predictedConfidence = Math.max(
+            0,
+            Math.min(1, rows[predictedIndex]?.confidence ?? 0),
+        );
+        return { predictedName, predictedConfidence, rows };
     });
 </script>
 
 {#if readout}
     <div class="classification-viewer">
-        <div class="prediction">
-            <span class="label">Predicted class</span>
-            <strong>{readout.predictedName}</strong>
+        <div class="prediction-indicator">
+            <span class="indicator-dot"></span>
+            <div class="indicator-text">
+                <span class="label">Detected gesture</span>
+                <strong>{readout.predictedName}</strong>
+            </div>
+            <span class="indicator-conf"
+                >{(readout.predictedConfidence * 100).toFixed(0)}%</span
+            >
         </div>
         <div class="confidences">
             {#each readout.rows as row}
@@ -74,21 +84,67 @@
         gap: 1rem;
     }
 
-    .prediction {
+    /* Prominent "what it thinks right now" indicator — the big teal readout at
+       the top so the current predicted gesture is obvious at a glance. */
+    .prediction-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+        background: rgba(15, 118, 110, 0.1);
+        border: 1px solid rgba(15, 118, 110, 0.35);
+    }
+
+    .indicator-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        background: #0f766e;
+        box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.18);
+        flex-shrink: 0;
+        animation: indicator-pulse 1.4s ease-in-out infinite;
+    }
+
+    @keyframes indicator-pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.4;
+        }
+    }
+
+    .indicator-text {
         display: flex;
         flex-direction: column;
-        gap: 0.25rem;
+        gap: 0.1rem;
+        flex: 1;
+        min-width: 0;
     }
 
-    .prediction .label {
+    .indicator-text .label {
         color: #64748b;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         text-transform: uppercase;
+        letter-spacing: 0.06em;
     }
 
-    .prediction strong {
-        font-size: 1.6rem;
+    .indicator-text strong {
+        font-size: 1.8rem;
+        line-height: 1.1;
         color: #0f766e;
+        text-transform: capitalize;
+        word-break: break-word;
+    }
+
+    .indicator-conf {
+        font-size: 1.5rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: #0f766e;
+        flex-shrink: 0;
     }
 
     .confidences {

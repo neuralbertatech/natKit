@@ -41,15 +41,31 @@ describe("Convention EMG Quick-Start template", () => {
 
         // Source feeds both the raw viewer (exploration) and the classifier;
         // classifier feeds the prediction viewer; experiment feeds the cue viewer.
-        const edgePairs = graph.edges
+        const dataEdgePairs = graph.edges
+            .filter((e) => e.edge_kind !== "provenance")
             .map((e) => `${e.source_node_id}->${e.target_node_id}`)
             .sort();
-        expect(edgePairs).toEqual(
+        expect(dataEdgePairs).toEqual(
             [
                 "source->raw-viewer",
                 "source->classify",
                 "classify->classify-viewer",
                 "experiment->markers-viewer",
+            ].sort(),
+        );
+
+        // Provenance (lineage) edges make the wiring explicit: source→experiment
+        // (device binding), experiment→train (run sourcing), train→classify
+        // (model dropdown).
+        const provEdgePairs = graph.edges
+            .filter((e) => e.edge_kind === "provenance")
+            .map((e) => `${e.source_node_id}->${e.target_node_id}`)
+            .sort();
+        expect(provEdgePairs).toEqual(
+            [
+                "source->experiment",
+                "experiment->train",
+                "train->classify",
             ].sort(),
         );
     });

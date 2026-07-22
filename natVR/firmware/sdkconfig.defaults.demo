@@ -1,0 +1,9 @@
+# One-command convention-demo build: wireless-primary with automatic serial
+# fallback (AUTO). Layer this on top of sdkconfig.defaults:
+#
+#   idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.demo" build
+#
+# The AUTO image needs no live toggle at the booth: it rides WiFi/MQTT while the
+# RF holds and transparently covers any dropout over USB-serial (pair it with the
+# host shim, natvr-serial-bridge, running against the booth laptop).
+CONFIG_NATVR_TRANSPORT_AUTO=y

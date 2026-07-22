@@ -16,6 +16,30 @@ export interface GraphStreamOption {
     live: boolean;
 }
 
+// Provenance ports carry data lineage / control wiring, not streaming data.
+// They are identified purely by an id prefix so the editor can classify an edge
+// as provenance from its endpoints (a provenance-typed port on either end makes
+// the edge a provenance edge), render them distinctly, and validate connect
+// rules. Dedicated stubs (per the plan's lean): experiment/train/classify each
+// expose one; the source end taps its normal data-output port.
+export const PROVENANCE_PORT_PREFIX = "prov_";
+// The experiment node's inbound lineage port (source → experiment): "records
+// against this stream".
+export const PROVENANCE_PORT_SOURCE = "prov_source";
+// The train node's inbound lineage port (experiment → train): "train on this
+// experiment's sessions".
+export const PROVENANCE_PORT_EXPERIMENT = "prov_experiment";
+// The train node's outbound lineage port (train → classify): "the models this
+// trainer produced".
+export const PROVENANCE_PORT_MODELS = "prov_models";
+// The classify node's inbound lineage port (train → classify): "classify with a
+// model this trainer produced".
+export const PROVENANCE_PORT_MODEL = "prov_model";
+
+export function isProvenancePort(portId: string | undefined | null): boolean {
+    return typeof portId === "string" && portId.startsWith(PROVENANCE_PORT_PREFIX);
+}
+
 export const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 export const NODE_WIDTH = 220;
 export const HEADER_HEIGHT = 42;

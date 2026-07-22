@@ -6,11 +6,16 @@
         Cpu,
         GitBranch,
         LineChart,
+        Maximize2,
         Monitor,
         Package,
         SlidersHorizontal,
     } from "@lucide/svelte";
-    import { getNodeHeight, graphRunStateClass } from "./streamGraph";
+    import {
+        getNodeHeight,
+        graphRunStateClass,
+        isProvenancePort,
+    } from "./streamGraph";
     import type { StreamGraphNodeStatus } from "../StreamViewer/types";
     import type { EditorGraphNode } from "./composites";
     import { onMount, type Snippet } from "svelte";
@@ -30,9 +35,20 @@
         pendingConnection: { nodeId: string; portId: string } | null;
         // Renders a viewer node's live chart on the card when inline_graph is on.
         inlineViewerChart?: Snippet<[EditorGraphNode]>;
+        // Renders an experiment node's run panel on the card when inline_experiment is on.
+        inlineExperiment?: Snippet<[EditorGraphNode]>;
         // Friendly device names per stream id (from the metadata/device_id); a
         // source node prefers this over its raw stream id.
         streamDeviceNames?: Record<string, string>;
+        // Topic-aware channels (Part B): per-input-port label override, keyed by
+        // port id — e.g. a combine input relabels itself data/markers/stream from
+        // the channel it is fed. Falls back to the raw port id when absent.
+        inputPortLabels?: Record<string, string>;
+        // Part D: a viewer's phantom markers input — shown only when the incoming
+        // channel carries markers. "available" = overlay off, "on" = enabled.
+        markersPhantom?: "on" | "available";
+        // Toggles the marker overlay (the phantom markers input click).
+        onToggleMarkers?: (nodeId: string) => void;
         // Reports each port dot's offset from the node's top-left (unscaled graph
         // px) so edges can anchor to the real dots regardless of node size.
         onPortLayout?: (nodeId: string, anchors: PortAnchor[]) => void;
@@ -40,6 +56,8 @@
         onResize?: (nodeId: string, width: number, height: number) => void;
         // Toggles a viewer node's inline live graph from the node card itself.
         onToggleInlineGraph?: (nodeId: string, enabled: boolean) => void;
+        // Toggles an experiment node's inline run panel from the node card.
+        onToggleInlineExperiment?: (nodeId: string, enabled: boolean) => void;
         onSelect: (nodeId: string, event?: MouseEvent) => void;
         onStartDrag: (event: MouseEvent, nodeId: string) => void;
         onPortClick: (
@@ -65,10 +83,15 @@
         invalid,
         pendingConnection,
         inlineViewerChart,
+        inlineExperiment,
         streamDeviceNames,
+        inputPortLabels,
+        markersPhantom,
+        onToggleMarkers,
         onPortLayout,
         onResize,
         onToggleInlineGraph,
+        onToggleInlineExperiment,
         onSelect,
         onStartDrag,
         onPortClick,
@@ -79,6 +102,9 @@
 
     const showInlineGraph = $derived(
         node.kind === "viewer" && node.inline_graph === true,
+    );
+    const showInlineExperiment = $derived(
+        node.kind === "experiment" && node.inline_experiment === true,
     );
 
     function handleNodeMouseDown(event: MouseEvent) {
@@ -208,7 +234,11 @@
     onclick={(event) => event.stopPropagation()}
     ondblclick={(event) => {
         event.stopPropagation();
-        if (node.kind === "composite" || node.kind === "viewer") {
+        if (
+            node.kind === "composite" ||
+            node.kind === "viewer" ||
+            node.kind === "experiment"
+        ) {
             onExpand?.(node.id);
         }
     }}
@@ -230,7 +260,7 @@
                 <Archive size={14} />
             {:else if node.kind === "composite"}
                 <Package size={14} />
-            {:else if node.kind === "session"}
+            {:else if node.kind === "experiment"}
                 <ClipboardList size={14} />
             {:else if node.kind === "train"}
                 <Cpu size={14} />
@@ -261,9 +291,13 @@
                 <button
                     type="button"
                     class:port-armed={pendingConnection !== null}
+                    class:port-provenance={isProvenancePort(portId)}
                     class="port-button input"
                     data-node-id={node.id}
                     data-port-id={portId}
+                    title={isProvenancePort(portId)
+                        ? "Lineage input (provenance edge)"
+                        : undefined}
                     onmousedown={(event) => {
                         event.stopPropagation();
                         onPortMouseDown?.(event, node.id, portId, "input");
@@ -275,13 +309,32 @@
                 >
                     <span
                         class="port-dot"
+                        class:port-dot-provenance={isProvenancePort(portId)}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="input"
                     ></span>
-                    <span>{portId}</span>
+                    <span>{inputPortLabels?.[portId] ?? portId}</span>
                 </button>
             {/each}
+            {#if markersPhantom}
+                <button
+                    type="button"
+                    class="port-button input port-phantom"
+                    class:port-phantom-on={markersPhantom === "on"}
+                    title={markersPhantom === "on"
+                        ? "Markers overlay on — click to hide"
+                        : "This link carries markers — click to overlay them"}
+                    onmousedown={(event) => event.stopPropagation()}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        onToggleMarkers?.(node.id);
+                    }}
+                >
+                    <span class="port-dot port-dot-marker"></span>
+                    <span>markers</span>
+                </button>
+            {/if}
         </div>
         <div class="node-column node-meta">
             {#if node.kind === "stream_source"}
@@ -334,12 +387,46 @@
                     {(node.input_port_ids?.length ?? 0)} in /
                     {(node.output_port_ids?.length ?? 0)} out</span
                 >
-            {:else if node.kind === "session"}
+            {:else if node.kind === "experiment"}
                 <span>{node.config.protocol.label}</span>
                 <span
-                    >{node.config.protocol.classes.length} classes ·
-                    {(node.input_port_ids?.length ?? 0)} sensors</span
+                    >{node.config.protocol.classes.length} classes · markers</span
                 >
+                <div class="experiment-controls">
+                    <button
+                        type="button"
+                        class="inline-graph-btn"
+                        class:active={showInlineExperiment}
+                        title={showInlineExperiment
+                            ? "Hide run panel on node"
+                            : "Run inline on node"}
+                        aria-pressed={showInlineExperiment}
+                        onmousedown={(event) => event.stopPropagation()}
+                        onclick={(event) => {
+                            event.stopPropagation();
+                            onToggleInlineExperiment?.(
+                                node.id,
+                                !showInlineExperiment,
+                            );
+                        }}
+                    >
+                        <CircleDot size={13} />
+                        <span>{showInlineExperiment ? "Inline on" : "Run inline"}</span>
+                    </button>
+                    <button
+                        type="button"
+                        class="inline-graph-btn"
+                        title="Open the experiment in a large window"
+                        onmousedown={(event) => event.stopPropagation()}
+                        onclick={(event) => {
+                            event.stopPropagation();
+                            onExpand?.(node.id);
+                        }}
+                    >
+                        <Maximize2 size={13} />
+                        <span>Open</span>
+                    </button>
+                </div>
             {:else if node.kind === "train"}
                 <span>Train model</span>
                 <span>{node.config.families.join(", ") || "no families"}</span>
@@ -371,9 +458,13 @@
                     type="button"
                     class:port-selected={pendingConnection?.nodeId ===
                         node.id && pendingConnection?.portId === portId}
+                    class:port-provenance={isProvenancePort(portId)}
                     class="port-button output"
                     data-node-id={node.id}
                     data-port-id={portId}
+                    title={isProvenancePort(portId)
+                        ? "Lineage output (provenance edge)"
+                        : undefined}
                     onmousedown={(event) => {
                         event.stopPropagation();
                         onPortMouseDown?.(event, node.id, portId, "output");
@@ -386,6 +477,7 @@
                     <span>{portId}</span>
                     <span
                         class="port-dot"
+                        class:port-dot-provenance={isProvenancePort(portId)}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="output"
@@ -403,6 +495,17 @@
             ondblclick={(event) => event.stopPropagation()}
         >
             {@render inlineViewerChart(node)}
+        </div>
+    {/if}
+
+    {#if showInlineExperiment && inlineExperiment}
+        <div
+            class="node-inline"
+            role="presentation"
+            onmousedown={(event) => event.stopPropagation()}
+            ondblclick={(event) => event.stopPropagation()}
+        >
+            {@render inlineExperiment(node)}
         </div>
     {/if}
 
@@ -454,6 +557,12 @@
         border-top: 1px solid rgba(122, 148, 255, 0.16);
         background: rgba(6, 10, 20, 0.6);
         cursor: default;
+    }
+
+    .experiment-controls {
+        display: flex;
+        gap: 0.35rem;
+        flex-wrap: wrap;
     }
 
     .inline-graph-btn {
@@ -679,5 +788,39 @@
         border-radius: 999px;
         background: #78d8ff;
         box-shadow: 0 0 0 3px rgba(120, 216, 255, 0.15);
+    }
+
+    /* Provenance ports: lineage/control wiring (source→experiment, experiment→
+       train, train→classify), visually distinct from data ports (blue, dashed
+       halo) to match the dashed-blue provenance edges. */
+    .port-button.port-provenance {
+        color: #aeb9ee;
+    }
+    .port-dot-provenance {
+        background: #5b7bdb;
+        box-shadow: 0 0 0 3px rgba(91, 123, 219, 0.18);
+        outline: 1px dashed rgba(142, 162, 245, 0.75);
+        outline-offset: 2px;
+    }
+
+    /* Part D: the viewer's phantom markers input — dashed/dim until enabled. */
+    .port-phantom {
+        opacity: 0.62;
+    }
+    .port-phantom:hover {
+        opacity: 1;
+    }
+    .port-phantom-on {
+        opacity: 1;
+        color: #d3c1ff;
+    }
+    .port-dot-marker {
+        background: #b491ff;
+        box-shadow: 0 0 0 3px rgba(180, 145, 255, 0.18);
+        outline: 1px dashed rgba(180, 145, 255, 0.7);
+        outline-offset: 2px;
+    }
+    .port-phantom-on .port-dot-marker {
+        outline-style: solid;
     }
 </style>

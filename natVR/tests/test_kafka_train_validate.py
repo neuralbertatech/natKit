@@ -67,6 +67,28 @@ def test_resolve_train_eval_runs_from_cli_selectors() -> None:
     assert [(run.session_id, run.run_index) for run in eval_runs] == [("demo", 2)]
 
 
+def test_resolve_train_eval_runs_allows_missing_eval(monkeypatch) -> None:
+    # Validation is optional: with training runs but no eval runs, resolution
+    # succeeds (train on the given runs, no held-out set).
+    runs = [build_run("demo", 1)]
+    args = argparse.Namespace(train_runs=["demo:1"], eval_runs=[])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    train_runs, eval_runs = resolve_train_eval_runs(args, runs)
+
+    assert [(run.session_id, run.run_index) for run in train_runs] == [("demo", 1)]
+    assert eval_runs == []
+
+
+def test_resolve_train_eval_runs_requires_train_non_tty(monkeypatch) -> None:
+    runs = [build_run("demo", 1)]
+    args = argparse.Namespace(train_runs=[], eval_runs=[])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    with pytest.raises(RuntimeError):
+        resolve_train_eval_runs(args, runs)
+
+
 def test_resolve_train_eval_runs_rejects_overlap() -> None:
     runs = [build_run("demo", 1), build_run("demo", 2)]
     args = argparse.Namespace(

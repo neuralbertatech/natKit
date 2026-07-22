@@ -3,6 +3,8 @@ import type { DataSchemaDescriptor, SchemaFieldDescriptor } from "./types";
 import {
   chooseViewerRenderer,
   isClassificationFrameLabels,
+  isMarkerStreamSchema,
+  MARKER_SCHEMA_NAME,
 } from "./viewerRegistry";
 
 function field(
@@ -123,6 +125,34 @@ describe("chooseViewerRenderer", () => {
 
   it("falls back to the inspector for an undefined descriptor", () => {
     expect(chooseViewerRenderer(undefined)).toBe("inspector");
+  });
+});
+
+describe("marker renderer selection", () => {
+  it("picks the marker renderer from a MarkerEventV1 descriptor schema", () => {
+    const descriptor = {
+      schema_name: MARKER_SCHEMA_NAME,
+      fields: {},
+    } as unknown as DataSchemaDescriptor;
+    expect(chooseViewerRenderer(descriptor)).toBe("marker");
+  });
+
+  it("picks the marker renderer from an explicit schema-name hint", () => {
+    expect(chooseViewerRenderer(undefined, undefined, MARKER_SCHEMA_NAME)).toBe(
+      "marker",
+    );
+  });
+
+  it("does not pick marker for a non-marker schema hint", () => {
+    expect(
+      chooseViewerRenderer(undefined, undefined, "ExgPillEmgDataSchemaV1"),
+    ).toBe("inspector");
+  });
+
+  it("isMarkerStreamSchema only matches MarkerEventV1", () => {
+    expect(isMarkerStreamSchema(MARKER_SCHEMA_NAME)).toBe(true);
+    expect(isMarkerStreamSchema("SomethingElse")).toBe(false);
+    expect(isMarkerStreamSchema(undefined)).toBe(false);
   });
 });
 
