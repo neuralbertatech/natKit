@@ -153,3 +153,8 @@ natVR/firmware/main/DevConfig.hpp
 
 # Machine-local environment context for LLMs/agents (not project state)
 ENVIRONMENT.html
+
+# Local capture data: recordings, reconstructed sessions, and trained-model
+# artifacts. Large and machine-local — never committed (a 132 MB model blob here
+# is what first blocked pushing to GitHub's 100 MB limit).
+natVR/captures/
