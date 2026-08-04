@@ -3,7 +3,7 @@
     // on the node card (compact) and in a large modal (to actually conduct the
     // experiment — the participant watches the cue prompt). Presentational: the
     // recording state + Record/Stop handlers live in the editor.
-    import { CircleDot, Square } from "@lucide/svelte";
+    import { CircleDot, Play, Square } from "@lucide/svelte";
     import type { EmgCueEvent } from "../StreamViewer/experiment";
 
     interface Props {
@@ -26,6 +26,10 @@
         large?: boolean;
         onRecord: () => void;
         onStop: () => void;
+        // Releases a wait step. Whoever is at this screen presses it — the
+        // operator or the participant; the protocol author decides by wording the
+        // step's text and its button label.
+        onContinue?: () => void;
     }
 
     let {
@@ -45,17 +49,26 @@
         large = false,
         onRecord,
         onStop,
+        onContinue,
     }: Props = $props();
 
     // A "hold" cue is the one the participant performs; everything else is a
     // preparatory/rest phase shown muted.
     const isActivePhase = $derived(activeCue?.phase === "hold");
 
+    // A step protocol can pause the session until someone confirms. The clock is
+    // held while this is true, so nothing after it is mis-timed.
+    const awaitingInput = $derived(
+        recording && activeCue?.wait_for_input === true,
+    );
+
     const promptText = $derived.by(() => {
         if (!activeCue) return recording ? "…" : "Ready";
         if (activeCue.phase === "lead_in") return "Get ready";
         if (activeCue.phase === "rest" || activeCue.phase === "tail_rest")
             return "Rest";
+        // instruction and wait steps carry the author's own words, which are the
+        // whole point of a user-defined protocol — show them verbatim.
         return activeCue.prompt;
     });
 
@@ -66,11 +79,17 @@
         if (activeCue.phase === "lead_in") return "Get ready — relax your hand";
         if (activeCue.phase === "rest") return "Relax";
         if (activeCue.phase === "tail_rest") return "All done — relax";
-        return "Make and hold this gesture";
+        if (activeCue.phase === "wait") return "Waiting for you";
+        if (activeCue.phase === "instruction") return "";
+        return activeCue.tutorial
+            ? "Practice — this is not kept for training"
+            : "Make and hold this gesture";
     });
 
     const secondsLeftInCue = $derived.by(() => {
         if (!activeCue) return null;
+        // A wait has no length until it is released; a countdown would be a lie.
+        if (activeCue.wait_for_input) return null;
         return Math.max(0, (activeCue.end_offset_ms - elapsedMs) / 1000);
     });
 
@@ -128,6 +147,20 @@
             <span class="elapsed"
                 >{(elapsedMs / 1000).toFixed(1)}s / {(durationMs / 1000).toFixed(0)}s</span
             >
+            {#if awaitingInput}
+                <button
+                    type="button"
+                    class="run-btn continue"
+                    onmousedown={(e) => e.stopPropagation()}
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        onContinue?.();
+                    }}
+                >
+                    <Play size={large ? 18 : 14} />
+                    {activeCue?.continue_label || "Continue"}
+                </button>
+            {/if}
             <button
                 type="button"
                 class="run-btn stop"
@@ -365,6 +398,14 @@
         background: #7f1d1d;
         color: #fee2e2;
         border-color: #7f1d1d;
+    }
+
+    /* A wait step blocks the session, so its release is the primary action. */
+    .run-btn.continue {
+        background: #1d4ed8;
+        color: #eff6ff;
+        border-color: #1d4ed8;
+        font-weight: 700;
     }
 
     /* Large modal presentation: blow the cue prompt up for the participant. */

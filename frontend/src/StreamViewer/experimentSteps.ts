@@ -18,7 +18,9 @@
 // the marker payloads, the recorded session and the timeline strip all keep
 // working unchanged. The one thing offsets cannot express is a wait, whose length
 // is only known once it is released — see resolveScheduleWaits().
+import { buildCueScheduleForProtocol } from "./experiment";
 import type { EmgCueEvent, EmgCuePhase } from "./experiment";
+import type { SessionProtocol } from "./types";
 
 export type ExperimentStepKind =
     | "instruction"
@@ -250,6 +252,19 @@ export function resolveScheduleWaits(
         }
         return shifted;
     });
+}
+
+/**
+ * Compile whichever protocol shape an experiment happens to carry. Experiments
+ * saved before step protocols existed keep their fixed classes x repetitions
+ * form, and both compile to the same timeline, so every caller can stay shape
+ * agnostic.
+ */
+export function scheduleForProtocol(protocol: unknown): EmgCueEvent[] {
+    if (isStepProtocol(protocol)) {
+        return compileStepProtocol(protocol);
+    }
+    return buildCueScheduleForProtocol(protocol as SessionProtocol);
 }
 
 /** Nominal duration, treating unreleased waits as zero. */

@@ -7,13 +7,32 @@
     // experiment here, author its protocol here, and Record from here. What
     // stays on the canvas is a config-less `markers` node that republishes this
     // experiment's marker timeline.
-    import { CircleDot, Plus, Square, Trash2, Unlink } from "@lucide/svelte";
+    import {
+        ChevronDown,
+        ChevronUp,
+        CircleDot,
+        Plus,
+        Square,
+        Trash2,
+        Unlink,
+    } from "@lucide/svelte";
     import type {
         Experiment,
         SessionProtocol,
         StreamGraphDefinition,
     } from "../StreamViewer/types";
     import type { EmgCueEvent } from "../StreamViewer/experiment";
+    import {
+        compileStepProtocol,
+        isStepProtocol,
+        newStepId,
+        protocolClasses,
+        stepProtocolDurationMs,
+        stepsFromLegacyProtocol,
+        type ExperimentStep,
+        type ExperimentStepKind,
+        type StepProtocol,
+    } from "../StreamViewer/experimentSteps";
 
     interface Props {
         experiments: Experiment[];
@@ -49,6 +68,8 @@
         onDelete: () => void;
         onRecord: () => void;
         onStop: () => void;
+        // Releases a wait step that is holding the session.
+        onContinue: () => void;
     }
 
     let {
@@ -70,7 +91,122 @@
         onDelete,
         onRecord,
         onStop,
+        onContinue,
     }: Props = $props();
+
+    // --- User-authored step protocols -------------------------------------
+    // A step protocol replaces the fixed classes x repetitions shape with an
+    // ordered list the author writes: instructions, labelled cues, rests, a
+    // wait-for-input barrier, and repeat groups. Any step (or group) can be
+    // marked as tutorial, which flags its cues as practice.
+    const stepProtocol = $derived(
+        bound && isStepProtocol(bound.protocol)
+            ? (bound.protocol as StepProtocol)
+            : null,
+    );
+
+    const stepSummary = $derived.by(() => {
+        if (!stepProtocol) return null;
+        const schedule = compileStepProtocol(stepProtocol);
+        return {
+            steps: schedule.length,
+            durationS: Math.round(stepProtocolDurationMs(schedule) / 1000),
+            classes: protocolClasses(stepProtocol),
+            tutorialCues: schedule.filter((c) => c.tutorial).length,
+            waits: schedule.filter((c) => c.wait_for_input).length,
+        };
+    });
+
+    function commitSteps(steps: ExperimentStep[]) {
+        onPatchProtocol({ steps } as Partial<SessionProtocol>);
+    }
+
+    // Steps are edited as a plain tree; a repeat group is the only container, and
+    // `parentId` addresses "inside that group" so one set of handlers covers both
+    // levels.
+    function mapSteps(
+        steps: ExperimentStep[],
+        parentId: string | null,
+        change: (list: ExperimentStep[]) => ExperimentStep[],
+    ): ExperimentStep[] {
+        if (parentId === null) return change(steps);
+        return steps.map((step) =>
+            step.kind === "repeat" && step.id === parentId
+                ? { ...step, steps: change(step.steps) }
+                : step,
+        );
+    }
+
+    function patchStep(
+        parentId: string | null,
+        stepId: string,
+        patch: Record<string, unknown>,
+    ) {
+        if (!stepProtocol) return;
+        commitSteps(
+            mapSteps(stepProtocol.steps, parentId, (list) =>
+                list.map((step) =>
+                    step.id === stepId
+                        ? ({ ...step, ...patch } as ExperimentStep)
+                        : step,
+                ),
+            ),
+        );
+    }
+
+    function removeStep(parentId: string | null, stepId: string) {
+        if (!stepProtocol) return;
+        commitSteps(
+            mapSteps(stepProtocol.steps, parentId, (list) =>
+                list.filter((step) => step.id !== stepId),
+            ),
+        );
+    }
+
+    function moveStep(parentId: string | null, stepId: string, delta: number) {
+        if (!stepProtocol) return;
+        commitSteps(
+            mapSteps(stepProtocol.steps, parentId, (list) => {
+                const index = list.findIndex((step) => step.id === stepId);
+                const target = index + delta;
+                if (index < 0 || target < 0 || target >= list.length) return list;
+                const next = [...list];
+                [next[index], next[target]] = [next[target], next[index]];
+                return next;
+            }),
+        );
+    }
+
+    function blankStep(kind: ExperimentStepKind): ExperimentStep {
+        const id = newStepId(kind);
+        if (kind === "cue")
+            return { id, kind, label: "gesture", text: "Do the thing", duration_s: 2 };
+        if (kind === "rest") return { id, kind, text: "Rest", duration_s: 2 };
+        if (kind === "wait")
+            return { id, kind, text: "Ready to continue?", continue_label: "Continue" };
+        if (kind === "repeat")
+            return { id, kind, times: 3, shuffle: true, seed: 1, steps: [] };
+        return { id, kind: "instruction", text: "Explain the task", duration_s: 5 };
+    }
+
+    function addStep(parentId: string | null, kind: ExperimentStepKind) {
+        if (!stepProtocol) return;
+        commitSteps(
+            mapSteps(stepProtocol.steps, parentId, (list) => [
+                ...list,
+                blankStep(kind),
+            ]),
+        );
+    }
+
+    // Bring a legacy fixed protocol into the step editor without losing it: the
+    // conversion produces the same timeline.
+    function convertToSteps() {
+        if (!bound?.protocol) return;
+        const converted = stepsFromLegacyProtocol(bound.protocol as never);
+        onPatchProtocol(converted as unknown as Partial<SessionProtocol>);
+    }
+
 
     function parseClassList(raw: string): string[] {
         return raw
@@ -98,8 +234,16 @@
         if (readOnly)
             return "This is an immutable recorded instance. Fork it to record again.";
         if (recordingElsewhere) return "Another experiment is recording.";
-        if (!bound.protocol || bound.protocol.classes.length === 0)
-            return "Add at least one class to the protocol.";
+        if (!bound.protocol) return "Bind a protocol to this experiment first.";
+        // A step protocol has no `classes` field — its classes are whatever its
+        // (non-tutorial) cue steps collect.
+        const classes = stepProtocol
+            ? protocolClasses(stepProtocol)
+            : (bound.protocol.classes ?? []);
+        if (classes.length === 0)
+            return stepProtocol
+                ? "Add at least one cue step that is not marked tutorial."
+                : "Add at least one class to the protocol.";
         if (!summary || summary.holdCues === 0)
             return "The protocol produces no cues — check the timing.";
         return null;
@@ -217,6 +361,9 @@
                         })}
                 />
             </label>
+            <!-- The fixed classes x repetitions form. A step protocol replaces
+                 it with an ordered step list, so only one shape is editable. -->
+            {#if !stepProtocol}
             <label>
                 <span>Classes (comma-separated labels)</span>
                 <input
@@ -322,9 +469,261 @@
                     />
                 </label>
             </div>
+            {/if}
         {/if}
 
-        {#if summary}
+        {#snippet stepRow(
+            step: ExperimentStep,
+            parentId: string | null,
+            depth: number,
+        )}
+            <div class="step-row" class:tutorial={step.tutorial} style={`margin-left:${depth * 0.8}rem`}>
+                <div class="step-head">
+                    <select
+                        class="step-kind"
+                        disabled={readOnly}
+                        value={step.kind}
+                        onchange={(event) => {
+                            const kind = (event.currentTarget as HTMLSelectElement)
+                                .value as ExperimentStepKind;
+                            // Swap in a fresh step of the new kind but keep the id
+                            // and position, so the row does not jump around.
+                            patchStep(parentId, step.id, {
+                                ...blankStep(kind),
+                                id: step.id,
+                                tutorial: step.tutorial,
+                            });
+                        }}
+                    >
+                        <option value="instruction">Instruction</option>
+                        <option value="cue">Cue (recorded class)</option>
+                        <option value="rest">Rest</option>
+                        <option value="wait">Wait for input</option>
+                        <option value="repeat">Repeat group</option>
+                    </select>
+
+                    {#if step.kind === "repeat"}
+                        <label class="step-inline">
+                            <span>×</span>
+                            <input
+                                class="step-num"
+                                type="number"
+                                min="1"
+                                disabled={readOnly}
+                                value={step.times}
+                                oninput={(event) =>
+                                    patchStep(parentId, step.id, {
+                                        times: Number(
+                                            (event.currentTarget as HTMLInputElement).value,
+                                        ),
+                                    })}
+                            />
+                        </label>
+                        <label class="step-inline" title="Shuffle the group's order each pass">
+                            <input
+                                type="checkbox"
+                                disabled={readOnly}
+                                checked={step.shuffle === true}
+                                onchange={(event) =>
+                                    patchStep(parentId, step.id, {
+                                        shuffle: (event.currentTarget as HTMLInputElement)
+                                            .checked,
+                                    })}
+                            />
+                            <span>shuffle</span>
+                        </label>
+                    {:else}
+                        <input
+                            class="step-text"
+                            placeholder="What the participant sees"
+                            disabled={readOnly}
+                            value={step.text ?? ""}
+                            oninput={(event) =>
+                                patchStep(parentId, step.id, {
+                                    text: (event.currentTarget as HTMLInputElement).value,
+                                })}
+                        />
+                    {/if}
+
+                    {#if step.kind === "cue" || step.kind === "rest"}
+                        <input
+                            class="step-label"
+                            placeholder="class label"
+                            title="The marker label recorded for this step"
+                            disabled={readOnly}
+                            value={(step as { label?: string }).label ?? ""}
+                            oninput={(event) =>
+                                patchStep(parentId, step.id, {
+                                    label: (event.currentTarget as HTMLInputElement).value,
+                                })}
+                        />
+                    {/if}
+
+                    {#if step.kind !== "wait" && step.kind !== "repeat"}
+                        <label class="step-inline">
+                            <input
+                                class="step-num"
+                                type="number"
+                                min="0"
+                                step="0.5"
+                                disabled={readOnly}
+                                value={(step as { duration_s?: number }).duration_s ?? 0}
+                                oninput={(event) =>
+                                    patchStep(parentId, step.id, {
+                                        duration_s: Number(
+                                            (event.currentTarget as HTMLInputElement).value,
+                                        ),
+                                    })}
+                            />
+                            <span>s</span>
+                        </label>
+                    {/if}
+
+                    {#if step.kind === "wait"}
+                        <input
+                            class="step-label"
+                            placeholder="button text"
+                            disabled={readOnly}
+                            value={step.continue_label ?? ""}
+                            oninput={(event) =>
+                                patchStep(parentId, step.id, {
+                                    continue_label: (
+                                        event.currentTarget as HTMLInputElement
+                                    ).value,
+                                })}
+                        />
+                    {/if}
+
+                    <label
+                        class="step-inline"
+                        title="Practice: recorded and flagged, but excluded from training"
+                    >
+                        <input
+                            type="checkbox"
+                            disabled={readOnly}
+                            checked={step.tutorial === true}
+                            onchange={(event) =>
+                                patchStep(parentId, step.id, {
+                                    tutorial: (event.currentTarget as HTMLInputElement)
+                                        .checked,
+                                })}
+                        />
+                        <span>tutorial</span>
+                    </label>
+
+                    <div class="step-actions">
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            disabled={readOnly}
+                            title="Move up"
+                            onclick={() => moveStep(parentId, step.id, -1)}
+                        >
+                            <ChevronUp size={12} />
+                        </button>
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            disabled={readOnly}
+                            title="Move down"
+                            onclick={() => moveStep(parentId, step.id, 1)}
+                        >
+                            <ChevronDown size={12} />
+                        </button>
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            disabled={readOnly}
+                            title="Remove this step"
+                            onclick={() => removeStep(parentId, step.id)}
+                        >
+                            <Trash2 size={12} />
+                        </button>
+                    </div>
+                </div>
+
+                {#if step.kind === "repeat"}
+                    {#each step.steps as child (child.id)}
+                        {@render stepRow(child, step.id, depth + 1)}
+                    {/each}
+                    <div class="step-add nested">
+                        {#each ["instruction", "cue", "rest", "wait"] as kind}
+                            <button
+                                type="button"
+                                class="add-step-btn"
+                                disabled={readOnly}
+                                onclick={() => addStep(step.id, kind as ExperimentStepKind)}
+                            >
+                                <Plus size={11} />{kind}
+                            </button>
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+        {/snippet}
+
+        {#if stepProtocol}
+            <p class="eyebrow section-label">Steps</p>
+            <p class="hint-text">
+                Each step is shown to the participant in order. A <strong>cue</strong>
+                records its class label; <strong>wait for input</strong> holds the
+                session until someone presses the button; anything marked
+                <strong>tutorial</strong> is recorded but kept out of training.
+            </p>
+            <div class="step-list">
+                {#each stepProtocol.steps as step (step.id)}
+                    {@render stepRow(step, null, 0)}
+                {/each}
+                {#if stepProtocol.steps.length === 0}
+                    <p class="hint-text">No steps yet — add one below.</p>
+                {/if}
+            </div>
+            <div class="step-add">
+                {#each ["instruction", "cue", "rest", "wait", "repeat"] as kind}
+                    <button
+                        type="button"
+                        class="add-step-btn"
+                        disabled={readOnly}
+                        onclick={() => addStep(null, kind as ExperimentStepKind)}
+                    >
+                        <Plus size={11} />{kind}
+                    </button>
+                {/each}
+            </div>
+            {#if stepSummary}
+                <div class="summary-row">
+                    <span>Timeline</span>
+                    <strong>
+                        {stepSummary.steps} steps · ~{stepSummary.durationS}s{stepSummary.waits >
+                        0
+                            ? ` · ${stepSummary.waits} wait${stepSummary.waits > 1 ? "s" : ""}`
+                            : ""}
+                    </strong>
+                </div>
+                <div class="summary-row">
+                    <span>Classes</span>
+                    <strong>{stepSummary.classes.join(", ") || "none"}</strong>
+                </div>
+                {#if stepSummary.tutorialCues > 0}
+                    <div class="summary-row">
+                        <span>Tutorial cues</span>
+                        <strong>{stepSummary.tutorialCues} (not trained on)</strong>
+                    </div>
+                {/if}
+            {/if}
+        {:else if protocol}
+            <button
+                type="button"
+                class="action-btn secondary convert-steps"
+                disabled={readOnly}
+                onclick={convertToSteps}
+                title="Rewrite this protocol as editable steps — the timeline is unchanged"
+            >
+                Convert to editable steps
+            </button>
+        {/if}
+
+        {#if summary && !stepProtocol}
             <div class="summary-row">
                 <span>Schedule</span>
                 <strong>{summary.holdCues} cues · ~{summary.durationS}s</strong>
@@ -387,6 +786,18 @@
                                 .gesture}</strong
                         >
                     </div>
+                {/if}
+                {#if recording.activeCue?.wait_for_input}
+                    <!-- A wait step holds the session. The runner surface may not
+                         be open, so the release has to be reachable from here too
+                         or the run cannot proceed at all. -->
+                    <button
+                        type="button"
+                        class="action-btn continue-wait"
+                        onclick={onContinue}
+                    >
+                        {recording.activeCue.continue_label || "Continue"}
+                    </button>
                 {/if}
             </div>
         {/if}
@@ -677,5 +1088,129 @@
 
     .instance-delete {
         grid-area: delete;
+    }
+
+    /* --- Step protocol editor --- */
+    .hint-text {
+        margin: 0 0 0.4rem;
+        font-size: 0.68rem;
+        line-height: 1.4;
+        color: #7f91c8;
+    }
+
+    .step-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+    }
+
+    .step-row {
+        border: 1px solid #24304f;
+        border-radius: 6px;
+        padding: 0.3rem 0.35rem;
+        background: #101830;
+    }
+
+    /* Practice steps are recorded but excluded from training — make that visible
+       while authoring, not just at run time. */
+    .step-row.tutorial {
+        border-color: #4a3d6b;
+        background: #17142b;
+    }
+
+    .step-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.3rem;
+    }
+
+    .step-kind {
+        font-size: 0.68rem;
+        padding: 0.15rem 0.2rem;
+    }
+
+    .step-text {
+        flex: 1 1 8rem;
+        min-width: 6rem;
+        font-size: 0.68rem;
+    }
+
+    .step-label {
+        width: 6.5rem;
+        font-size: 0.68rem;
+    }
+
+    .step-num {
+        width: 3.2rem;
+        font-size: 0.68rem;
+    }
+
+    .step-inline {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 0.2rem;
+        font-size: 0.66rem;
+        color: #7f91c8;
+    }
+
+    .step-inline input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+    }
+
+    .step-actions {
+        display: flex;
+        gap: 0.1rem;
+        margin-left: auto;
+    }
+
+    .step-add {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        margin-top: 0.35rem;
+    }
+
+    .step-add.nested {
+        margin-top: 0.3rem;
+        padding-left: 0.8rem;
+    }
+
+    .add-step-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.15rem;
+        font-size: 0.64rem;
+        padding: 0.18rem 0.35rem;
+        border: 1px solid #24304f;
+        border-radius: 999px;
+        background: #16203c;
+        color: #b9c8f0;
+        cursor: pointer;
+    }
+
+    .add-step-btn:hover:not(:disabled) {
+        border-color: #4f7ef7;
+        color: #e4ecff;
+    }
+
+    .add-step-btn:disabled {
+        opacity: 0.45;
+        cursor: default;
+    }
+
+    .continue-wait {
+        align-self: flex-start;
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+        color: #eff6ff;
+        font-weight: 700;
+    }
+
+    .convert-steps {
+        align-self: flex-start;
+        font-size: 0.68rem;
     }
 </style>

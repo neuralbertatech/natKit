@@ -71,7 +71,6 @@
         type StarterTemplate,
     } from "./starterTemplates";
     import {
-        buildCueScheduleForProtocol,
         scheduleDurationMs,
         activeCueAtElapsedMs,
         nextCueAfterElapsedMs,
@@ -83,6 +82,12 @@
         type SessionPublishBundleInput,
         FINGER_COUNTING_PROTOCOL,
     } from "../StreamViewer/experiment";
+    import {
+        isStepProtocol,
+        protocolClasses,
+        resolveScheduleWaits,
+        scheduleForProtocol,
+    } from "../StreamViewer/experimentSteps";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
     import ExperimentPanel from "./ExperimentPanel.svelte";
@@ -612,7 +617,7 @@
         if (!protocol) {
             return null;
         }
-        const schedule = buildCueScheduleForProtocol(protocol);
+        const schedule = scheduleForProtocol(protocol);
         return {
             holdCues: schedule.filter((cue) => cue.phase === "hold").length,
             durationS: Math.round(scheduleDurationMs(schedule) / 1000),
@@ -2639,19 +2644,52 @@
         startedAtEpochMs: number;
         startedAtUs: number;
         elapsedMs: number;
+        // A wait step holds the session for an unknown time. The schedule clock is
+        // frozen while it holds, so `elapsedMs` stays a protocol time (offsets keep
+        // lining up) and this records the wall time spent paused.
+        pausedMs: number;
+        // Per wait cue_id, how long it actually held. Markers are stamped from
+        // offsets at the end, so resolveScheduleWaits() needs these to place
+        // everything after a wait at the time it really happened.
+        waitHeldMs: Record<number, number>;
+        // The wait currently holding, and when it started holding.
+        waitingCueId: number | null;
+        waitingSinceMs: number | null;
     }
     let sessionRecording = $state<SessionRecordingState | null>(null);
     let sessionRecordTimer: ReturnType<typeof setInterval> | null = null;
     let sessionRecordMessage = $state<string | null>(null);
 
-    const activeSessionCue = $derived(
-        sessionRecording
-            ? activeCueAtElapsedMs(
-                  sessionRecording.schedule,
-                  sessionRecording.elapsedMs,
-              )
-            : null,
-    );
+    // The first wait step the run has reached and nobody has released yet.
+    function findPendingWait(
+        rec: SessionRecordingState,
+        elapsedMs: number,
+    ): EmgCueEvent | null {
+        return (
+            rec.schedule.find(
+                (cue) =>
+                    cue.wait_for_input === true &&
+                    rec.waitHeldMs[cue.cue_id] === undefined &&
+                    cue.start_offset_ms <= elapsedMs,
+            ) ?? null
+        );
+    }
+
+    const activeSessionCue = $derived.by(() => {
+        if (!sessionRecording) return null;
+        // While a wait holds, IT is what the participant is looking at. An
+        // interval lookup would return the step before it (or nothing), because a
+        // wait has no length until released.
+        const pending = findPendingWait(
+            sessionRecording,
+            sessionRecording.elapsedMs,
+        );
+        if (pending) return pending;
+        return activeCueAtElapsedMs(
+            sessionRecording.schedule,
+            sessionRecording.elapsedMs,
+        );
+    });
 
     function startSessionRecording(experiment: Experiment) {
         if (sessionRecording) {
@@ -2664,7 +2702,7 @@
                 "This experiment has no protocol — add classes and timing first.";
             return;
         }
-        const schedule = buildCueScheduleForProtocol(protocol);
+        const schedule = scheduleForProtocol(protocol);
         if (schedule.length === 0) {
             sessionRecordMessage =
                 "Protocol has no cues — add classes and timing first.";
@@ -2726,6 +2764,10 @@
             startedAtEpochMs,
             startedAtUs,
             elapsedMs: 0,
+            pausedMs: 0,
+            waitHeldMs: {},
+            waitingCueId: null,
+            waitingSinceMs: null,
         };
         // Mint the instance: the backend snapshots the board and opens the window
         // at the SAME timestamp the markers are stamped with, so the snapshot's
@@ -2736,14 +2778,61 @@
     }
 
     function tickSessionRecording() {
-        if (!sessionRecording) {
+        const rec = sessionRecording;
+        if (!rec) {
             return;
         }
-        const elapsedMs = Date.now() - sessionRecording.startedAtEpochMs;
-        sessionRecording = { ...sessionRecording, elapsedMs };
-        if (elapsedMs >= sessionRecording.durationMs) {
+        const wallMs = Date.now() - rec.startedAtEpochMs;
+        const elapsedMs = wallMs - rec.pausedMs;
+
+        // A wait step blocks until released. Freeze the protocol clock at the
+        // wait's own start offset and let `pausedMs` absorb the wall time instead:
+        // that keeps every later offset lining up with the schedule as compiled,
+        // so cue lookups stay correct without rewriting the timeline mid-run.
+        //
+        // Found by scanning rather than via activeCueAtElapsedMs: a wait is a
+        // ZERO-LENGTH window (start == end until it is released), which an
+        // interval lookup can never report as active. Offsets are monotonic and
+        // waits release in order, so the first unreleased wait we have reached is
+        // the one holding.
+        const cue = findPendingWait(rec, elapsedMs);
+        if (cue) {
+            sessionRecording = {
+                ...rec,
+                elapsedMs: cue.start_offset_ms,
+                pausedMs: wallMs - cue.start_offset_ms,
+                waitingCueId: cue.cue_id,
+                waitingSinceMs:
+                    rec.waitingCueId === cue.cue_id ? rec.waitingSinceMs : wallMs,
+            };
+            return;
+        }
+
+        sessionRecording = {
+            ...rec,
+            elapsedMs,
+            waitingCueId: null,
+            waitingSinceMs: null,
+        };
+        if (elapsedMs >= rec.durationMs) {
             finishSessionRecording(true);
         }
+    }
+
+    // Release the wait the session is holding on.
+    function continueSessionWait() {
+        const rec = sessionRecording;
+        if (!rec || rec.waitingCueId === null) {
+            return;
+        }
+        const wallMs = Date.now() - rec.startedAtEpochMs;
+        const heldMs = Math.max(0, wallMs - (rec.waitingSinceMs ?? wallMs));
+        sessionRecording = {
+            ...rec,
+            waitHeldMs: { ...rec.waitHeldMs, [rec.waitingCueId]: heldMs },
+            waitingCueId: null,
+            waitingSinceMs: null,
+        };
     }
 
     function finishSessionRecording(completed: boolean) {
@@ -2756,9 +2845,17 @@
             sessionRecordTimer = null;
         }
         const endedAtUs = Date.now() * 1000;
+        // Offsets are relative to the session start, but a wait step displaced
+        // everything after it by however long it actually held. Resolve that
+        // before stamping markers, or the recorded timeline disagrees with the
+        // data it is meant to describe.
+        const resolvedSchedule = resolveScheduleWaits(
+            rec.schedule,
+            rec.waitHeldMs,
+        );
         const cueMarkers = buildCueMarkerPayloads({
             sessionId: rec.sessionId,
-            cues: rec.schedule,
+            cues: resolvedSchedule,
             sessionStartedAtUs: rec.startedAtUs,
         }).filter((marker) => marker.emitted_at_us <= endedAtUs);
         const meta = buildSessionMetadataRecordPayload({
@@ -3269,7 +3366,7 @@
             sessionRecording?.experimentId === experiment.experiment_id;
         const schedule = isRecording
             ? sessionRecording!.schedule
-            : buildCueScheduleForProtocol(protocol);
+            : scheduleForProtocol(protocol);
         const durationMs = isRecording
             ? sessionRecording!.durationMs
             : scheduleDurationMs(schedule);
@@ -3293,7 +3390,11 @@
                 : null;
         return {
             protocolLabel: protocol.label,
-            classes: protocol.classes,
+            // A step protocol's classes are derived from its cue steps rather than
+            // declared, so ask the shape-aware helper.
+            classes: isStepProtocol(protocol)
+                ? protocolClasses(protocol)
+                : (protocol.classes ?? []),
             recording: isRecording,
             recordingElsewhere: sessionRecording != null && !isRecording,
             elapsedMs,
@@ -4120,6 +4221,7 @@
                 summary={view.summary}
                 onRecord={() => startSessionRecording(boundExperimentView)}
                 onStop={() => finishSessionRecording(false)}
+                onContinue={continueSessionWait}
             />
         {:else}
             <p class="inline-note">
@@ -4968,6 +5070,7 @@
                             boundExperimentView &&
                             startSessionRecording(boundExperimentView)}
                         onStop={() => finishSessionRecording(false)}
+                onContinue={continueSessionWait}
                     />
                 </div>
             {/if}
@@ -6565,6 +6668,7 @@
                     summary={view.summary}
                     onRecord={() => startSessionRecording(boundExperimentView)}
                     onStop={() => finishSessionRecording(false)}
+                onContinue={continueSessionWait}
                 />
             </div>
         </div>
