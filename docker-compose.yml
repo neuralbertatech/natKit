@@ -20,8 +20,16 @@ services:
       KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://${NATKIT_HOST_IP:-127.0.0.1}:29093"
       KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER_NETWORK_LISTENER"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER_LISTENER"
-      KAFKA_LOG_DIRS: "/tmp/kraft-storage"
+      # Persist KRaft data on a named volume. This used to be /tmp/kraft-storage,
+      # i.e. the container's writable layer: every `up --build` or container
+      # recreate silently destroyed every topic, which cost us recorded sessions
+      # twice. Recorded experiment instances are meant to be permanent, so the
+      # broker's storage cannot be ephemeral. (docker-compose.portainer.yml has
+      # always done this; the dev/base stack was the outlier.)
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
+    volumes:
+      - natkit-v0-kafka-data:/var/lib/kafka/data
     networks:
       - natkit-v0-kafka-network
 
@@ -112,11 +120,18 @@ services:
       # (the default ./data/stream_graphs.json lives in the ephemeral container
       # layer and is lost on `down`/rebuild).
       NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
+      # Experiments live alongside the graphs: an experiment owns a board and its
+      # recorded instances, so losing this store orphans history.
+      NATKIT_EXPERIMENT_STORE: /graphs/experiments.json
+      # Materialized instance artifacts (Parquet + markers sidecar) — the
+      # permanence guarantee, so never the container layer.
+      NATKIT_INSTANCE_STORE: /instances
     ports:
       - "7409:7409"
     volumes:
       - ./natkit-backend/log:/logs:Z
       - ./natkit-backend/data:/graphs:Z
+      - ./natkit-backend/instances:/instances:Z
     networks:
       - natkit-v0-kafka-network
     depends_on:
@@ -132,6 +147,11 @@ services:
   #    - natkit-v0-kafka-network
   #  depends_on:
   #    - natkit-v0-backend
+
+volumes:
+  # The broker's KRaft log dir (topic data + cluster metadata). Named, not a bind
+  # mount, so it needs no :Z relabel and survives container recreation.
+  natkit-v0-kafka-data:
 
 networks:
   natkit-v0-kafka-network:

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natVR — Toggleable Serial Backup Transport (wireless-primary)</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natVR · firmware + host · plan · July 20 2026</div>
+  <h1>Toggleable Serial Backup Transport</h1>
+  <p class="meta lede">
+    Make USB-serial a <strong>runtime-toggleable backup</strong> for EXG-Pill / ESP32
+    EMG nodes, with <strong>WiFi/MQTT staying the primary path</strong>. Today serial is a
+    <em>separate compile-time build</em> (<code>NATVR_TRANSPORT_SERIAL=1</code>) with no
+    wireless at all — you must reflash to switch. For the convention-center demo, where the
+    RF environment is hostile, we want a device that boots wireless-first and can fall back to
+    (or be flipped to) serial <em>without a reflash</em>, so a flaky 2.4&nbsp;GHz floor never
+    takes the booth down.
+  </p>
+  <span class="status">Design captured — ready to sequence</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Why: a convention floor is the worst case for 2.4&nbsp;GHz, and reflashing mid-demo is not an option</h2>
+    <p>
+      The EMG classify pipeline runs end-to-end today, but every frame reaches natKit over
+      WiFi&nbsp;&rarr;&nbsp;MQTT&nbsp;&rarr;&nbsp;Kafka. A convention hall is saturated with
+      competing APs, phones, and badge scanners; MQTT can stall or the join can fail outright.
+      A wired USB path to the booth laptop is immune to all of that. We already proved a serial
+      path works — but it is an <em>either/or firmware image</em>, which means the fallback
+      decision has to be made at flash time, before we know whether the RF will hold. This plan
+      turns that into an operational toggle the booth operator controls in seconds.
+    </p>
+    <p>
+      <strong>Requirement (explicit):</strong> WiFi/MQTT is the <strong>primary</strong>
+      transport and its behavior must not regress. Serial is an <strong>optional backup</strong>,
+      off by default, that can be <strong>toggled on</strong> — and ideally engages
+      automatically when wireless drops.
+    </p>
+  </section>
+
+  <section>
+    <h2>Already landed (the spine this builds on)</h2>
+    <p>Groundwork from the Convention EMG Quick-Start plan, Phase&nbsp;1 (branch
+      <code>vp-rework-phases-0-2</code>):</p>
+    <ul>
+      <li><span class="phase-tag have">have</span> Firmware serial emit: a compile-time
+        <code>NATVR_TRANSPORT_SERIAL</code> flag (<code>main.cpp</code>) writes the <em>same</em>
+        newline-delimited <code>exg.pill.emg.data.v1</code> JSON frames to the USB console via
+        <code>emit_serial_line</code> (one locked <code>puts</code>+<code>fflush</code>), and
+        quiets logs to <code>ERROR</code> so the stream stays clean.</li>
+      <li><span class="phase-tag have">have</span> Host shim <code>serial_bridge.py</code>
+        (<code>natvr-serial-bridge</code>; <code>serial</code> extra = pyserial + paho-mqtt):
+        reads the lines, skips non-JSON, and republishes the <em>original bytes</em> onto
+        <code>natKit/sending/emg/raw/emg.raw.&lt;device_id&gt;</code>. The KafkaMosquittoBridge
+        routes MQTT&nbsp;&rarr;&nbsp;Kafka on the payload's <code>schema_version</code>, not the
+        topic, so the Kafka stream is <strong>byte-identical to WiFi</strong> — the whole
+        downstream pipeline (stream discovery, reconstruction, training, live classify) sees no
+        difference. Tests: <code>test_serial_bridge.py</code> (routing/validation, no hardware).</li>
+      <li><span class="phase-tag partial">gap</span> It is a <em>mutually-exclusive build</em>:
+        the serial image skips WiFi/NTP/MQTT bring-up entirely (<code>app_main</code>) and the
+        WiFi image never touches the console. There is no runtime toggle, no wireless-primary +
+        serial-backup coexistence, and serial timestamps come from the unsynced local monotonic
+        clock (no NTP).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>The transport-mode model</h2>
+    <p>
+      Replace the compile-time <code>#if</code> split with a transport mode the firmware holds in a
+      runtime variable, <strong>initialized from a menuconfig <code>choice</code> (Phase&nbsp;2)</strong>.
+      The variable is still needed at runtime because <code>AUTO</code> flips between MQTT and serial
+      per frame; menuconfig just sets which mode the image ships with. Three modes; <code>AUTO</code>
+      is the recommended demo default because it satisfies &ldquo;wireless primary, serial
+      backup&rdquo; by construction, never double-publishes, and needs <em>no live toggle at the
+      booth</em> — you flash the <code>AUTO</code> image and it self-manages.
+    </p>
+    <table>
+      <tr><th>Mode</th><th>Wireless (MQTT)</th><th>Serial (USB)</th><th>Use</th></tr>
+      <tr>
+        <td><code>WIRELESS</code></td>
+        <td>Primary — publishes every frame (today's default).</td>
+        <td>Off.</td>
+        <td>Normal operation / good RF.</td>
+      </tr>
+      <tr>
+        <td><code>AUTO</code> <em>(recommended demo default)</em></td>
+        <td>Primary — publishes while MQTT is connected.</td>
+        <td>Engages <em>only while MQTT is down</em> (past a debounce), stops when it recovers.</td>
+        <td>Booth: wireless-first, serial catches any RF dropout with no operator action.</td>
+      </tr>
+      <tr>
+        <td><code>SERIAL</code></td>
+        <td>Off (or best-effort, see open questions).</td>
+        <td>Always emits.</td>
+        <td>Known-bad RF: force the wired path, ignore WiFi entirely.</td>
+      </tr>
+    </table>
+    <p>
+      <strong>No duplicates by design:</strong> the two emitters are mutually exclusive per frame —
+      a frame goes to MQTT <em>or</em> the console, never both — so the same
+      <code>(device_id, seq_no)</code> can't reach Kafka twice through one device. The host bridge
+      still de-dupes across a switchover window as a belt-and-suspenders (Phase&nbsp;4).
+    </p>
+  </section>
+
+  <section>
+    <h2>Phase 1 &mdash; Runtime transport mode in firmware <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>One firmware image that can be any of the three modes at runtime; WiFi path byte-for-byte
+      unchanged in <code>WIRELESS</code>.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Introduce <code>g_transport_mode</code></strong> (enum) initialized from the
+        Kconfig choice (Phase&nbsp;2) and convert the compile-time
+        <code>#if NATVR_TRANSPORT_SERIAL</code> branches in <code>publish_task</code>,
+        <code>heartbeat_task</code>, and <code>app_main</code> into runtime <code>switch</code>es.
+        The old <code>NATVR_TRANSPORT_SERIAL</code> define collapses into the
+        <code>CONFIG_NATVR_TRANSPORT_*</code> Kconfig options (back-compat: map the old define to the
+        <code>SERIAL</code> choice).</li>
+      <li><strong>Always bring up WiFi/NTP/MQTT unless mode is <code>SERIAL</code></strong> — the
+        primary path is unconditional in <code>WIRELESS</code>/<code>AUTO</code>. Bring-up failures
+        stay non-fatal (they already background-reconnect); don't <code>ESP_ERROR_CHECK</code>-abort
+        so a demo device still runs and can fall back.</li>
+      <li><strong>Per-frame emit decision</strong> in <code>publish_task</code>: <code>WIRELESS</code>
+        &rarr; MQTT; <code>SERIAL</code> &rarr; <code>emit_serial_line</code>; <code>AUTO</code> &rarr;
+        MQTT when <code>networking_mqtt_is_connected()</code>, else <code>emit_serial_line</code>
+        (Phase&nbsp;3 adds the debounce). Same for the heartbeat/status frame.</li>
+      <li><strong>Console hygiene:</strong> only quiet logs to <code>ERROR</code> while serial is
+        actually emitting, so <code>WIRELESS</code> keeps its normal <code>INFO</code> diagnostics.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>A single image runs wireless with no behavior change; forcing <code>SERIAL</code> at boot
+      streams clean JSON to USB; the bridge ingests it byte-identically.</p>
+  </section>
+
+  <section>
+    <h2>Phase 2 &mdash; The toggle: a menuconfig dropdown <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>Select the transport mode from <code>idf.py menuconfig</code> — a first-class ESP-IDF build
+      option — instead of a bare <code>-D</code> define.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>A Kconfig <code>choice</code></strong> in <code>main/Kconfig.projbuild</code>:
+        <em>natVR Transport</em> &rarr; <code>Wireless (WiFi/MQTT)</code> [default] /
+        <code>Auto (wireless, serial fallback)</code> / <code>Serial (USB backup)</code>, producing
+        <code>CONFIG_NATVR_TRANSPORT_WIRELESS|AUTO|SERIAL</code>. This is the dropdown in
+        <code>menuconfig</code> and is also settable headless via <code>sdkconfig.defaults</code>
+        (e.g. a checked-in <code>sdkconfig.defaults.demo</code> that pins <code>AUTO</code>).</li>
+      <li><strong>Seed <code>g_transport_mode</code> from the choice</strong> at boot (Phase&nbsp;1
+        reads <code>CONFIG_NATVR_TRANSPORT_*</code>).</li>
+      <li><strong>Status visibility:</strong> the heartbeat/status frame already flows to natKit —
+        add the active <code>transport_mode</code> so the UI/logs show which path a device is on
+        (in <code>SERIAL</code>/<code>AUTO</code>-fallback the status rides the same serial line).</li>
+    </ul>
+    <p>
+      <strong>Build-time, by design.</strong> A menuconfig choice is baked into the image, so
+      switching modes is a <em>rebuild + reflash</em>, not a live booth flip. That is fine — and
+      intended — because the demo ships the <code>AUTO</code> image, which needs no live toggle
+      (Phase&nbsp;3 does the wireless&rarr;serial handoff automatically). If a no-reflash live flip is
+      ever wanted, layer an NVS/console-command override on top of the Kconfig-seeded default; it is
+      explicitly <em>out of scope</em> here.
+    </p>
+    <h3>Acceptance</h3>
+    <p><code>idf.py menuconfig</code> shows a natVR Transport dropdown; building each option yields a
+      device that boots in that mode; <code>sdkconfig.defaults.demo</code> pins <code>AUTO</code> for
+      a one-command demo build; natKit shows the active mode per device.</p>
+  </section>
+
+  <section>
+    <h2>Phase 3 &mdash; Auto-fallback (wireless-primary, serial-safety-net) <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>In <code>AUTO</code>, ride WiFi and transparently cover any dropout with serial — the
+      behavior that actually protects the demo.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Debounced switchover:</strong> emit serial only after MQTT has been down for
+        <code>N</code> ms (hysteresis) to avoid flapping on a brief reconnect; return to MQTT after
+        it has been stable for <code>M</code> ms. Frames stay queued (bounded
+        <code>g_frame_queue</code>) across the gap; stale frames past <code>kMaxFrameAgeUs</code> are
+        dropped exactly as today, so a long outage sheds old data rather than back-flooding.</li>
+      <li><strong>One source at a time:</strong> the connected-state gate guarantees a frame is
+        published to exactly one transport, so Kafka never sees duplicate <code>seq_no</code>s from
+        a single device during the handoff.</li>
+      <li><strong>Log the transitions</strong> (rate-limited) so the booth operator can see
+        &ldquo;fell back to serial&rdquo; / &ldquo;wireless recovered.&rdquo;</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>Pull the AP / block MQTT mid-stream: frames continue over serial within the debounce window
+      with no duplicates and no operator action; restoring WiFi returns to the wireless path.</p>
+  </section>
+
+  <section>
+    <h2>Phase 4 &mdash; Host bridge hardening + a one-command backup runner <span class="phase-tag partial">tune</span></h2>
+    <h3>Goal</h3>
+    <p>Make <code>serial_bridge.py</code> robust to real switchovers and trivial to run at the booth.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>De-dupe by <code>(device_id, seq_no)</code></strong> over a short sliding window,
+        so if wireless and serial ever briefly overlap (e.g. an operator forces <code>SERIAL</code>
+        while MQTT is still flushing), the bridge drops the second copy before MQTT.</li>
+      <li><strong>Optional host-timestamp rewrite</strong> for unsynced serial frames (see
+        Phase&nbsp;5): a <code>--stamp-host-time</code> flag that fills <code>device_ts_us</code> from
+        the host wall clock when the firmware had no NTP, keeping the Kafka stream monotonic.</li>
+      <li><strong>Auto-detect the port</strong> (scan <code>/dev/ttyACM*</code> / by USB VID:PID) and
+        auto-reconnect on unplug, so a bumped cable doesn't kill the booth.</li>
+      <li><strong>Run-alongside story:</strong> a documented one-liner (or a compose sidecar /
+        systemd-style supervisor) that starts the bridge against the running stack; keep it
+        <em>off</em> by default so it's genuinely opt-in. The bridge running <em>is</em> the host-side
+        &ldquo;serial enabled&rdquo; toggle; pair it with the firmware being in <code>AUTO</code>/<code>SERIAL</code>.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>Start the bridge, force a switchover, and Kafka receives a clean, de-duped, monotonically
+      stamped stream; unplug/replug the cable and it recovers on its own.</p>
+  </section>
+
+  <section>
+    <h2>Phase 5 &mdash; Timestamp &amp; train/serve parity across the seam <span class="phase-tag partial">tune</span></h2>
+    <h3>Goal</h3>
+    <p>Don't let the transport switch corrupt time alignment that reconstruction, the timeline, and
+      the windowed classifier depend on.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Prefer NTP even in fallback:</strong> in <code>AUTO</code>, WiFi is still associated
+        during a broker-only outage, so keep NTP running and stamp serial frames with NTP time when
+        available — only a full WiFi loss forces the monotonic clock.</li>
+      <li><strong>Document the monotonic case:</strong> a serial-only device (no NTP) produces
+        session-local timestamps. That is fine for the windowed EMG classifier (alignment is
+        intra-session and the model is windowed), but cross-device combine and absolute-time
+        replay degrade — call it out, and let the host-timestamp rewrite (Phase&nbsp;4) restore a
+        wall-clock reference for the record path.</li>
+      <li><strong>No pipeline changes expected:</strong> because frames stay byte-identical, the
+        classify bundle / featurize path is untouched; this phase is verification + docs, not code.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>A session recorded across a WiFi&rarr;serial switch reconstructs and trains without a time
+      discontinuity that breaks windowing.</p>
+  </section>
+
+  <section>
+    <h2>Phase 6 &mdash; Booth dress rehearsal <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>Prove the whole thing on the actual demo hardware before the floor.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Throughput headroom:</strong> confirm the full frame rate (4 channels &times;
+        sample rate) fits the USB-CDC console without back-pressure stalling
+        <code>publish_task</code> — measure <code>frames_dropped_stale</code> under serial load.
+        Expected to fit as-is (verbose JSON at 4 channels). <em>If</em> it doesn't, the byte lever is
+        a <strong>compact serial frame</strong> (small binary or CSV; the bridge rebuilds canonical
+        JSON so Kafka stays byte-identical) — <strong>not base64</strong>, which is an encoding that
+        <em>inflates</em> ~33%, and not per-frame deflate (poor ratio + CPU/latency on tiny frames).
+        Treat any encoding change as a contingency this spike decides, not up-front work.</li>
+      <li><strong>Failure drills:</strong> kill the AP, saturate the band, unplug/replug USB,
+        power-cycle a device — verify wireless-primary, clean fallback, persistence, and recovery
+        each time.</li>
+      <li><strong>Operator runbook:</strong> a half-page card — how to set <code>AUTO</code>, start
+        the bridge, read the active mode, and what &ldquo;good&rdquo; looks like.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>On the demo laptop + device, the classify pipeline stays live through an induced RF outage,
+      end to end, with a written runbook.</p>
+  </section>
+
+  <section class="risk">
+    <h2>Risks &amp; open questions</h2>
+    <ul>
+      <li><span class="q">USB-CDC throughput:</span> serial must sustain the raw frame rate. If it
+        can't, options are down-sampling in serial mode, larger frames, or accepting drop under
+        outage. <strong>Confirm on hardware before committing to <code>AUTO</code> as default.</strong></li>
+      <li><span class="q">SERIAL + WiFi coexistence:</span> in forced <code>SERIAL</code>, do we
+        leave WiFi off (simplest, guaranteed no dup) or keep it associated for NTP only? Lean: off,
+        with host-timestamp rewrite covering the clock.</li>
+      <li><span class="q">Where the toggle lives: <strong>decided &mdash; menuconfig.</strong></span>
+        A Kconfig <code>choice</code> (build-time), shipped as the <code>AUTO</code> image so the
+        booth needs no live flip. Consequence: changing mode = rebuild + reflash. A no-reflash
+        runtime override (NVS/console) is deferred unless a live flip proves necessary.</li>
+      <li><span class="q">One USB port per device:</span> serial backup is inherently per-cable —
+        N devices need N ports + N bridge instances (or one multi-port bridge). Fine for a
+        single-participant booth; flag for multi-device.</li>
+      <li><span class="q">Duplicate risk on manual force:</span> forcing <code>SERIAL</code> while
+        MQTT is mid-flush could momentarily double-emit at the seam; the host de-dupe (Phase&nbsp;4)
+        is the safety net.</li>
+      <li><strong>Non-goals (v1):</strong> a natKit-UI button that flips device mode remotely (the
+        toggle is device-side + host-bridge-side); serial for non-EXG sensors; bidirectional control
+        beyond the mode command.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Suggested sequencing</h2>
+    <p>
+      <strong>6 (bench throughput check)</strong> arguably comes <em>first</em> as a spike — if USB
+      can't carry the rate, the mode design changes. Then <strong>1 (runtime mode)</strong> is the
+      foundation everything hangs off, <strong>3 (auto-fallback)</strong> is the behavior that
+      actually protects the demo, and <strong>2 (toggle)</strong> makes it operable. <strong>4</strong>
+      (bridge hardening) and <strong>5</strong> (timestamps/parity) are correctness + resilience that
+      can land alongside. 1&ndash;3 are firmware (ESP-IDF, needs the device + <code>idf.py</code>);
+      4&ndash;5 are host Python; 6 is on the real booth kit. Keep WiFi the untouched default at every
+      step so a half-finished toggle never regresses the primary path.
+    </p>
+  </section>
+
+  <footer>
+    Related: plans/convention-emg-quickstart-plan.html (Phase&nbsp;1 shipped the static serial path
+    this productizes). Building blocks: natVR/firmware/main/main.cpp
+    (<code>NATVR_TRANSPORT_SERIAL</code>, <code>publish_task</code>, <code>heartbeat_task</code>,
+    <code>app_main</code>, <code>emit_serial_line</code>, <code>networking_mqtt_is_connected</code>,
+    <code>g_frame_queue</code>/<code>kMaxFrameAgeUs</code>), natVR/firmware/main/DevConfig.hpp,
+    natVR/src/natvr/bridge/serial_bridge.py (<code>natvr-serial-bridge</code>) + test_serial_bridge.py,
+    and the KafkaMosquittoBridge schema_version routing that keeps every path byte-identical.
+  </footer>
+</main>
+</body>
+</html>

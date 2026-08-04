@@ -1,2 +1,0 @@
-# Known doxygen warnings for ESP-MQTT documentation build
-# Currently no known doxygen warnings expected

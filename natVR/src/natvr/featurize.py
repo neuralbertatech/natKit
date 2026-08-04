@@ -75,6 +75,32 @@ def select_channel_indexes(
     return indexes
 
 
+# natVR's own reconstruction writes the cue class as `cue_gesture`/`cue_phase`; the
+# natKit Parquet exporter writes it under its configurable label field (default
+# `label`, plus `<field>_phase`). Instance-backed training reads the exporter's
+# files directly, so accept either rather than forcing one writer to imitate the
+# other. Checked in order of specificity; the generic names come last so an
+# explicitly cue-labelled column always wins.
+_LABEL_KEYS = ("cue_gesture", "label", "class", "gesture")
+_PHASE_KEYS = ("cue_phase", "label_phase", "phase")
+
+
+def _first_present(row: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _row_label(row: dict[str, Any]) -> Any:
+    return _first_present(row, _LABEL_KEYS)
+
+
+def _row_phase(row: dict[str, Any]) -> Any:
+    return _first_present(row, _PHASE_KEYS)
+
+
 def rows_to_sample_stream(
     rows: list[dict[str, Any]],
     *,
@@ -89,11 +115,15 @@ def rows_to_sample_stream(
         sample_count = int(row["samples_per_channel"])
         channel_indexes = select_channel_indexes(channel_count, selected_channel_indexes)
         channels = {
-            idx: [int(sample) for sample in row[f"channel_{idx}"]]
+            # float, not int: these used to be truncated because EMG samples are
+            # int16 and truncation was lossless for them. A natKit instance can hold
+            # any sensor -- IMU accel/gyro are genuinely fractional -- and int()
+            # silently destroyed that data.
+            idx: [float(sample) for sample in row[f"channel_{idx}"]]
             for idx in channel_indexes
         }
-        gesture = row.get("cue_gesture")
-        phase = row.get("cue_phase")
+        gesture = _row_label(row)
+        phase = _row_phase(row)
         frame_start_ts = int(row["device_ts_us"])
         for sample_idx in range(sample_count):
             stream.append(

@@ -3,19 +3,20 @@
 // builder returns a fresh EditorGraphDefinition; the source is bound to an
 // available stream when one is passed, else left blank for the user to pick.
 
+import type { SessionProtocol } from "../StreamViewer/types";
 import type { EditorGraphDefinition } from "./composites";
-import {
-    PROVENANCE_PORT_SOURCE,
-    PROVENANCE_PORT_EXPERIMENT,
-    PROVENANCE_PORT_MODELS,
-    PROVENANCE_PORT_MODEL,
-} from "./streamGraph";
+import { PROVENANCE_PORT_MODELS, PROVENANCE_PORT_MODEL } from "./streamGraph";
 
 export interface StarterTemplate {
     id: string;
     label: string;
     description: string;
     build: (sourceStreamId: string | null) => EditorGraphDefinition;
+    // A template that records also needs an EXPERIMENT, not just a board: the
+    // protocol lives in the experiment record now, and the board's `markers` node
+    // resolves its topic from whichever experiment is bound
+    // (experiment-history-snapshots-plan). The loader creates + binds this one.
+    experiment?: { label: string; protocol: SessionProtocol };
 }
 
 function baseGraph(label: string, description: string): EditorGraphDefinition {
@@ -59,9 +60,10 @@ function edge(from: string, fromPort: string, to: string, toPort: string) {
     };
 }
 
-// A provenance (lineage/control) edge — dropped from the executed graph, but
-// wires source→experiment / experiment→train / train→classify so the run
-// picker, device binding, and model dropdown resolve automatically.
+// A provenance (lineage/control) edge — dropped from the executed graph. Only
+// train→classify remains: it feeds the classify node's model dropdown. The
+// source→experiment and experiment→train edges were retired once the experiment
+// came to own the whole board.
 function provEdge(from: string, fromPort: string, to: string, toPort: string) {
     return {
         id: `prov-${from}-${to}`,
@@ -81,7 +83,7 @@ function provEdge(from: string, fromPort: string, to: string, toPort: string) {
 // ~4× the earlier 3-rep/2s version, which trained noticeably worse). More
 // repetitions matter more than longer holds for generalization, so we scaled
 // reps; bump `hold_s` if a longer steady contraction per cue is preferred.
-export const CONVENTION_PROTOCOL = {
+export const CONVENTION_PROTOCOL: SessionProtocol = {
     protocol_id: "convention-emg-v1",
     label: "Convention EMG",
     classes: ["fist", "open_hand", "point"],
@@ -94,22 +96,41 @@ export const CONVENTION_PROTOCOL = {
     seed: 1,
 };
 
+// The finger-counting protocol the "Record an experiment" starter binds.
+export const FINGER_COUNTING_STARTER_PROTOCOL: SessionProtocol = {
+    protocol_id: "finger-counting-v1",
+    label: "Finger counting",
+    classes: ["count_1", "count_2", "count_3", "count_4", "count_5"],
+    rest_class: "rest",
+    repetitions: 3,
+    hold_s: 2,
+    rest_s: 2,
+    lead_in_s: 3,
+    tail_rest_s: 2,
+    seed: 1,
+};
+
 export const STARTER_TEMPLATES: StarterTemplate[] = [
     {
         id: "convention-emg-quick-start",
         label: "Convention EMG Quick-Start",
         description:
             "Walk-up EMG gesture flow: live source, a short convention protocol, per-stage viewers, a train node, and a pre-placed gesture classifier.",
+        experiment: {
+            label: "Convention EMG",
+            protocol: { ...CONVENTION_PROTOCOL },
+        },
         build(streamId) {
             const s = suffix();
             const graph = baseGraph(
                 "Convention EMG Quick-Start",
                 "1) Check the live signal + electrode placement in the raw viewer. " +
-                    "2) Double-click the experiment (or press Record) to run the " +
-                    "gesture cues — follow the prompts, ~2 min. " +
-                    "3) In the timeline's Experiments library, pick the just-recorded " +
-                    "run for the Train node, then Submit. 4) The trained bundle " +
-                    "auto-fills the classifier — press Start to classify live.",
+                    "2) Press Record in the Experiment panel (or double-click the " +
+                    "Markers node) to run the gesture cues — follow the prompts, " +
+                    "~2 min. 3) In the timeline's Experiments library, pick the " +
+                    "just-recorded run for the Train node, then Submit. 4) The " +
+                    "trained bundle auto-fills the classifier — press Start to " +
+                    "classify live.",
             );
             graph.nodes = [
                 source(streamId),
@@ -144,20 +165,14 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     position: { x: 700, y: 300 },
                     input_port_ids: ["input"],
                 },
-                // Standalone marker timeline for the gesture cues.
+                // The bound experiment's cue timeline as a stream.
                 {
-                    id: "experiment",
-                    kind: "experiment",
-                    label: "Gesture session",
+                    id: "markers",
+                    kind: "markers",
+                    label: "Markers",
                     position: { x: 40, y: 520 },
-                    input_port_ids: [PROVENANCE_PORT_SOURCE],
+                    input_port_ids: [],
                     output_port_ids: ["markers"],
-                    config: {
-                        protocol: { ...CONVENTION_PROTOCOL },
-                        experiment_id: "convention-emg-session",
-                        participant_id: "",
-                        notes: "",
-                    },
                 },
                 {
                     id: "markers-viewer",
@@ -173,7 +188,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     kind: "train",
                     label: "Train",
                     position: { x: 700, y: 520 },
-                    input_port_ids: [PROVENANCE_PORT_EXPERIMENT],
+                    input_port_ids: [],
                     output_port_ids: [PROVENANCE_PORT_MODELS],
                     config: {
                         families: ["lda"],
@@ -194,18 +209,10 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                 edge("source", "data", "raw-viewer", "input"),
                 edge("source", "data", "classify", "input"),
                 edge("classify", "output", "classify-viewer", "input"),
-                edge("experiment", "markers", "markers-viewer", "input"),
-                // Lineage (provenance) edges — the invisible wiring made
-                // explicit: the source this session records, the experiment the
-                // trainer draws its runs from, and the trainer whose models the
-                // classifier serves.
-                provEdge("source", "data", "experiment", PROVENANCE_PORT_SOURCE),
-                provEdge(
-                    "experiment",
-                    "markers",
-                    "train",
-                    PROVENANCE_PORT_EXPERIMENT,
-                ),
+                edge("markers", "markers", "markers-viewer", "input"),
+                // The one surviving lineage edge: the trainer whose models the
+                // classifier serves. Source→experiment and experiment→train are
+                // implicit now that the experiment owns the board.
                 provEdge("train", PROVENANCE_PORT_MODELS, "classify", PROVENANCE_PORT_MODEL),
             ];
             return graph;
@@ -310,42 +317,23 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
         label: "Record an experiment",
         description:
             "A finger-counting experiment emitting a marker timeline into a viewer.",
+        experiment: {
+            label: "Finger counting",
+            protocol: { ...FINGER_COUNTING_STARTER_PROTOCOL },
+        },
         build() {
             const graph = baseGraph(
                 "Record an experiment",
-                "A source-like experiment that cues finger-counting gestures (1–5) and emits a labeled marker timeline; press Record, then watch the markers.",
+                "The bound experiment cues finger-counting gestures (1–5) and emits a labeled marker timeline; press Record in the Experiment panel, then watch the markers.",
             );
             graph.nodes = [
                 {
-                    id: "experiment",
-                    kind: "experiment",
-                    label: "Experiment",
+                    id: "markers",
+                    kind: "markers",
+                    label: "Markers",
                     position: { x: 120, y: 200 },
                     input_port_ids: [],
                     output_port_ids: ["markers"],
-                    config: {
-                        protocol: {
-                            protocol_id: "finger-counting-v1",
-                            label: "Finger counting",
-                            classes: [
-                                "count_1",
-                                "count_2",
-                                "count_3",
-                                "count_4",
-                                "count_5",
-                            ],
-                            rest_class: "rest",
-                            repetitions: 3,
-                            hold_s: 2,
-                            rest_s: 2,
-                            lead_in_s: 3,
-                            tail_rest_s: 2,
-                            seed: 1,
-                        },
-                        experiment_id: "finger-counting-experiment",
-                        participant_id: "",
-                        notes: "",
-                    },
                 },
                 {
                     id: "viewer",
@@ -355,7 +343,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     input_port_ids: ["input"],
                 },
             ];
-            graph.edges = [edge("experiment", "markers", "viewer", "input")];
+            graph.edges = [edge("markers", "markers", "viewer", "input")];
             return graph;
         },
     },

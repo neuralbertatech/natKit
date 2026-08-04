@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit EMG→VR Hand — Implementation Plan</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root{
+  --bg:#F4F7F5;
+  --panel:#FFFFFF;
+  --ink:#16211C;
+  --ink-soft:#4C5B54;
+  --line:#D9E1DC;
+  --trace:#0B7A53;          /* EMG trace green */
+  --trace-soft:#E2F1EA;
+  --amber:#B26A14;          /* open decisions */
+  --amber-soft:#F7ECDC;
+  --risk:#A33A2E;
+  --risk-soft:#F6E4E1;
+  --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --disp:'Space Grotesk','IBM Plex Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55}
+a{color:var(--trace)}
+code,.mono{font-family:var(--mono);font-size:.86em;background:#EDF2EF;padding:.08em .35em;border-radius:4px}
+
+/* ---------- header / signal strip ---------- */
+header{background:#10201A;color:#E7F0EB;padding:34px 24px 0}
+.head-inner{max-width:1060px;margin:0 auto}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#7FB8A0}
+h1{font-family:var(--disp);font-weight:700;font-size:clamp(26px,4vw,40px);line-height:1.12;margin:10px 0 8px}
+.subtitle{color:#A9C2B6;max-width:760px;font-size:15px}
+.signal-wrap{margin-top:26px;position:relative;height:84px}
+.signal-wrap svg{display:block;width:100%;height:64px}
+.signal-base{stroke:#2C4438;stroke-width:1.5;fill:none}
+.signal-live{stroke:#4FDFA4;stroke-width:1.8;fill:none}
+.pct-readout{position:absolute;right:0;top:-4px;font-family:var(--mono);font-size:13px;color:#4FDFA4}
+.head-meta{display:flex;flex-wrap:wrap;gap:18px;border-top:1px solid #24382F;padding:12px 0 18px;font-family:var(--mono);font-size:12px;color:#8DA89B}
+
+/* ---------- nav ---------- */
+nav{position:sticky;top:0;z-index:50;background:rgba(244,247,245,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.nav-inner{max-width:1060px;margin:0 auto;display:flex;gap:6px;overflow-x:auto;padding:8px 24px}
+.nav-chip{flex:0 0 auto;display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--ink-soft);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:5px 11px;background:var(--panel);white-space:nowrap}
+.nav-chip:hover{border-color:var(--trace);color:var(--trace)}
+.mini-bar{width:30px;height:5px;border-radius:3px;background:#E4EAE6;overflow:hidden}
+.mini-fill{height:100%;background:var(--trace);width:0%}
+
+/* ---------- layout ---------- */
+main{max-width:1060px;margin:0 auto;padding:28px 24px 90px}
+section.phase{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin:26px 0;overflow:hidden}
+.phase-head{padding:20px 24px 14px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between}
+.phase-id{font-family:var(--mono);font-size:12px;color:var(--trace);letter-spacing:.1em}
+h2{font-family:var(--disp);font-size:22px;font-weight:700;margin-top:2px}
+.phase-count{font-family:var(--mono);font-size:12px;color:var(--ink-soft)}
+.phase-goal{padding:14px 24px 4px;color:var(--ink-soft);font-size:14px;max-width:840px}
+.phase-goal strong{color:var(--ink)}
+.milestone{margin:12px 24px 4px;padding:10px 14px;border-left:3px solid var(--trace);background:var(--trace-soft);font-size:13.5px;border-radius:0 8px 8px 0}
+.milestone b{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--trace);display:block;margin-bottom:2px}
+
+/* ---------- tasks ---------- */
+.tasks{padding:10px 14px 18px}
+.subgroup{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);padding:16px 10px 6px}
+.task{display:flex;gap:11px;align-items:flex-start;padding:9px 10px;border-radius:8px}
+.task:hover{background:#F6F9F7}
+.task input[type=checkbox]{appearance:none;flex:0 0 auto;width:18px;height:18px;margin-top:2px;border:1.6px solid #9DB1A7;border-radius:5px;cursor:pointer;position:relative;background:#fff}
+.task input[type=checkbox]:checked{background:var(--trace);border-color:var(--trace)}
+.task input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1.5px;width:5px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(42deg)}
+.task input[type=checkbox]:focus-visible{outline:2px solid var(--trace);outline-offset:2px}
+.task-body{flex:1;min-width:0}
+.task-label{cursor:pointer}
+.task.done .task-label{color:#8AA094;text-decoration:line-through;text-decoration-color:#B9CCC2}
+.task-detail{font-size:13px;color:var(--ink-soft);margin-top:3px;max-width:800px}
+.task.done .task-detail{color:#A8BCB1}
+.tag{display:inline-block;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;border-radius:4px;padding:1px 6px;margin-left:7px;vertical-align:1px}
+.tag.decide{background:var(--amber-soft);color:var(--amber)}
+.tag.risk{background:var(--risk-soft);color:var(--risk)}
+.tag.stretch{background:#E8E6F4;color:#574E9C}
+.note-btn{flex:0 0 auto;border:none;background:none;color:#9DB1A7;cursor:pointer;font-family:var(--mono);font-size:11px;padding:3px 6px;border-radius:5px}
+.note-btn:hover{color:var(--trace);background:var(--trace-soft)}
+.note-btn.has-note{color:var(--amber)}
+.task-note{display:none;margin-top:7px}
+.task-note.open{display:block}
+.task-note textarea{width:100%;min-height:54px;border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-family:var(--sans);font-size:13px;background:#FCFDFC;resize:vertical}
+.task-note textarea:focus{outline:2px solid var(--trace);border-color:var(--trace)}
+
+/* phase notes */
+.phase-notes{border-top:1px dashed var(--line);padding:14px 24px 20px}
+.phase-notes label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);display:block;margin-bottom:6px}
+.phase-notes textarea{width:100%;min-height:64px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13.5px;font-family:var(--sans);background:#FCFDFC;resize:vertical}
+.phase-notes textarea:focus{outline:2px solid var(--trace);border-color:var(--trace)}
+
+/* ---------- callouts, tables ---------- */
+.callout{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:10px;padding:18px 22px;margin:26px 0}
+.callout h3{font-family:var(--disp);font-size:16px;margin-bottom:8px}
+.callout p{margin:8px 0;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 2px}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);text-align:left;padding:8px 10px;border-bottom:2px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.sev{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:4px;white-space:nowrap}
+.sev.high{background:var(--risk-soft);color:var(--risk)}
+.sev.med{background:var(--amber-soft);color:var(--amber)}
+.sev.low{background:var(--trace-soft);color:var(--trace)}
+.flow{font-family:var(--mono);font-size:12.5px;background:#10201A;color:#BFE3D2;border-radius:10px;padding:18px 20px;overflow-x:auto;line-height:1.7;margin:14px 0}
+.flow b{color:#4FDFA4;font-weight:500}
+
+/* ---------- toolbar ---------- */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:22px 0 4px}
+.toolbar button,.toolbar label.btn{font-family:var(--mono);font-size:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink-soft);border-radius:8px;padding:7px 12px;cursor:pointer}
+.toolbar button:hover,.toolbar label.btn:hover{border-color:var(--trace);color:var(--trace)}
+#save-state{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);margin-left:auto}
+.filter-on{background:var(--trace-soft)!important;border-color:var(--trace)!important;color:var(--trace)!important}
+body.hide-done .task.done{display:none}
+
+footer{max-width:1060px;margin:0 auto;padding:10px 24px 50px;font-size:12.5px;color:var(--ink-soft);font-family:var(--mono)}
+@media(max-width:640px){
+  .phase-head,.phase-goal,.phase-notes{padding-left:16px;padding-right:16px}
+  .milestone{margin-left:16px;margin-right:16px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-inner">
+    <div class="eyebrow">natKit · project plan · rev A — June 2026</div>
+    <h1>EMG-Driven Hand Presence on Meta Quest 2</h1>
+    <p class="subtitle">Surface EMG from Upside Down Labs BioAmp Candy sensors → ESP32 firmware → natKit/Kafka transport → gesture classification service → Unity client rendering a live hand on Quest 2. MVP target: a recognizably correct hand state per finger group. Stretch: IMU-fused arm pose, expanded gesture vocabulary, head-relative arm placement, and (much later) NeuroStimDuino haptic return path.</p>
+    <div class="signal-wrap" aria-hidden="true">
+      <span class="pct-readout"><span id="pct-num">0</span>% complete · <span id="done-num">0</span>/<span id="total-num">0</span> tasks</span>
+      <svg viewBox="0 0 1000 64" preserveAspectRatio="none">
+        <path id="trace-path" class="signal-base" d=""></path>
+        <g clip-path="url(#progClip)"><path id="trace-path-live" class="signal-live" d=""></path></g>
+        <defs><clipPath id="progClip"><rect id="prog-rect" x="0" y="0" width="0" height="64"/></clipPath></defs>
+      </svg>
+    </div>
+    <div class="head-meta">
+      <span>STACK: ESP32-C++ · Kafka/MQTT · Python · Unity/C#</span>
+      <span>HW: BioAmp Candy ×N · ESP32 · Quest 2 · (BNO085, Coral, NeuroStimDuino)</span>
+      <span>REPO: github.com/neuralbertatech/natKit</span>
+    </div>
+  </div>
+</header>
+
+<nav><div class="nav-inner" id="nav-inner"></div></nav>
+
+<main>
+
+  <div class="toolbar">
+    <button id="btn-filter" type="button">Hide completed</button>
+    <button id="btn-export" type="button">Export progress (.json)</button>
+    <label class="btn" for="import-file">Import progress<input type="file" id="import-file" accept=".json" style="display:none"></label>
+    <button id="btn-reset" type="button">Reset all</button>
+    <span id="save-state">storage: detecting…</span>
+  </div>
+
+  <div class="callout">
+    <h3>Read this first — three design realities the plan is built around</h3>
+    <p><strong>1. One BioAmp Candy = one channel.</strong> The Candy is a single-channel analog front end (72–720&nbsp;Hz bandpass, fixed ×2420 gain, analog out to an ADC). A single channel can give you "muscle active vs. relaxed," not finger identity. Per-finger-ish output requires an <em>array</em> of channels over the forearm flexors/extensors — plan for 2 channels in week one and 4–6 for the real MVP. Even then, surface EMG at hobby fidelity resolves <em>discrete gestures</em> (fist, open, pinch, point…) far more reliably than continuous per-finger angles. The MVP therefore classifies a small gesture set and renders each gesture as a pre-authored hand pose; per-finger regression is explicitly a stretch goal.</p>
+    <p><strong>2. The Quest should be a dumb renderer.</strong> Running a Kafka consumer (librdkafka) on Android/Quest is possible but painful and fragile. The plan inserts a tiny bridge service (Kafka consumer → WebSocket/UDP) so the headset only speaks a simple protocol. This also keeps all natKit logic on machines you can debug.</p>
+    <p><strong>3. Defer the Coral.</strong> An EMG gesture classifier over a handful of channels is tiny (kB–MB of weights). Any laptop CPU classifies a 200&nbsp;ms window in well under a millisecond. The Coral Dev Board adds int8 quantization + EdgeTPU compiler + a second Linux target for zero MVP benefit. It stays in the plan as an optional Phase 6 port with explicit "only if" criteria.</p>
+  </div>
+
+  <div class="flow">
+<b>[forearm]</b> BioAmp Candy ×N ──analog──▶ ADC ──▶ <b>ESP32</b> (sample @1&nbsp;kHz/ch, frame, timestamp, natKit-encode)
+   │ Wi-Fi · MQTT (mosquitto)
+   ▼
+<b>[natKit infra]</b> MQTT→Kafka bridge ──▶ Kafka topic <b>emg.raw.&lt;device&gt;</b>
+   │                                            │
+   ▼                                            ▼
+recorder / labeler / visualizer        <b>classifier service</b> (Python) ──▶ Kafka topic <b>hand.state.&lt;session&gt;</b>
+                                                │
+                                                ▼
+                                  <b>bridge</b> (Kafka→WebSocket) ──Wi-Fi──▶ <b>Quest 2 Unity client</b> (pose blend + render)
+  </div>
+
+  <div id="phases"></div>
+
+  <!-- ============ STATIC REFERENCE SECTIONS ============ -->
+
+  <section class="phase" id="latency">
+    <div class="phase-head"><div><div class="phase-id">REF·A</div><h2>End-to-End Latency Budget</h2></div></div>
+    <div class="phase-goal">Target: <strong>≤ 250 ms</strong> motion-to-render for the MVP (acceptable for a demo); aspire to ≤ 150 ms. Measure each hop in Phase 5 and record actuals here via notes.</div>
+    <div class="tasks" style="padding:10px 24px 20px">
+      <table>
+        <tr><th>Hop</th><th>Budget</th><th>Notes</th></tr>
+        <tr><td>EMG window accumulation</td><td>~100–150 ms</td><td>Inherent: classifier needs a window (e.g. 200 ms window, 50 ms hop → effective ~100 ms group delay). Biggest single cost; tune window/hop.</td></tr>
+        <tr><td>ESP32 frame + Wi-Fi + MQTT</td><td>≤ 25 ms</td><td>Frame size trades latency vs. packet rate; 50 ms frames is a sane start.</td></tr>
+        <tr><td>MQTT→Kafka bridge + Kafka</td><td>≤ 15 ms</td><td>Set <code>linger.ms=0</code>, small batches on this path.</td></tr>
+        <tr><td>Classifier inference + smoothing</td><td>≤ 20 ms</td><td>Inference ≪1 ms; majority-vote smoothing adds 1–2 hops of the stride.</td></tr>
+        <tr><td>Kafka→WS bridge → Quest</td><td>≤ 15 ms</td><td>Same LAN, single small JSON/binary message.</td></tr>
+        <tr><td>Unity pose blend + frame</td><td>≤ 25 ms</td><td>Blend over 2–3 frames at 72/90 Hz to hide quantization.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="phase" id="bom">
+    <div class="phase-head"><div><div class="phase-id">REF·B</div><h2>Hardware Bill of Materials</h2></div></div>
+    <div class="tasks" style="padding:10px 24px 20px">
+      <table>
+        <tr><th>Item</th><th>Qty</th><th>Purpose / notes</th></tr>
+        <tr><td>Muscle BioAmp Candy</td><td>2 → 6</td><td>Start with 2 (flexor + extensor bellies); buy 4–6 for the gesture MVP. Each needs a BioAmp cable + electrodes.</td></tr>
+        <tr><td>Gel electrodes + Muscle BioAmp Band(s)</td><td>lots</td><td>Gel electrodes are single-use; dry bands are reusable and better for demos. Budget electrodes generously for data-collection sessions.</td></tr>
+        <tr><td>ESP32 dev board</td><td>1–2</td><td>ESP32 (classic) or ESP32-S3. S3 has a better ADC + more RAM; either works. Second board as spare / IMU node.</td></tr>
+        <tr><td>External multi-channel ADC <span class="tag decide">DECIDE</span></td><td>0–1</td><td>Only if internal ADC quality blocks you. ADS1115 tops out at 860 SPS total — too slow for &gt;1 ch at 1 kHz. Candidates: ADS131M04 (4-ch, 24-bit, SPI), MCP3008+fast SPI, or ADS1256.</td></tr>
+        <tr><td>Skin prep (NuPrep, wipes)</td><td>1</td><td>Signal quality is mostly skin prep. Non-optional.</td></tr>
+        <tr><td>Meta Quest 2 + Link/dev cable</td><td>1</td><td>Developer mode enabled; USB-C cable for builds/logcat.</td></tr>
+        <tr><td>Dev machine / "server"</td><td>1</td><td>Runs Kafka stack, classifier, bridges. Any modern laptop is enough for MVP.</td></tr>
+        <tr><td>BNO085 IMU breakout <span class="tag stretch">STRETCH</span></td><td>1–2</td><td>On-chip fusion, quaternion out at up to 400 Hz over I2C/SPI/UART. Reuse natKit-IMU work.</td></tr>
+        <tr><td>Google Coral Dev Board <span class="tag stretch">STRETCH</span></td><td>0–1</td><td>Only per Phase 6 criteria.</td></tr>
+        <tr><td>NeuroStimDuino <span class="tag stretch">STRETCH</span></td><td>0–1</td><td>Far-future feedback path. Safety review before purchase, not after.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="phase" id="risks">
+    <div class="phase-head"><div><div class="phase-id">REF·C</div><h2>Risk Register</h2></div></div>
+    <div class="tasks" style="padding:10px 24px 20px">
+      <table>
+        <tr><th>Risk</th><th>Sev</th><th>Mitigation</th></tr>
+        <tr><td>Per-finger detail from surface EMG is not achievable at hobby fidelity</td><td><span class="sev high">HIGH</span></td><td>Scope MVP to 4–6 discrete gestures rendered as authored poses. Channel count + electrode placement experiments in Phase 1/2 before committing to the gesture set.</td></tr>
+        <tr><td>ESP32 internal ADC nonlinearity / noise degrades the signal</td><td><span class="sev med">MED</span></td><td>Use ADC calibration (eFuse), continuous DMA mode, oversample+decimate; keep external-ADC fallback pre-selected so the swap is a day, not a week.</td></tr>
+        <tr><td>Cross-session model drift (electrode shift, sweat, fatigue)</td><td><span class="sev high">HIGH</span></td><td>Build a 2-minute per-session calibration routine into the pipeline from day one; never demo a model trained on a different electrode placement.</td></tr>
+        <tr><td>60 Hz mains interference (Alberta grid) swamps the band</td><td><span class="sev med">MED</span></td><td>IIR notch at 60 Hz + harmonics in preprocessing; battery-power the ESP32 during capture; distance from AC appliances.</td></tr>
+        <tr><td>Wi-Fi jitter/loss between ESP32 and broker</td><td><span class="sev med">MED</span></td><td>Sequence numbers + device timestamps in every frame; ring buffer on device; measure loss in Phase 1 bench tests; dedicated demo router/AP.</td></tr>
+        <tr><td>Unity/Quest toolchain learning curve (first VR project)</td><td><span class="sev med">MED</span></td><td>Phase 4 starts with an isolated "hello cube + hand model + fake WebSocket data" milestone before any real data is wired in.</td></tr>
+        <tr><td>Kafka consumer on Quest proves infeasible</td><td><span class="sev low">LOW</span></td><td>Already avoided by design: bridge service owns Kafka, Quest speaks WebSocket/UDP only.</td></tr>
+        <tr><td>NeuroStimDuino safety (electrical stimulation of a human)</td><td><span class="sev high">HIGH</span></td><td>Out of scope until a dedicated safety review: current limits, isolation, electrode placement rules, informed consent. Never co-locate stim and capture electrodes without review.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="phase" id="decisions">
+    <div class="phase-head"><div><div class="phase-id">REF·D</div><h2>Decision Log</h2></div><div class="phase-count">record outcomes in notes ↓</div></div>
+    <div class="tasks" style="padding:10px 24px 8px">
+      <table>
+        <tr><th>#</th><th>Decision</th><th>Default / leading option</th><th>Decide by</th></tr>
+        <tr><td class="mono">D1</td><td>Channel count + electrode placement map for MVP</td><td>4 ch: 2× flexor compartment, 2× extensor compartment</td><td>End of Phase 2 data pilots</td></tr>
+        <tr><td class="mono">D2</td><td>Internal ESP32 ADC vs external SPI ADC</td><td>Internal (calibrated, DMA) until proven insufficient</td><td>Phase 1 signal-quality gate</td></tr>
+        <tr><td class="mono">D3</td><td>MVP gesture set</td><td>rest · fist · open · pinch (thumb-index) · point · thumbs-up</td><td>Start of Phase 3</td></tr>
+        <tr><td class="mono">D4</td><td>Classifier family for MVP</td><td>Feature-based LDA/SVM first; small 1D-CNN second</td><td>Phase 3 baseline results</td></tr>
+        <tr><td class="mono">D5</td><td>Quest transport protocol</td><td>WebSocket w/ JSON (upgrade to binary/UDP only if measured latency demands)</td><td>Phase 4 bridge build</td></tr>
+        <tr><td class="mono">D6</td><td>Unity SDK path</td><td>Unity 2022/6000 LTS + Meta XR All-in-One SDK (OpenXR backend)</td><td>Phase 4 setup</td></tr>
+        <tr><td class="mono">D7</td><td>Generic server vs Coral for inference</td><td>Generic server; Coral only per Phase 6 criteria</td><td>Already defaulted — revisit post-MVP</td></tr>
+      </table>
+    </div>
+    <div class="phase-notes"><label for="notes-decisions">Decision outcomes &amp; rationale</label><textarea id="notes-decisions" data-notekey="sec-decisions" placeholder="D2 resolved 2026-07-...: internal ADC kept because ..."></textarea></div>
+  </section>
+
+</main>
+
+<footer>natKit · EMG→VR hand presence plan · progress persists in this page's storage — export JSON before sharing the file or switching machines.</footer>
+
+<script>
+/* ================= PLAN DATA ================= */
+const PLAN = [
+{
+id:"p0", num:"PHASE 0", title:"Foundations, Architecture & Procurement", weeks:"~1 week",
+goal:"Lock the system shape before writing firmware. Everything downstream gets cheaper when topics, schemas, and the time-sync story are decided up front — and natKit already gives you Kafka, mosquitto, and libnatkit to lean on.",
+milestone:"Architecture doc merged to the natKit repo; Kafka + mosquitto stack running; all MVP hardware ordered or in hand.",
+groups:[
+ {name:"Architecture & repo", items:[
+  {t:"Write a 1–2 page architecture decision record (ADR) capturing the dataflow diagram above, the gesture-classification (not regression) MVP scope, and the bridge-not-on-Quest decision", d:"Commit it to the repo so future-you and collaborators stop relitigating scope."},
+  {t:"Define Kafka topic naming + partitioning convention", d:"e.g. emg.raw.<device-id>, imu.quat.<device-id>, hand.state.<session-id>, meta.session.<session-id>. One partition per device stream is fine at this scale."},
+  {t:"Define the EMG frame schema in the natKit encoding scheme", d:"Suggested frame: device_id, seq_no (u32), device_ts_us (u64), n_channels, samples_per_channel, sample_rate_hz, payload int16[ch][n]. Version the schema from v1.", tag:"decide"},
+  {t:"Define the classified hand-state schema", d:"gesture_id, confidence, per-finger pose hint (5× float curl 0–1, even if quantized from the gesture for now — future-proofs the Unity contract), source window timestamps."},
+  {t:"Decide repo layout for new components", d:"e.g. natKit-EMG (ESP32 firmware submodule, mirroring natKit-IMU), pipelines/emg-classifier, bridges/kafka-ws, vr/quest-hand-client. Match existing submodule conventions."}
+ ]},
+ {name:"Infrastructure & time sync", items:[
+  {t:"Stand up the natKit docker-compose stack (Kafka + mosquitto) on the dev server and smoke-test with an existing producer script", d:"Confirms the baseline before adding new device types."},
+  {t:"Confirm or build the MQTT→Kafka bridge path for embedded producers", d:"The repo ships mosquitto; verify whether a bridge to Kafka topics exists (e.g. a connector or custom relay) or schedule building a thin one. ESP32s will publish MQTT, not Kafka.", tag:"decide"},
+  {t:"Write the time-sync design note", d:"ESP32s sync via SNTP on boot + periodic re-sync; every frame carries device_ts_us + seq_no; consumers reconcile with broker receive time. Decide drift tolerance (e.g. ±5 ms) and how it's monitored."},
+  {t:"Set up a dedicated demo Wi-Fi AP/router (or plan for one)", d:"Venue Wi-Fi kills demos. A travel router with static leases for ESP32s, server, and Quest removes the #1 failure mode."}
+ ]},
+ {name:"Procurement", items:[
+  {t:"Order hardware per the BOM (sensors ×4–6, electrodes in bulk, skin prep, cables, spare ESP32)", d:"Lead times on Upside Down Labs gear can be weeks to Canada — order in week one."},
+  {t:"Enable Quest 2 developer mode + Meta developer account; verify adb sees the headset", d:"Do this early; account verification can stall."}
+ ]}
+]},
+{
+id:"p1", num:"PHASE 1", title:"EMG Acquisition Firmware (ESP32 / C++)", weeks:"~2–3 weeks",
+goal:"A battery-powered ESP32 streaming clean, timestamped, multi-channel EMG frames into Kafka via MQTT — validated on the bench with known signals, not just vibes.",
+milestone:"4-channel, 1 kHz/channel EMG visible live in a natKit consumer with <1% frame loss over 10 minutes and verified timestamps.",
+groups:[
+ {name:"Analog bring-up (1 channel)", items:[
+  {t:"Wire one BioAmp Candy to the ESP32 at 3.3 V and validate the raw signal over serial plotter", d:"Caution from the vendor: VCC/GND polarity mistakes kill the board. 3.3 V keeps the output in ESP32 ADC range."},
+  {t:"Practice the electrode protocol: skin prep gel, placement on flexor digitorum superficialis, reference on bony landmark", d:"Document placement with photos — placement repeatability is a dataset requirement, not a nicety."},
+  {t:"Characterize noise floor vs. signal: relaxed vs. max contraction amplitude, with laptop on battery, 5 m from AC appliances", d:"Record numbers in notes. If SNR is poor here, fix it now — no firmware fixes bad electrodes."}
+ ]},
+ {name:"Sampling architecture", items:[
+  {t:"Implement continuous ADC sampling at 1 kHz/channel using the ESP-IDF ADC continuous (DMA) driver, with eFuse calibration applied", d:"Bandpass tops at 720 Hz → Nyquist demands ≥1.44 kHz… but the analog rolloff is gentle and 1 kHz is the field-standard compromise; if aliasing artifacts appear, raise to 2 kHz. Oversample ×4 and decimate for noise.", tag:"decide"},
+  {t:"Scale to 4 channels with a stable per-channel rate and channel-skew measurement", d:"Internal ADC muxes channels — measure inter-channel skew; it must be ≪1 sample period or corrected in metadata."},
+  {t:"Gate: judge internal ADC quality (linearity, noise) against the Phase 1 bench data; if failing, swap to the pre-selected external SPI ADC (e.g. ADS131M04)", d:"Decision D2. Timebox the internal-ADC fight to avoid sunk-cost spirals.", tag:"risk"}
+ ]},
+ {name:"Framing, encoding, transport", items:[
+  {t:"Implement frame assembly: 50 ms frames (50 samples/ch @1 kHz), int16 samples, seq_no, device_ts_us", d:"50 ms ≈ 20 packets/s — friendly to Wi-Fi and to the classifier's hop size."},
+  {t:"Integrate libnatkit (or port the encoding scheme) on ESP32 to encode frames per the Phase 0 schema", d:"libnatkit is C++ — assess what compiles under ESP-IDF/Arduino toolchains and stub what doesn't; keep encoding identical to desktop so consumers don't special-case."},
+  {t:"Publish frames over MQTT to mosquitto (QoS 0 or 1) and confirm arrival in Kafka via the bridge", d:"QoS 0 + seq-no gap detection is usually better for realtime than QoS 1 retransmit storms.", tag:"decide"},
+  {t:"Implement SNTP time sync on boot + hourly, with a ring buffer (~2 s) to ride out Wi-Fi hiccups", d:"On reconnect, drop stale frames rather than flooding — realtime data has an expiry date."},
+  {t:"Add a device heartbeat/status topic (battery, RSSI, drop counters, uptime)", d:"You'll thank yourself at demo time."}
+ ]},
+ {name:"Bench validation", items:[
+  {t:"Inject a known signal (function generator or DAC tone through a resistor divider) and verify amplitude/frequency fidelity end-to-end in a Kafka consumer", d:"Proves the whole acquisition path quantitatively."},
+  {t:"Run a 10-minute soak test: measure frame loss, latency (device_ts vs broker receive ts), and clock drift", d:"Targets: <1% loss, sub-25 ms transport, drift within the Phase 0 tolerance. Log results in notes."}
+ ]}
+]},
+{
+id:"p2", num:"PHASE 2", title:"Pipeline, Recording & Labeling Tooling", weeks:"~2 weeks",
+goal:"Turn the live stream into datasets. Model quality will be decided here, not in Phase 3 — a clean, cue-labeled, well-organized dataset with a repeatable capture protocol is the actual deliverable.",
+milestone:"One-command recording session producing labeled, per-gesture EMG data files with session metadata; ≥3 recorded sessions across ≥2 days.",
+groups:[
+ {name:"Consumers & storage", items:[
+  {t:"Write a Python Kafka consumer library module for the EMG frame schema (decode, reassemble, gap-detect)", d:"Lives in natKit's Python layer; everything downstream imports this."},
+  {t:"Build the recorder: stream → Parquet (or HDF5) with raw samples + timestamps + seq metadata", d:"Columnar files make Phase 3 experimentation fast; one file per session per device."},
+  {t:"Define session metadata (JSON sidecar): subject, arm, electrode placement photo ref, channel map, sensor serials, skin-prep notes, date", d:"Cross-session generalization analysis is impossible without this."},
+  {t:"Extend/confirm the natKit stream visualizer renders the live multi-channel EMG", d:"The repo's Svelte frontend or stream-visualizer-gui may work with the new schema — adapt rather than rebuild."}
+ ]},
+ {name:"Labeling & capture protocol", items:[
+  {t:"Build a cue-based capture tool: on-screen prompts cycle through the gesture set (3 s hold, 2 s rest, randomized order), writing cue labels + timestamps to the session", d:"Cue-aligned labels beat post-hoc hand labeling massively. A simple terminal/Web UI is fine."},
+  {t:"Write the capture protocol doc: electrode placement map, prep steps, gesture instructions with photos, per-session checklist", d:"This is what makes session #14 comparable to session #1."},
+  {t:"Pilot: record 2–3 sessions (yourself), eyeball signals per gesture, and sanity-check class separability with a quick RMS-per-channel scatter plot", d:"If fist vs. rest isn't trivially separable per channel here, revisit placement/channel count (Decision D1) before collecting more.", tag:"risk"},
+  {t:"Record the MVP training corpus: ≥5 sessions, ≥2 different days, electrodes re-applied each session", d:"Re-application between sessions is what forces the model to learn placement-robust features."}
+ ]},
+ {name:"Hygiene", items:[
+  {t:"Dataset versioning + train/val split BY SESSION (never by window)", d:"Window-level splits leak temporally-adjacent data and produce fantasy accuracy numbers."},
+  {t:"Add a replay tool: re-publish a recorded session to Kafka at real-time speed", d:"Lets Phases 3–4 develop without wearing electrodes all day. Possibly natKit already has pieces of this."}
+ ]}
+]},
+{
+id:"p3", num:"PHASE 3", title:"Signal Processing & Gesture Classification", weeks:"~2–3 weeks",
+goal:"A streaming classifier service that consumes emg.raw, emits stable hand.state messages, and survives a fresh electrode application via a 2-minute calibration. Classical features first; deep learning only if it earns its keep.",
+milestone:"Live ≥90% accuracy on 4–6 gestures (subject-dependent, same-day calibration) with stable, non-flickering output and <50 ms processing overhead.",
+groups:[
+ {name:"Preprocessing", items:[
+  {t:"Implement the DSP chain: 60 Hz (+120/180) IIR notch → optional 20 Hz high-pass → rectify → moving-RMS envelope", d:"Hardware already bandpasses 72–720 Hz; the notch matters anyway since 60 Hz harmonics live in-band."},
+  {t:"Implement sliding-window framing: 200 ms window, 50 ms hop (aligned to the firmware frame size)", d:"Window/hop are the main latency-vs-accuracy dial — make them config, not constants."},
+  {t:"Per-channel normalization from calibration data (rest baseline + max-contraction reference)", d:"This is what the per-session calibration routine feeds."}
+ ]},
+ {name:"Baseline models", items:[
+  {t:"Extract the classic Hudgins time-domain feature set per channel: MAV, RMS, zero crossings, slope-sign changes, waveform length", d:"Decades of myoelectric-control literature says this set + a linear model is a brutally strong baseline."},
+  {t:"Train/evaluate LDA, linear SVM, and random forest on session-split data; report confusion matrices", d:"Decision D4. Expect LDA to be embarrassingly competitive."},
+  {t:"Only if baselines plateau below target: train a small 1D-CNN or TCN on raw windows", d:"Keep it tiny (<1M params) — also keeps the Coral door open later.", tag:"decide"},
+  {t:"Run the channel-count ablation: accuracy with 2 vs 4 vs 6 channels", d:"Settles Decision D1 with data and tells you the minimum demo hardware."}
+ ]},
+ {name:"Streaming service", items:[
+  {t:"Build the classifier service: Kafka consumer → DSP → model → majority-vote smoothing (e.g. 5-window vote) + confidence threshold + min-hold time → publish hand.state", d:"Smoothing/debounce is the difference between a demo that looks alive and one that looks haunted."},
+  {t:"Implement the 2-minute calibration routine as a guided sequence (rest, max squeeze, one rep per gesture) that fits normalization + optionally re-fits the final classifier layer", d:"Run it at the start of every session and every demo. Non-negotiable per the risk register.", tag:"risk"},
+  {t:"Map gestures → per-finger curl vector in the hand.state schema", d:"e.g. fist = [1,1,1,1,1], point = [1,0,1,1,1] (thumb..pinky curls). Unity consumes curls, not gesture names — so upgrading to regression later changes nothing downstream."},
+  {t:"Measure: end-to-end raw-frame→hand.state latency and per-window compute time; log to the heartbeat topic", d:"Feeds the REF·A budget table."},
+  {t:"Replay-driven integration test: classifier on a recorded session reproduces expected label timeline", d:"Your regression test for all future DSP/model changes."}
+ ]}
+]},
+{
+id:"p4", num:"PHASE 4", title:"VR Client (Unity / Meta Quest 2)", weeks:"~3–4 weeks (first VR project — pad it)",
+goal:"A Quest 2 app showing a believable hand that mirrors the classified state in real time. Built in strict isolation first (fake data), wired to the live pipeline last.",
+milestone:"Wearing the headset, making a fist in real life closes the virtual hand within ~250 ms, reliably, for minutes at a time.",
+groups:[
+ {name:"Toolchain & hello-world", items:[
+  {t:"Install Unity LTS + Android build support; create project with Meta XR All-in-One SDK (OpenXR backend); deploy a 'hello cube' to the Quest 2", d:"Decision D6. Budget real time for first-build friction: IL2CPP, ARM64, signing, USB permissions, adb."},
+  {t:"Learn the minimum viable Unity loop: scenes, prefabs, MonoBehaviour Update(), Inspector wiring", d:"Timebox a day or two of tutorial; resist learning 'all of Unity'."},
+  {t:"Set up fast iteration: Quest Link or AirLink for play-mode testing in-editor without full APK builds", d:"Build-deploy cycles are 2–5 min; Link play-mode is seconds. This 10×'s the phase."}
+ ]},
+ {name:"Hand rendering", items:[
+  {t:"Import a rigged hand/arm model (Meta XR sample hands or a CC0 rigged hand) and verify finger bones articulate via script", d:"You need per-finger joint transforms you can drive from code — confirm before falling in love with a model."},
+  {t:"Author the pose system: map a 5-float curl vector → finger joint rotations (per-finger curl curve across 3 joints)", d:"Driving curls (matching the hand.state contract) instead of named animations means new gestures need zero Unity work."},
+  {t:"Implement pose blending: smooth-damp current curls toward target curls over ~100 ms", d:"Hides classifier quantization; makes 6 discrete states feel continuous."},
+  {t:"Place the hand at a plausible body-relative anchor (offset from the headset/camera rig)", d:"MVP: fixed offset. Stretch goal upgrades this to IMU-driven placement."}
+ ]},
+ {name:"Networking", items:[
+  {t:"Build the Kafka→WebSocket bridge service (Python, ~100 lines): consume hand.state, fan out JSON to WS clients", d:"Decision D5. Keep messages tiny: {ts, gesture, conf, curls[5]}."},
+  {t:"Integrate a WebSocket client in Unity (e.g. NativeWebSocket) with auto-reconnect and a connection-status indicator in-scene", d:"Test against the bridge with synthetic/replayed data before any live EMG."},
+  {t:"Add an in-headset debug overlay: msg rate, last-msg age, current gesture + confidence, bridge latency", d:"Debugging inside a headset without telemetry is misery."},
+  {t:"Handle staleness: if no message for >500 ms, ease the hand to a neutral pose and show the indicator", d:"Graceful degradation beats a frozen claw."}
+ ]},
+ {name:"Live integration", items:[
+  {t:"First live end-to-end run: electrodes → ESP32 → Kafka → classifier → bridge → Quest; capture video", d:"Milestone moment. Expect to iterate on smoothing constants and min-hold times here."},
+  {t:"Tune for feel: blend times, debounce, confidence thresholds — judged in-headset, not in plots", d:"Perceived responsiveness ≠ measured latency; tune both."}
+ ]}
+]},
+{
+id:"p5", num:"PHASE 5", title:"Integration Hardening, Evaluation & Demo Polish", weeks:"~1–2 weeks",
+goal:"Turn the working pipeline into a demo that survives strangers, venues, and repeated electrode applications — with honest numbers attached.",
+milestone:"A scripted 10-minute demo runs three times in a row, including one cold start, without intervention beyond the calibration routine.",
+groups:[
+ {name:"Measurement & evaluation", items:[
+  {t:"Measure true motion-to-render latency: film hand + headset view at 120/240 fps, count frames between physical and virtual motion", d:"The only latency number that counts. Record per-hop numbers in REF·A notes."},
+  {t:"Run the formal accuracy protocol: fresh electrode application, calibration, scripted gesture sequence, report per-gesture accuracy + confusion matrix", d:"This is the number you quote in the writeup/readme."},
+  {t:"Try one naive second subject end-to-end (with calibration)", d:"Reveals how subject-dependent the model is — sets expectations for demoing on volunteers.", tag:"risk"}
+ ]},
+ {name:"Operational hardening", items:[
+  {t:"One-command bringup: docker compose / script that starts Kafka, mosquitto, bridge(s), classifier, with health checks", d:"Cold-start-to-running in <5 minutes."},
+  {t:"Write the demo runbook: setup order, electrode placement photos, calibration steps, known failure modes + fixes", d:"Someone else should be able to run the demo from this doc."},
+  {t:"Failure-mode drills: kill Wi-Fi, kill the classifier, yank an electrode — verify every component recovers or degrades visibly", d:"Demos fail at the seams; rehearse the seams."},
+  {t:"Documentation pass: README(s) for each new component, architecture doc updated to as-built, dataset + protocol docs in repo", d:"Also the moment to upstream anything reusable into natKit proper."}
+ ]}
+]},
+{
+id:"p6", num:"PHASE 6", title:"Stretch Goals (post-MVP backlog)", weeks:"unscheduled",
+goal:"Ordered roughly by value-per-effort. Each item is a mini-project with its own gate; none should start before the Phase 5 milestone passes.",
+milestone:"—",
+groups:[
+ {name:"S1 · IMU arm pose (BNO085)", items:[
+  {t:"Bring up BNO085 on an ESP32 node via the existing natKit-IMU submodule; stream quaternions (~100–200 Hz) to imu.quat topics", d:"BNO085 does on-chip sensor fusion — you consume quaternions, not raw gyro math.", tag:"stretch"},
+  {t:"Mount one IMU on the forearm; drive the Unity arm's elbow/wrist orientation from the quaternion stream (with a T-pose calibration step)", d:"One IMU gives forearm orientation; a second on the upper arm enables a 2-bone arm solve.", tag:"stretch"},
+  {t:"Time-align IMU and EMG streams using natKit timestamps; verify alignment with a synchronized tap test", d:"A fist clench while rotating the wrist is the integration test.", tag:"stretch"}
+ ]},
+ {name:"S2 · Head-relative arm placement", items:[
+  {t:"Anchor the virtual shoulder to the Quest head pose with an anthropometric offset; solve elbow via 2-bone IK (Unity Animation Rigging) from IMU orientations", d:"Position (not just orientation) from IMUs alone drifts — accept orientation-only realism, or add a calibration pose ritual.", tag:"stretch"}
+ ]},
+ {name:"S3 · Richer hand states", items:[
+  {t:"Expand the gesture vocabulary (grip strength as a continuous channel via RMS amplitude; more poses) — gated on confusion-matrix headroom", d:"Continuous grip-strength → curl scaling is the cheapest 'wow' upgrade and needs no new hardware.", tag:"stretch"},
+  {t:"Investigate per-finger regression (continuous curls) with a camera-based ground-truth rig (e.g. MediaPipe hand tracking on a webcam as the label source)", d:"This is research-grade; the camera-labeled dataset is the hard part, the model is not.", tag:"stretch"}
+ ]},
+ {name:"S4 · Coral TPU port", items:[
+  {t:"Port inference to Coral ONLY IF: (a) model is a quantizable NN, (b) a standalone/untethered inference node is genuinely wanted, and (c) CPU latency is actually a bottleneck — otherwise close this permanently", d:"Requires int8 post-training quantization + EdgeTPU compiler; budget a week of toolchain friction.", tag:"stretch"}
+ ]},
+ {name:"S5 · NeuroStimDuino feedback (far future)", items:[
+  {t:"Safety review FIRST: stimulation limits, electrical isolation from the capture chain, electrode placement rules, informed consent, and a hard physical e-stop", d:"Electrical stimulation of humans is a different risk class from everything else in this plan. No bench experiments before this review is written down.", tag:"risk"},
+  {t:"Design the feedback loop: VR contact events → Kafka → stim controller with rate limiting and watchdogs; stim electrodes physically separate from EMG sites", d:"Note EMG capture during stimulation suffers severe artifacts — plan to blank/ignore EMG during stim pulses.", tag:"stretch"}
+ ]}
+]}
+];
+
+/* ================= STORAGE ================= */
+const SKEY='natkit-emg-vr-plan-v1';
+let mem=null, mode='memory';
+const store={
+  async detect(){
+    if(window.storage&&window.storage.get){mode='artifact';}
+    else{try{localStorage.setItem('__t','1');localStorage.removeItem('__t');mode='local';}catch(e){mode='memory';}}
+    document.getElementById('save-state').textContent='storage: '+(mode==='artifact'?'claude (persists)':mode==='local'?'browser (persists)':'memory only — export to save!');
+  },
+  async load(){
+    try{
+      if(mode==='artifact'){const r=await window.storage.get(SKEY);return r?JSON.parse(r.value):null;}
+      if(mode==='local'){const v=localStorage.getItem(SKEY);return v?JSON.parse(v):null;}
+    }catch(e){return null;}
+    return mem;
+  },
+  async save(state){
+    state.updated=new Date().toISOString();
+    try{
+      if(mode==='artifact'){await window.storage.set(SKEY,JSON.stringify(state));}
+      else if(mode==='local'){localStorage.setItem(SKEY,JSON.stringify(state));}
+      else{mem=state;}
+      const el=document.getElementById('save-state');
+      el.textContent='saved '+new Date().toLocaleTimeString()+(mode==='memory'?' (memory only!)':'');
+    }catch(e){document.getElementById('save-state').textContent='save failed — use export';}
+  }
+};
+let STATE={tasks:{
+  "p0-0-0":{done:true,note:"2026-06-11: Added natVR/docs/adr-001-emg-vr-architecture.md to lock the MVP dataflow, Quest bridge boundary, and repo-local ownership."},
+  "p0-0-1":{done:true,note:"2026-06-11: Defined topic helpers in natVR/src/natvr/topics.py and documented the convention in ADR 001."},
+  "p0-0-2":{done:true,note:"2026-06-11: Added the initial EMG contract, now canonicalized as exg.pill.emg.data.v1 in natVR/schemas/exg-pill-emg-data-v1.schema.json and natVR/src/natvr/models.py."},
+  "p0-0-3":{done:true,note:"2026-06-11: Added hand.state.v1 contract in natVR/schemas/hand-state-v1.schema.json and natVR/src/natvr/models.py."},
+  "p0-0-4":{done:true,note:"2026-06-11: Created the natVR subtree with docs, schemas, src/natvr, and tests as the initial project-local layout."},
+  "p0-1-1":{done:true,note:"2026-06-11: Confirmed root docker-compose.yml already includes natkit-v0-bridge for the MQTT->Kafka path."},
+  "p0-1-2":{done:true,note:"2026-06-11: Wrote natVR/docs/time-sync.md covering SNTP, seq_no, device_ts_us, and drift handling."},
+  "p2-0-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/emg_consumer.py with schema decode, Kafka polling, and per-device seq_no gap tracking."},
+  "p2-0-1":{done:true,note:"2026-06-11: Added natVR/src/natvr/recording.py with a Parquet session recorder that writes raw samples, timestamps, seq metadata, and a JSON sidecar."},
+  "p2-0-2":{done:true,note:"2026-06-11: Defined SessionMetadata in natVR/src/natvr/recording.py for subject, arm, placement refs, channel map, sensor serials, and notes."},
+  "p2-1-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/cues.py and natVR/src/natvr/capture_session.py for randomized cue scheduling, timestamped cue export, and one-command labeled capture to Parquet."},
+  "p2-1-1":{done:true,note:"2026-06-11: Wrote natVR/docs/capture-protocol.md with placement map, skin prep, gesture definitions, per-session checklist, and the standard capture command."},
+  "p2-2-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/dataset_manifest.py plus the natvr-emg-dataset-manifest CLI so captures can be versioned by file hash and assigned to deterministic train/val/test splits strictly by session."},
+  "p2-2-1":{done:true,note:"2026-06-11: Added natVR/src/natvr/replay.py to reload recorded Parquet captures and replay them to Kafka at real-time or scaled speed."},
+  "p3-0-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/dsp.py with 60 Hz notch-chain filtering, optional high-pass filtering, rectification, and moving-RMS helpers for EMG preprocessing."},
+  "p3-0-1":{done:true,note:"2026-06-11: Added natVR/src/natvr/featurize.py to reconstruct sample streams from recorded frames and generate configurable sliding windows (default 200 ms / 50 ms)." },
+  "p3-0-2":{done:true,note:"2026-06-11: Added natVR/src/natvr/calibration.py for per-session rest vs active RMS calibration profiles and feature normalization over extracted windows."},
+  "p3-1-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/features.py with the classic Hudgins feature set per channel: MAV, RMS, zero crossings, slope-sign changes, and waveform length."},
+  "p3-1-1":{done:true,note:"2026-06-11: Added natVR/src/natvr/compare_models.py with session-split comparison reports for LDA, linear SVM, and random forest. Synthetic comparison output in natVR/captures/smoke-ci/model-compare-report.json currently lands at 0.773 LDA, 0.909 linear SVM, and 1.000 random forest on the deterministic smoke dataset. 2026-06-25: Added natVR/src/natvr/select_model.py plus the natvr-emg-select-model CLI so candidate families can be trained and scored on replay sessions before choosing the deployment artifact; the current deterministic smoke path selects random_forest at 0.880 replay accuracy over linear_svm at 0.840 and lda at 0.680."},
+  "p3-2-0":{done:true,note:"2026-06-11: Added natVR/src/natvr/model.py, natVR/src/natvr/train_model.py, natVR/src/natvr/predictor.py, and natVR/src/natvr/classifier.py for serializable LDA artifacts, sklearn joblib artifacts, and a live classifier-service scaffold that consumes emg.raw windows, normalizes features, applies smoothing, and publishes hand.state. Synthetic replay through the generic runtime currently lands at 0.84 for the linear SVM artifact and 0.88 for the random-forest artifact on the smoke dataset."},
+  "p3-2-1":{done:true,note:"2026-06-11: Added natVR/src/natvr/guided_calibration.py for the session-start calibration flow: guided rest baseline, max squeeze, one rep per gesture, immediate feature extraction, calibration-profile output, and optional session-adapted LDA re-fit from prior feature sets."},
+  "p3-2-2":{done:true,note:"2026-06-11: Added the default gesture-to-curl mapping in natVR/src/natvr/classifier.py so the live classifier publishes Unity-ready curl vectors rather than only gesture labels."},
+  "p3-2-3":{done:true,note:"2026-06-11: Extended natVR/src/natvr/classifier.py to measure per-window compute time plus end-to-end window-end->hand.state latency and publish rolling status payloads on device.status.<device_id>. 2026-06-11 follow-up: validated broker-backed status emission on the local podman stack using direct Kafka partition assignment for the single-broker environment."},
+  "p3-2-4":{done:false,note:"2026-06-11: Added natVR/src/natvr/replay_eval.py plus natVR/src/natvr/smoke.py so replay-driven regression runs are scripted. Initial synthetic smoke numbers were 25/25 matched windows, 0.160 replay accuracy with the global model, and 0.680 with session-adapted guided calibration. 2026-06-11 follow-up: verified the broker-backed path live with podman, including Kafka hand.state output, Kafka device.status output, and WebSocket bridge delivery. 2026-06-25: Fixed the offline calibration-profile path to default to hold windows, matching the training pipeline instead of mixing in transition/rest windows. The deterministic smoke harness now lands at 0.680 global replay accuracy and 0.680 guided replay accuracy on the same synthetic session. The representative replay-validation task remains open pending stronger accuracy with the chosen default deployment artifact on more realistic data."},
+  "p4-2-0":{done:true,note:"2026-06-11: Implemented natVR/src/natvr/bridge/hand_state_bridge.py to consume hand.state from Kafka and fan out JSON over WebSocket."}
+},notes:{
+  "sec-p0":"2026-06-11: Started implementation with the Phase 0 foundation slice. natVR now contains the accepted architecture record, topic conventions, JSON schemas, typed Python payload models, and the initial Kafka->WebSocket bridge service used by the Quest path.",
+  "sec-p1":"2026-06-11: Added a new ESP-IDF firmware workspace under natVR/firmware for the EMG acquisition node. It reuses the natMuse-style WiFi/NTP/MQTT bring-up pattern, samples four ADC1 channels in continuous mode on classic ESP32, frames 50 ms windows into canonical exg.pill.emg.data.v1 JSON, publishes to MQTT topics that the existing natkit-v0 bridge maps onto emg.raw.<device-id>, and emits a separate firmware heartbeat on device.status.<device-id>-fw to avoid colliding with classifier runtime metrics. This is a scaffold and still needs bench validation on hardware.",
+  "sec-p2":"2026-06-11: Added the first data tooling pass under natVR: an EMG Kafka consumer with seq_no gap tracking, a Parquet recorder CLI, a one-command cue-driven labeled capture CLI, session metadata sidecars, a cue timeline export, a capture protocol doc, an RMS/session analysis CLI that emits a summary JSON plus SVG scatter plot, a deterministic dataset-manifest CLI for session-level versioning/splits, and a replay CLI for classifier/Unity development without live electrodes. Runtime deps pyarrow and confluent-kafka are declared in natVR/pyproject.toml but were not installed in the shared Python environment during this pass. The actual pilot recording and class-separability review task remains pending until real sessions are captured and analyzed.",
+  "sec-p3":"2026-06-11: Added the first classifier-foundation modules under natVR: a reusable EMG DSP chain, window reconstruction from recorded captures, a featurization CLI that writes Hudgins-feature windows, a calibration CLI for per-session normalization, a session-split baseline LDA evaluator that writes confusion-matrix reports, a channel-ablation CLI, a multi-model comparison CLI for LDA vs linear SVM vs random forest, serializable LDA and sklearn model artifacts, a guided session-start calibration CLI, classifier status/latency emission on device.status, a deterministic synthetic smoke harness, and a live classifier-service scaffold with majority-vote smoothing and default gesture-to-curl mapping. I also added a replay-evaluation CLI and ran the synthetic local loop end to end; transport/timestamp alignment is correct (25/25 expected windows matched), the current synthetic global replay accuracy is 0.16, and the session-adapted guided-calibration model lifts that synthetic replay to 0.68. The current deterministic comparison report lands at 0.773 for LDA, 0.909 for linear SVM, and 1.000 for random forest, while synthetic replay through the generic runtime currently lands at 0.84 for the linear SVM artifact and 0.88 for the random-forest artifact. Follow-up validation on 2026-06-11 proved the broker-backed path on the local podman stack using direct Kafka partition assignment, with live hand.state and device.status messages flowing during replay. 2026-06-25: fixed the standalone calibration path to match hold-window training normalization and added a replay-scored model-selection CLI/report. The deterministic smoke harness now records the selected deployment artifact explicitly and currently chooses random_forest at 0.880 replay accuracy, ahead of linear_svm at 0.840 and lda at 0.680. Replay-validation and real model-quality signoff still remain open along with multi-session evaluation on real captures.",
+  "sec-p4":"2026-06-11: Networking work started early so Unity has a stable target contract before the headset client exists. The bridge currently expects canonical hand.state.v1 JSON on Kafka and emits compact hand_state WebSocket messages. 2026-06-11 follow-up: validated the bridge live against the podman-backed broker stack and confirmed WebSocket clients receive hand_state messages during replay."
+}};
+const DEFAULT_STATE=JSON.parse(JSON.stringify(STATE));
+let saveTimer=null;
+function queueSave(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>store.save(STATE),400);}
+
+/* ================= RENDER ================= */
+function el(tag,cls,html){const e=document.createElement(tag);if(cls)e.className=cls;if(html!==undefined)e.innerHTML=html;return e;}
+
+function render(){
+  const phasesRoot=document.getElementById('phases');
+  const nav=document.getElementById('nav-inner');
+  let total=0;
+  PLAN.forEach(ph=>{
+    const sec=el('section','phase');sec.id=ph.id;
+    const head=el('div','phase-head');
+    head.appendChild(el('div','',`<div class="phase-id">${ph.num} · ${ph.weeks}</div><h2>${ph.title}</h2>`));
+    const cnt=el('div','phase-count');cnt.dataset.countFor=ph.id;head.appendChild(cnt);
+    sec.appendChild(head);
+    sec.appendChild(el('div','phase-goal',ph.goal));
+    if(ph.milestone&&ph.milestone!=='—')sec.appendChild(el('div','milestone',`<b>Exit milestone</b>${ph.milestone}`));
+    const tasks=el('div','tasks');
+    ph.groups.forEach((g,gi)=>{
+      tasks.appendChild(el('div','subgroup',g.name));
+      g.items.forEach((it,ii)=>{
+        const id=`${ph.id}-${gi}-${ii}`;total++;
+        const row=el('div','task');row.dataset.tid=id;
+        const cb=document.createElement('input');cb.type='checkbox';cb.id='cb-'+id;
+        cb.addEventListener('change',()=>{STATE.tasks[id]=STATE.tasks[id]||{};STATE.tasks[id].done=cb.checked;row.classList.toggle('done',cb.checked);updateProgress();queueSave();});
+        const body=el('div','task-body');
+        const tagHtml=it.tag?`<span class="tag ${it.tag}">${it.tag==='decide'?'DECISION':it.tag==='risk'?'RISK GATE':'STRETCH'}</span>`:'';
+        const lab=el('label','task-label',it.t+tagHtml);lab.htmlFor='cb-'+id;
+        body.appendChild(lab);
+        if(it.d)body.appendChild(el('div','task-detail',it.d));
+        const noteWrap=el('div','task-note');
+        const ta=document.createElement('textarea');ta.placeholder='Notes for this task…';
+        ta.addEventListener('input',()=>{STATE.tasks[id]=STATE.tasks[id]||{};STATE.tasks[id].note=ta.value;nbtn.classList.toggle('has-note',!!ta.value.trim());queueSave();});
+        noteWrap.appendChild(ta);body.appendChild(noteWrap);
+        const nbtn=el('button','note-btn','✎ note');nbtn.type='button';nbtn.title='Toggle note';
+        nbtn.addEventListener('click',()=>{noteWrap.classList.toggle('open');if(noteWrap.classList.contains('open'))ta.focus();});
+        row.appendChild(cb);row.appendChild(body);row.appendChild(nbtn);
+        tasks.appendChild(row);
+      });
+    });
+    sec.appendChild(tasks);
+    const pn=el('div','phase-notes');
+    pn.innerHTML=`<label for="notes-${ph.id}">${ph.num} — running notes / blockers / links</label>`;
+    const pta=document.createElement('textarea');pta.id='notes-'+ph.id;pta.dataset.notekey='sec-'+ph.id;pta.placeholder='Status, blockers, measurements, decisions…';
+    pta.addEventListener('input',()=>{STATE.notes['sec-'+ph.id]=pta.value;queueSave();});
+    pn.appendChild(pta);sec.appendChild(pn);
+    phasesRoot.appendChild(sec);
+
+    const chip=el('a','nav-chip',`<span>${ph.num.replace('PHASE ','P')}</span><span class="mini-bar"><span class="mini-fill" data-fill="${ph.id}"></span></span>`);
+    chip.href='#'+ph.id;nav.appendChild(chip);
+  });
+  [['latency','REF·A'],['bom','REF·B'],['risks','REF·C'],['decisions','REF·D']].forEach(([id,lab])=>{
+    const chip=el('a','nav-chip',`<span>${lab}</span>`);chip.href='#'+id;nav.appendChild(chip);
+  });
+  document.getElementById('total-num').textContent=total;
+  buildTrace();
+}
+
+/* header EMG trace */
+function buildTrace(){
+  let d='M0,32 ';const burstAt=[120,300,520,760,900];
+  for(let x=4;x<=1000;x+=4){
+    let y=32+(Math.sin(x*0.05)*1.5);
+    burstAt.forEach(b=>{const dx=Math.abs(x-b);if(dx<46){const env=(1-dx/46);y+=Math.sin(x*1.7+b)*22*env*env;}});
+    d+=`L${x},${y.toFixed(1)} `;
+  }
+  document.getElementById('trace-path').setAttribute('d',d);
+  document.getElementById('trace-path-live').setAttribute('d',d);
+}
+
+function applyState(){
+  Object.entries(STATE.tasks||{}).forEach(([id,t])=>{
+    const row=document.querySelector(`[data-tid="${id}"]`);if(!row)return;
+    const cb=row.querySelector('input[type=checkbox]');
+    if(t.done){cb.checked=true;row.classList.add('done');}
+    if(t.note){const ta=row.querySelector('.task-note textarea');ta.value=t.note;row.querySelector('.note-btn').classList.add('has-note');}
+  });
+  Object.entries(STATE.notes||{}).forEach(([k,v])=>{
+    const ta=document.querySelector(`[data-notekey="${k}"]`);if(ta)ta.value=v;
+  });
+  updateProgress();
+}
+
+function updateProgress(){
+  let total=0,done=0;
+  PLAN.forEach(ph=>{
+    let pt=0,pd=0;
+    document.querySelectorAll(`#${ph.id} .task`).forEach(r=>{pt++;if(r.classList.contains('done'))pd++;});
+    total+=pt;done+=pd;
+    const fill=document.querySelector(`[data-fill="${ph.id}"]`);if(fill)fill.style.width=(pt?Math.round(pd/pt*100):0)+'%';
+    const cnt=document.querySelector(`[data-count-for="${ph.id}"]`);if(cnt)cnt.textContent=`${pd}/${pt} done`;
+  });
+  const pct=total?Math.round(done/total*100):0;
+  document.getElementById('pct-num').textContent=pct;
+  document.getElementById('done-num').textContent=done;
+  document.getElementById('prog-rect').setAttribute('width',(pct/100*1000).toFixed(0));
+}
+
+/* toolbar */
+document.getElementById('btn-filter').addEventListener('click',e=>{
+  document.body.classList.toggle('hide-done');
+  e.target.classList.toggle('filter-on');
+  e.target.textContent=document.body.classList.contains('hide-done')?'Show completed':'Hide completed';
+});
+document.getElementById('btn-export').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify(STATE,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='natkit-emg-vr-progress-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href);
+});
+document.getElementById('import-file').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{STATE=JSON.parse(r.result);document.querySelectorAll('.task').forEach(row=>{row.classList.remove('done');row.querySelector('input').checked=false;row.querySelector('.task-note textarea').value='';row.querySelector('.note-btn').classList.remove('has-note');});document.querySelectorAll('[data-notekey]').forEach(t=>t.value='');applyState();store.save(STATE);}catch(err){alert('Could not parse that file.');}};
+  r.readAsText(f);e.target.value='';
+});
+document.getElementById('btn-reset').addEventListener('click',()=>{
+  if(!confirm('Clear all checkboxes and notes? Export first if unsure.'))return;
+  STATE={tasks:{},notes:{}};
+  document.querySelectorAll('.task').forEach(row=>{row.classList.remove('done');row.querySelector('input').checked=false;row.querySelector('.task-note textarea').value='';row.querySelector('.note-btn').classList.remove('has-note');row.querySelector('.task-note').classList.remove('open');});
+  document.querySelectorAll('[data-notekey]').forEach(t=>t.value='');
+  updateProgress();store.save(STATE);
+});
+
+/* init */
+(async()=>{
+  render();
+  await store.detect();
+  const loaded=await store.load();
+  if(loaded&&typeof loaded==='object')STATE={
+    tasks:{...DEFAULT_STATE.tasks,...(loaded.tasks||{})},
+    notes:{...DEFAULT_STATE.notes,...(loaded.notes||{})}
+  };
+  applyState();
+})();
+</script>
+</body>
+</html>

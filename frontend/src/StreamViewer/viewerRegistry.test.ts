@@ -119,12 +119,24 @@ describe("chooseViewerRenderer", () => {
     expect(chooseViewerRenderer(channelFrameDescriptor())).toBe("channel_frame");
   });
 
-  it("falls back to the inspector for an IMU (non-channel-frame) descriptor", () => {
+  it("falls back to the inspector for an unknown non-channel-frame descriptor", () => {
     expect(chooseViewerRenderer(imuDescriptor())).toBe("inspector");
   });
 
   it("falls back to the inspector for an undefined descriptor", () => {
     expect(chooseViewerRenderer(undefined)).toBe("inspector");
+  });
+
+  it("selects the imu renderer for the NatImu* schemas (descriptor or hint)", () => {
+    expect(
+      chooseViewerRenderer({
+        ...imuDescriptor(),
+        schema_name: "NatImuBulkDataSchema",
+      }),
+    ).toBe("imu");
+    expect(
+      chooseViewerRenderer(undefined, undefined, "NatImuDataSchema"),
+    ).toBe("imu");
   });
 });
 

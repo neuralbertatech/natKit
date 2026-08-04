@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit C ABI Multi-Language Bindings Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1120px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, ol, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 940px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .status.future {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul, ol {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    background: #132019;
+    color: #d7eee2;
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit - multi-language bindings - plan - July 7 2026</div>
+  <h1>C ABI Foundation for Multi-Language Bindings</h1>
+  <p class="subtitle">
+    Stop hand-porting Kafka plumbing into every language that touches natKit data. Move the
+    logic that Python currently reimplements from scratch into shared C++ libraries behind a
+    stable <code>extern "C"</code> ABI, extending a pattern that already exists and already
+    works (<code>libnatkit-core</code>'s <code>StreamStitch.cpp</code> shim, consumed today via
+    ctypes from <code>natVR</code>). Python is the first client to migrate; Java and Rust follow
+    later against the same ABI once it is proven and stable.
+  </p>
+  <div class="meta">
+    Scope: <code>libnatkit/lib/libnatkit-core</code>, <code>libnatkit/libnatkit/core/kafka</code>,
+    <code>natVR/src/natvr</code>, <code>Dockerfile_natkit_ml_control_plane</code>.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Adopt a stable <code>extern "C"</code> ABI as the single boundary for every non-C++ language that needs natKit's stream/schema/Kafka logic, instead of writing bespoke per-language implementations or per-language bespoke bindings (e.g. pybind11/nanobind wrapping C++ classes directly).</li>
+      <li>Extend the ABI shim pattern that already exists in <code>libnatkit-core/src/StreamStitch.cpp</code> (POD structs, caller-allocated output buffers, <code>int</code> status-code returns) rather than inventing a new one.</li>
+      <li>Python binds via <code>ctypes</code>, mirroring the already-deployed <code>natVR/src/natvr/libnatkit_stitch.py</code> pattern. This deliberately avoids pybind11/nanobind, whose compiled extension modules are pinned to a specific CPython ABI version — the dev venv runs Python 3.14 while <code>Dockerfile_natkit_ml_control_plane</code> pins 3.12, and ctypes loads a plain shared library at runtime with no per-version rebuild.</li>
+      <li>Keep the Kafka transport ABI (librdkafka-backed) in its own shared library, separate from <code>libnatkit-core</code>'s ABI — <code>libnatkit-core</code> has an ESP-IDF (embedded) build branch with zero Kafka dependency today, and folding Kafka in would break that target.</li>
+      <li>Write down ABI conventions (naming, versioning, error handling, memory ownership) once, before the first new symbols ship, since retrofitting a policy after Python/Java/Rust depend on the symbols is expensive.</li>
+      <li>Java and Rust bindings are explicitly future work against the same ABI — not started in this plan.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>The bug that surfaced this</h3>
+        <ul>
+          <li><code>natVR/src/natvr/topics.py::_stable_stream_id()</code> is a byte-for-byte reimplementation of <code>stableStreamId()</code> in <code>StreamViewerWebSocket.cpp</code> (FNV-1a hash) — two independently-maintained copies of the same logic.</li>
+          <li>This class of duplication is exactly what let the recent composite-graph race bug (chained transform topics resolved via live Kafka metadata rather than deterministic creation) go unnoticed for as long as it did — different problem, same root cause: logic re-derived per call site instead of shared.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>It runs deeper than topic naming</h3>
+        <ul>
+          <li><code>natVR/src/natvr/emg_consumer.py</code> hand-decodes JSON for <code>ExgPillEmgDataSchemaV1</code>, <code>MarkerEventV1</code>, and <code>SessionMetadataRecord</code> — schemas that already have canonical C++ encoders/decoders sitting in <code>libnatkit-core</code>.</li>
+          <li><code>classifier.py</code> + <code>bridge/hand_state_bridge.py</code> aren't just a duplicate Kafka client — they're an independent Python-side "transform worker" producing a <code>hand_state</code> topic, duplicating the <em>role</em> of the C++ backend's <code>createTransformWorker</code>, not just its plumbing.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Target state</h3>
+        <ul>
+          <li>One implementation of stream/topic/schema logic, in C++, exposed through a stable ABI.</li>
+          <li>Python, Java, and Rust each get a thin, idiomatic wrapper over that ABI instead of a parallel reimplementation.</li>
+          <li>New logic gets one place to fix bugs, not N places to remember to keep in sync.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What Already Works (build on this, don't replace it)</h2>
+    <table>
+      <tr>
+        <th>Piece</th>
+        <th>Where</th>
+        <th>Notes</th>
+      </tr>
+      <tr>
+        <td>Lightweight core library, no Kafka dependency</td>
+        <td><code>libnatkit/lib/libnatkit-core/</code> (own CMakeLists.txt, builds <code>liblibnatkit-core.so</code>)</td>
+        <td>Already contains <code>BasicTopicInformation</code>, <code>TopicMessenger</code>, <code>Registry</code>, <code>RawStream</code>, schema types (<code>ExgPillEmgDataSchemaV1</code>, <code>MarkerEventV1</code>, <code>MetaRecord</code>, <code>SessionMetadataRecord</code>), <code>JsonEncoder</code>/<code>JsonDecoder</code>. Has an ESP-IDF embedded build branch with no Kafka dependency at all.</td>
+      </tr>
+      <tr>
+        <td>Existing extern "C" shim</td>
+        <td><code>libnatkit-core/src/StreamStitch.cpp</code></td>
+        <td><code>nat_sort_timestamps</code>, <code>nat_assign_intervals_to_timeline</code>, <code>nat_assign_points_to_timeline</code>. Convention: fixed-layout POD structs (e.g. <code>nat_timeline_interval_t</code>), caller-allocates-output-buffers, <code>int</code> status code (0 = success), no exceptions cross the boundary.</td>
+      </tr>
+      <tr>
+        <td>Working Python ctypes binding</td>
+        <td><code>natVR/src/natvr/libnatkit_stitch.py</code></td>
+        <td>Loads the <code>.so</code> via <code>ctypes.CDLL</code> (path from <code>LIBNATKIT_CORE_PATH</code> env var or build-artifact search), declares <code>argtypes</code>/<code>restype</code> explicitly, marshals dataclasses into <code>ctypes.Structure</code> arrays.</td>
+      </tr>
+      <tr>
+        <td>Deployed already</td>
+        <td><code>Dockerfile_natkit_ml_control_plane</code></td>
+        <td>Builds <code>libnatkit-core</code> via CMake inside the image and sets <code>LIBNATKIT_CORE_PATH</code>.</td>
+      </tr>
+      <tr>
+        <td>What's missing today</td>
+        <td><code>StreamViewerWebSocket.cpp</code> / <code>libnatkit/libnatkit/core/kafka</code></td>
+        <td><code>stableStreamId()</code> lives in the big backend tree, not in <code>libnatkit-core</code>, so it isn't reachable from the existing ctypes precedent. The Kafka transport itself (<code>BrokerManager</code>/<code>BrokerManagerImpl</code>, built as <code>libnatkit-core-kafka-cxx</code>, linking <code>librdkafka</code>) is ordinary C++20 OOP with no C shim at all.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>C ABI Conventions</h2>
+    <p>Written once, applies to every phase below. Land this alongside Phase 1 — before it, there is no policy to violate; after it, retrofitting is expensive.</p>
+    <table>
+      <tr>
+        <th>Concern</th>
+        <th>Convention</th>
+      </tr>
+      <tr>
+        <td>Symbol naming</td>
+        <td><code>nat_&lt;module&gt;_v1_&lt;verb&gt;</code> (e.g. <code>nat_core_v1_stream_id</code>) — the version segment lets a future breaking change ship as <code>_v2_</code> alongside the old symbol instead of breaking every existing caller in place.</td>
+      </tr>
+      <tr>
+        <td>Header layout</td>
+        <td>Split a pure-C header, <code>libnatkit-core-abi.h</code>, containing only <code>extern "C"</code> typedefs/declarations. <code>libnatkit-core.hpp</code> today mixes C++ class declarations with the <code>extern "C"</code> block in one file — <code>bindgen</code>, <code>jextract</code>, and Panama FFM cannot parse C++ syntax even to skip past it. Do this at Phase 1 so every later phase adds symbols to the right place from the start.</td>
+      </tr>
+      <tr>
+        <td>Status codes</td>
+        <td><code>int</code> return, <code>0</code> = success, nonzero = error — matches <code>StreamStitch.cpp</code> today. No exceptions cross the ABI boundary.</td>
+      </tr>
+      <tr>
+        <td>Struct layout</td>
+        <td>Fixed-width types only (<code>int64_t</code>, <code>uint32_t</code>, ...), no packed-struct pragmas, fields are append-only after first release — never insert or reorder. Both are already true of the existing structs; keep it true going forward.</td>
+      </tr>
+      <tr>
+        <td>Fixed-size outputs</td>
+        <td>Caller allocates the output buffer at a size it already knows (matches every existing function). No change needed for this class of call.</td>
+      </tr>
+      <tr>
+        <td>Variable-length outputs (new — no precedent exists yet)</td>
+        <td>Two-call pattern: first call with a null/zero-size output buffer returns the required size; caller allocates and calls again to fill. Preferred over callee-allocates-plus-<code>nat_free()</code> because it avoids allocator-mismatch crashes across language runtimes and maps more directly onto JNI/Panama/bindgen than an owned-pointer-plus-free-function convention.</td>
+      </tr>
+      <tr>
+        <td>Stateful / opaque handles (Phase 4)</td>
+        <td>Opaque pointer typedef (e.g. <code>nat_kafka_broker_t*</code>) returned by an explicit <code>_create</code> call, released by a matching <code>_destroy</code> call. No handle is valid across a process boundary — each process owns the handles it creates.</td>
+      </tr>
+      <tr>
+        <td>Threading</td>
+        <td><code>ctypes.CDLL</code> calls release the Python GIL for the call's duration, so concurrent calls from multiple Python threads genuinely execute inside the library concurrently. Any static/singleton state (e.g. <code>Registry::createDefaultInitializeRegistry()</code>) must be audited for thread-safety, or the function must be documented as single-threaded-caller-only. Cross-process (C++ backend vs. a Python process) is not a concern — each process loads its own copy of the <code>.so</code> with its own state.</td>
+      </tr>
+      <tr>
+        <td>Versioning / stability</td>
+        <td>Exported symbols are append-only. Add an exported-symbol diff (e.g. <code>abidiff</code>) to CI, comparing against the previous tag, so an accidental breaking signature change is caught before it ships.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Phased Rollout</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Phase 0 <span class="status">Independent</span></h3>
+        <p>Fix the immediate race bug: <code>createStream()</code> in the Kafka module produces a reserved-key sentinel record synchronously so a topic deterministically exists before a downstream chained transform tries to resolve it, instead of relying on Kafka's lazy auto-creation. Consumers skip the sentinel key before schema decoding.</p>
+        <p class="meta">Not re-planned here — already agreed separately. Ships independently of the bindings work below; reference only.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 1 <span class="status">Start here</span></h3>
+        <p>Move <code>stableStreamId()</code> into <code>libnatkit-core</code>, next to <code>BasicTopicInformation</code>. Add <code>libnatkit-core-abi.h</code>. Add <code>extern "C"</code> functions for stream-id computation and topic-string build/parse, following the conventions above. Point <code>topics.py</code> at them via a new ctypes module mirroring <code>libnatkit_stitch.py</code>. Land the ABI conventions doc in the same change.</p>
+        <p class="meta">Files: <code>libnatkit-core/src/BasicTopicInformation.cpp</code>, new <code>libnatkit-core-abi.h</code>, <code>StreamViewerWebSocket.cpp</code> (call the moved function instead of a local copy), <code>natVR/src/natvr/topics.py</code>. Zero new dependencies — no librdkafka needed.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 2 <span class="status">With Phase 1</span></h3>
+        <p>Not a separate ship — a checklist that lands with Phase 1: thread-safety audit of <code>Registry</code>/static state, the versioning policy written down, <code>abidiff</code> wired into CI. Kept as its own section here so the conventions are scannable independent of the code change.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 3a <span class="status">Design pilot</span></h3>
+        <p>Design and implement the variable-length JSON encode/decode ABI convention against exactly one schema — <code>MarkerEventV1</code>, the simplest. Validate the two-call size/fill pattern end-to-end before committing to it elsewhere.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 3b <span class="status">Rollout</span></h3>
+        <p>Apply the validated Phase 3a pattern to the remaining schemas <code>emg_consumer.py</code> hand-decodes today: <code>ExgPillEmgDataSchemaV1</code>, <code>SessionMetadataRecord</code>, and any others found during the port.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 4 <span class="status">Heavier lift</span></h3>
+        <p>New <code>extern "C"</code> shim over <code>BrokerManager</code>/<code>TopicMessenger</code> produce/consume, in its own shared library — not merged into <code>libnatkit-core</code>. Requires packaging work: add <code>librdkafka</code> and build the kafka module into <code>Dockerfile_natkit_ml_control_plane</code>, add a <code>LIBNATKIT_KAFKA_PATH</code> env var mirroring <code>LIBNATKIT_CORE_PATH</code>. Migrate <code>emg_consumer.py</code>, <code>session_publish.py</code>, <code>replay.py</code>, <code>reconstruct_session.py</code> onto it.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 5 <span class="status future">Deferred</span></h3>
+        <p>Open question, not decided here: <code>classifier.py</code> + <code>bridge/hand_state_bridge.py</code> act as an independent Python-side transform worker (producing/consuming <code>hand_state</code>). Keep it as a consumer/producer on top of the shared plumbing from Phases 1-4, or eventually promote live classification into a first-class node kind in the C++ stream-graph engine and retire the parallel pipeline? Needs its own follow-up design doc.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 6 <span class="status future">Future</span></h3>
+        <p>Java bindings (JNI or Project Panama FFM) and Rust bindings (<code>bindgen</code>), both against the same stable ABI from Phases 1-4. Not started in this plan — the point of Phases 1-4 is to make this an addition, not a rewrite, when it happens.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification / Acceptance Tests</h2>
+    <table>
+      <tr>
+        <th>Phase</th>
+        <th>Verification</th>
+      </tr>
+      <tr>
+        <td>Phase 1</td>
+        <td>A golden-vector fixture (namespace/identifier pairs → expected <code>uint64</code>) checked in once, read by both a C++ test binary and the new Python ctypes binding — not regenerated per test run. Cover the existing <code>stream_id == 0 → 1</code> fallback and multibyte identifiers.</td>
+      </tr>
+      <tr>
+        <td>Phase 3a/3b</td>
+        <td>Per-schema round trip against real captured Kafka payloads (not synthetic ones): C++ encode → Python ctypes decode, and the reverse, byte-for-byte comparison.</td>
+      </tr>
+      <tr>
+        <td>Phase 4</td>
+        <td>Integration test producing via the new Python shim and consuming via the existing C++ <code>BrokerManager</code> (and the reverse direction), against a real or test Kafka broker, asserting topic string and payload bytes match.</td>
+      </tr>
+      <tr>
+        <td>Cross-cutting</td>
+        <td><code>abidiff</code> (or equivalent exported-symbol diff) in CI against the previous release tag, tied to the append-only versioning policy.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Non-Goals For This Plan</h2>
+    <ul>
+      <li>No Java or Rust binding implementation work — Phase 6 is a placeholder for later, not scoped here.</li>
+      <li>No decision on the <code>classifier.py</code> architecture question — Phase 5 is explicitly deferred to its own design doc.</li>
+      <li>No re-specification of the Phase 0 race-fix implementation details — cross-referenced only, already agreed separately.</li>
+      <li>No changes to the ML pipeline's model-persistence gap (ephemeral training-job scratch storage) — unrelated to this migration.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Phase 5's resolution: does live hand-state classification stay a Python-side consumer/producer, or become a first-class C++ stream-graph node type?</li>
+      <li>Should Java and Rust bind directly against <code>libnatkit-core-abi.h</code> as-is, or does each language need its own thin shim header layered on top for idiomatic type mapping?</li>
+      <li>Where should the Phase 4 Kafka-transport ABI's shared library physically live in the build tree — alongside <code>libnatkit-core-kafka-cxx</code> or as a fully separate CMake target?</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Risks</h2>
+    <ul>
+      <li>ABI versioning debt: if the naming/append-only policy from Phase 1 isn't actually followed on later changes, every downstream language binding breaks silently at load time or, worse, at a mismatched-struct-layout runtime crash.</li>
+      <li>The GIL-release thread-safety gap is easy to miss because it won't reproduce in casual single-threaded testing — needs an explicit audit pass, not just "it worked when I tried it."</li>
+      <li><code>librdkafka</code> packaging in Phase 4 meaningfully increases the ml-control-plane Docker image's build complexity and time; underestimate this and it becomes the phase that stalls the whole effort.</li>
+      <li>Scope creep risk: Phase 5 is deliberately left open, but it's tempting to fold classifier.py's redesign into this plan since it's adjacent — resist that; it deserves its own design doc with its own tradeoffs.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  Related context: <code>AGENTS.html</code>, <code>plans/stream-graph-programming-plan.html</code>,
+  <code>natVR/src/natvr/libnatkit_stitch.py</code>, <code>libnatkit/lib/libnatkit-core/src/StreamStitch.cpp</code>.
+</footer>
+</body>
+</html>

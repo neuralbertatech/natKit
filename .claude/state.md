@@ -2,10 +2,578 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
+**Last updated:** 2026-07-29
+
+## Active Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
+
+Plan: `plans/experiment-history-snapshots-plan.html`. Redesigns the VP experiment:
+it stops being a NODE and becomes a first-class object owning a graph + a history
+of **instances**. Each recording mints an immutable snapshot (graph + data +
+markers); forking mints an editable one. Detail + gotchas in the auto-memory
+`experiment-history-snapshots-plan.md`.
+
+**Decisions locked by Zach (2026-07-29):**
+- Materialize **raw sources only** — no transform outputs. Keeps snapshots small and
+  lets a fork legitimately recompute (the point of forking).
+- **A fork IS an instance that happens to be editable** — same record shape, same
+  place in the tree. It *inherits* `recording` verbatim, so it points at the same
+  Parquet; forking never copies data. Running a fork does NOT mint a new instance.
+- **Retire the provenance edges** (`prov_source` / `prov_experiment`) — experiment-
+  owns-the-graph expresses that lineage implicitly.
+- **Parquet is the stored form; replay streams out of it.** No Kafka time-travel.
+
+**Phase 0 DONE + verified over the WS protocol (7 checks, all passing):**
+- `StreamGraphDefinition` gained `experiment_id`, `instance_id`, `immutable`,
+  `origin` ("recording"|"fork"), `forked_from`, `recording` (opaque json). All
+  optional and emitted only when set, so a plain board's JSON is byte-identical.
+- New `fork_stream_graph {source_graph_id, label?}` → `stream_graph_forked`. Fork
+  ids suffix the parent (`run-0001` → `run-0001-a` → `run-0001-a-a`) so lineage is
+  readable. Refuses to fork a live board (no recorded data behind it).
+- `handleSaveStreamGraph` rejects overwriting an immutable instance AND re-pins all
+  provenance from the stored record — a client cannot launder a fork into a
+  recording, re-parent it, or repoint it at another session's artifacts.
+- `sendError` now takes an optional `requestId` and echoes it. Errors were
+  previously uncorrelatable, which matters once rejection is a NORMAL outcome
+  (saving an immutable instance) rather than a fatal surprise.
+- Verified with a throwaway backend on :7410 + its own graph store; the live stack
+  was untouched.
+
+**Phase 1 DONE — the experiment is an object, not a node. Verified 24/24 over the
+WS protocol** (throwaway backend on :7411 with its own stores; the live stack was
+untouched) plus svelte-check 0 errors and vitest 59/59.
+
+Backend (`StreamViewerWebSocket.cpp`):
+- `Experiment` entity + `experiments.json` store behind `NATKIT_EXPERIMENT_STORE`
+  (atomic write, load-on-startup — mirrors the profile store).
+  `list/save/delete_experiment` → `experiment_list|saved|deleted`. `protocol` is
+  stored as OPAQUE json (same reasoning as `editor_metadata`: the frontend owns
+  that shape and already round-trips it).
+- **`save_experiment` is the SOLE writer of the 1:1 experiment↔board binding.**
+  Setting `live_graph_id` stamps `experiment_id` onto that board and clears it from
+  any other LIVE board (instances keep theirs — they're history). Bind is applied
+  BEFORE the experiment record is written, so a refused bind (unknown graph, or an
+  immutable instance) leaves the record untouched. Lock order is always
+  experiment → graph. `delete_experiment` refuses when the experiment has recorded
+  instances (they'd be orphaned) and unbinds the board otherwise.
+- New **`markers` node kind**: config-less source, no inputs, one `markers` output
+  resolving `Marker/<experiment_id>` from the GRAPH's binding (a legacy node's own
+  config is the fallback). Allow-list + normalization + validation + start dispatch
+  + catalog entry. `experiment` is REMOVED from the catalog but still parsed.
+- **Provenance edges retired** (the plan's DECIDED): `prov_source` /
+  `prov_experiment` are gone from the catalog and normalization, AND edges touching
+  them are dropped in `from_json` — without that, an old board loaded with edges
+  pointing at ports that no longer exist and went invalid on a diagnostic the
+  author couldn't fix. `prov_models`/`prov_model` (train→classify) survive: a model
+  artifact IS a real handoff.
+- `isMarkerSourceKind(kind)` centralizes `markers|experiment` so combine's marker
+  lane and export's label join can't disagree about one of the two names.
+
+Frontend:
+- New `ExperimentPanel.svelte` (board-level: bind/create/delete, protocol
+  authoring, participant/notes, Record/Stop + live cue + schedule preview),
+  toggled from a toolbar pill that shows the bound experiment. Board header also
+  gained IMMUTABLE and ● REC pills.
+- Recording is now experiment-driven (`SessionRecordingState.nodeId` →
+  `experimentId`); device ids come from EVERY `stream_source` on the board, which
+  is what replaced the source→experiment edge.
+- `markers` node: palette (all 3 surfaces are catalog-driven, so it appeared for
+  free), node card, inspector explainer, and the inline/expanded `ExperimentRunner`
+  moved onto it (`inline_experiment`).
+- **Legacy convert**: the `experiment` node's inspector offers "Convert to
+  experiment + markers" — lifts the protocol into a stored experiment bound to the
+  board and swaps the node IN PLACE (same node id), so every edge survives.
+- Board picker filters `instance_id != null` — instances share the graph store and
+  would otherwise show up as boards.
+- Train run scoping now reads the board's binding instead of a `prov_experiment`
+  edge; starter templates carry an `experiment` record (protocol left the canvas)
+  and the loader creates + binds it.
+- `StreamGraphDefinition` gained the read-only Phase-0 fields (`experiment_id`,
+  `instance_id`, `immutable`, `origin`, `forked_from`, `recording`).
+
+Also: `NATKIT_EXPERIMENT_STORE: /graphs/experiments.json` added to all three
+compose files (same volume as the graph store — losing it orphans history), and
+the smoke script now covers the markers node + the experiment store + the binding
+being written on both sides.
+
+**Phase 1 UI LIVE-VERIFIED 2026-07-29** against the running stack (backend image
+rebuilt, container recreated, Playwright headless at :8080). Two suites, both
+green: 18/18 on the main flow (palette offers Markers and no longer offers
+Experiment · pill opens the panel · create binds the experiment · protocol form is
+board-level · cue-schedule preview · Record enabled · a protocol edit survives a
+reload, so the debounced save reaches the backend · no console errors) and 10/10 on
+the migration flow (a seeded legacy board keeps `kind:"experiment"`, drops the
+retired port, offers Convert, and after converting the node IS a markers source
+with the protocol/participant carried over **and the edge into the viewer intact**).
+
+**Two real bugs the live run caught that static checks could not:**
+1. **The toolbar overlapped the floating panels.** Panels were pinned at a
+   hardcoded `top: 72px`, but the toolbar WRAPS — selecting a node adds "Group",
+   and the pills I added made a second line likely. The taller toolbar (z-index 20)
+   then covered the panels' first row and swallowed clicks on it. Fixed by
+   measuring the toolbar (`bind:clientHeight`) and driving all three panels off
+   `--panel-top`. This latently affected the sidebar/inspector too.
+2. **`boundExperimentLabel` was declared on the node card but never passed** at the
+   call site, so a Markers node always read "No experiment bound". An optional prop
+   that is never passed type-checks perfectly — only a render shows it.
+
+Also fixed while there: retired provenance ports are now stripped in
+`from_json` (not just on save), so a legacy board stops RENDERING a dead
+`prov_source` port before anything re-saves it.
+
+⚠️ **Test-data hygiene, learned the hard way.** The UI runs mutated real boards
+before I scoped them: they bound test experiments to two of Zach's boards and left
+stray Markers nodes on them (1 on `stream-graph-1785336487040`, 3 on
+`starter-1784569198910`). All cleaned up — the strays had to be removed from
+`editor_metadata` as well as `nodes`, since the editor prefers that tree on load.
+A later "read-only" look also accidentally loaded a starter template, because the
+sidebar's starter buttons share `.graph-list-item` with the board list. Verified
+afterwards: no experiments remain, no board is bound, and every Convention EMG
+board is back to its original 7 nodes with its own `experiment` node.
+- **Leftover test boards (harmless, mine):** `stream-graph-1785346642668`,
+  `ui-legacy-convert-check`, `starter-1785347037130`. **There is no
+  `delete_stream_graph` action** — worth adding before Phase 2, since instances
+  are graph records and a failed materialization will want pruning.
+- Next time: create a scratch board first and delete it after; never let a UI
+  script run against whatever board happens to load.
+
+**Backend image build cache — FIXED + MEASURED 2026-07-29.**
+`Dockerfile_natkit_backend` did `COPY . ./` before building drogon, so any source
+edit invalidated the drogon layers. Now: toolchain probes → `COPY third-party` →
+configure/build/install drogon → `COPY . ./` → project build. Safe because the
+project consumes drogon from its install prefix (`/usr/local`); the top-level
+CMakeLists never adds `third-party/drogon` as a subdirectory, so nothing rebuilds
+it, and `.dockerignore` keeps the later `COPY . ./` from clobbering its build dir.
+- Also tightened `.dockerignore`: `build/` matches only the ROOT build dir, so
+  `lib/libnatkit-core/build` (**171M** of host output) was being shipped in the
+  context and re-COPYed on every source edit. Now `**/build/` as well. Verified the
+  only `build` dirs in the tree are ./build, ./lib/libnatkit-core/build and
+  ./third-party/drogon/build — all output.
+- **Measured, and my earlier estimate was WRONG.** I claimed ~20 min → ~2 min.
+  Reality on this box (12 cores, `--parallel 10`): full build **2m52s**, and a
+  source-only rebuild **1m44s** with all four drogon steps cached. So the saving is
+  ~68s per backend edit (~40%), not 18 minutes. The original ~17 min build was a
+  cold base image + the Arrow APT download, not drogon.
+- Verified after: the rebuilt image serves the Phase 1 protocol (catalog advertises
+  `markers`, `experiment` retired, experiment store reachable), and the bridge image
+  — which shares this `.dockerignore` — still builds.
+
+## Phases 2 + 3 DONE — recording mints a DURABLE instance (2026-07-29)
+
+Shipped as one slice deliberately: Phase 2 alone would mint instances whose data
+still only exists in Kafka, which is the "permanent snapshot that silently becomes
+empty" the plan warns about. **25/25 checks pass against the LIVE stack.**
+
+Protocol (all new):
+- `start_experiment_instance {experiment_id, window_start_us}` → snapshots the
+  experiment's live board (nodes + edges + `editor_metadata`), mints
+  `instance_id` = `run-0001`, `run-0002`, … per experiment (forks then suffix them,
+  `run-0001-a`), records the raw sources, `status: "recording"`. Graph id is
+  `<experiment_id>-<instance_id>`.
+- `finish_experiment_instance {graph_id, window_end_us, completed}` → closes the
+  window, `status: "materializing"`, then materializes on a **detached thread**
+  (draining a topic takes tens of seconds; pinning a drogon worker would stall
+  every client) and BROADCASTS the outcome as `experiment_instance`.
+- `verify_experiment_instance {graph_id}` → re-checks every artifact against its
+  recorded sha256. Added because a checksum nobody re-checks is decoration: I only
+  noticed a corrupted artifact by comparing hashes by hand.
+- `delete_stream_graph {graph_id, force}` → deletes a board or fork; a SEALED
+  instance needs `force` (it destroys recorded history + its artifacts). Refuses
+  while the graph is running, unbinds the experiment, removes the artifact dir and
+  prunes the now-empty per-experiment parent.
+
+Materialization (`materializeInstance`): per recorded raw source, reuse
+`exportStreamToParquet` pointed at `NATKIT_INSTANCE_STORE/<experiment_id>/<instance_id>/`
+→ verify non-empty → rename to `<stream_id>.parquet` → sha256 → chmod read-only →
+`status: complete` (which is what SEALS `immutable`) or `failed` with the exporter's
+own diagnostic. `ParquetExport` gained a **markers JSONL sidecar** (written from the
+markers it had already decoded — a second drain would be slower and racier against
+retention) and the **`natkit.schema_name` metadata** the plan flagged as missing.
+
+Decisions/judgements made here:
+- **`complete` is what seals an instance, not minting.** A recording is mutable
+  while it runs (the status transitions are writes), and a FAILED instance stays
+  unsealed on purpose so it can be deleted or retried — sealing an empty snapshot
+  is the exact failure the plan warns about.
+- **A failed instance leaves NO files.** The sidecar is written before the long
+  data drain, so a failure otherwise orphaned a markers.jsonl that was on disk but
+  absent from the manifest.
+- **Read-only mode bits are an accident guard, not a guarantee** — the backend runs
+  as root and root ignores them. Verified the hard way: `echo x >` truncated a 15MB
+  sealed artifact (a throwaway test instance). The sha256 caught it, which is the
+  point, and `verify_experiment_instance` now makes that check a one-liner.
+- Instance-store mount: dev/base compose both define `/instances`; the merge
+  resolves by target so the dev named volume (`natkit-v0-instances`) wins, exactly
+  as `/graphs` already behaves.
+
+Live-verified end to end with the real 1M-record IMU topic: empty window → `failed`
+with "No data frames inside the session window (387075 of 387075 scanned)" and no
+files left; wide window → `complete`, 393,764 rows, 15MB Parquet + a 66-line markers
+sidecar, both checksummed, sealed; tamper → detected; a fork shares the artifacts
+and reports the same corruption.
+
+## Phase 4 DONE — history tree + instance review (2026-07-29)
+
+**Verified: 14/14 backend, 6/6 histogram, 25/25 UI — all live.**
+
+Two backend gaps the plan assumed were already closed:
+- **The label histogram did NOT exist.** The plan says review can use "the label
+  summary already computed during materialization" — only `labelled_rows` was.
+  `ParquetExport` now returns per-class `labelCounts` (empty key = rows inside the
+  window but between cues, surfaced as `(unlabelled)`) and materialization records
+  it per artifact. This is the difference between "395k rows" and "usable": one
+  class never firing is invisible in a row count.
+- **`GET /api/instances/artifact?graph_id=&path=`** — reviewing a snapshot has to
+  read the FILE. The pre-existing `/api/export/parquet` re-drains Kafka, which is
+  meaningless for an instance whose whole purpose is that its data has left the
+  broker. The `path` is matched against the instance's MANIFEST rather than joined
+  onto the directory, because a client-supplied path would otherwise be a directory
+  traversal out of the volume (verified: `../../../etc/passwd`, `/etc/passwd` and an
+  unlisted sibling all 404).
+
+UI: sidebar **Experiments & history** tree (experiment → recordings → forks, nested
+recursively via `forked_from`, newest first, with row counts); opening an instance
+loads a **genuinely read-only** board; an Instance review section with window,
+status, artifacts (rows / schema / checksum / truncation warning), a **label
+histogram** with proportional bars, download links for the parquet and the markers
+sidecar, **Fork to edit**, and **Verify**. Forking opens the fork immediately —
+that's the point of forking.
+
+**Read-only was enforced at the choke point, not per-widget.** `markDraftChanged`
+is the funnel all 32 edit paths pass through, so gating it covers palette adds,
+drags, config edits, composites and param writes at once; `startNodeDrag` refuses
+early (no phantom drag that snaps back), and `saveDraftGraph` +
+`scheduleReactiveRestart` bail so Phase 7's debounced auto-save can't spray
+rejections. The backend rejection remains the outer backstop.
+
+Two bugs the SCREENSHOT caught that 23 passing assertions did not:
+- A window duration rendered as `1785351523s`. Now humanized (`20663d 18h`, `2m 5s`).
+- The canvas note rendered ON TOP of the toolbar — same wrapping-toolbar bug class
+  as the panels earlier; my longer read-only message made it visible. Now offset
+  from `--panel-top`. Both now have assertions.
+
+All Phase 2–4 test data removed: 0 experiments, 0 instances, 0 artifact files, and
+the 16 pre-existing boards untouched.
+
+## Phase 5 DONE (backend) — replay streams a snapshot out of Parquet (2026-07-29)
+
+**21/21 checks pass live.** New `ReplaySource.{hpp,cpp}`: read an instance's Parquet
+via Arrow, rebuild canonical `NatSignalFrameDataSchemaV1` frames, interleave the
+markers sidecar, publish to a **scratch Kafka topic per replay session**, and bind
+the instance's source nodes to it. Actions: `start_instance_replay
+{graph_id, mode, speed}`, `stop_instance_replay`, `list_instance_replays`;
+`start_stream_graph` gained an optional `replay_id`.
+
+Plan non-negotiables, each verified:
+- **`device_ts_us` preserved** — asserted the last published timestamp lies inside
+  the recorded window and is ~90,000s away from `now`. Restamping would destroy the
+  label interval join and desynchronise multi-stream replay.
+- **Markers interleaved** on ONE merged timeline with the frames (a k-way sort by
+  original timestamp), so two streams recorded together replay together.
+- **Review paced / recompute unpaced** — 3s of data at 0.25× was still mid-flight
+  after 4s; recompute published all 80 frames immediately.
+- **Scratch topics deleted** when the replay ends or is stopped.
+- **Stateful transforms reset by construction**: a replay-bound run goes through
+  `start_stream_graph`, which creates fresh workers, so IIR/envelope/vote state
+  starts clean and two replays of one instance are comparable.
+
+Four real problems found while verifying (the interesting part):
+1. **`BrokerManager::deleteTopic` was a NO-OP.** It built a `rd_kafka_DeleteTopic_t`,
+   destroyed it, and the actual `rd_kafka_DeleteTopics` call sat inside a comment
+   block — so it had never deleted anything, and the `delete-topic` tool never
+   worked either. My "scratch topics die with the replay" claim rested on it, and
+   testing leaked 18 topics. Now implemented properly (async request + bounded wait
+   on the result queue, tolerating UNKNOWN_TOPIC_OR_PART).
+2. **The markers sidecar was written UNCLIPPED.** One experiment publishes every run
+   to the same `Marker/<experiment_id>` topic, so an instance's sidecar contained
+   *other runs'* markers — replaying it emitted markers that were never part of that
+   recording. Now clipped to the resolved window (moved after window resolution,
+   still before the long data drain so a partial failure keeps its timeline).
+3. **Replay-bound sources failed validation** with `missing_stream_topic`:
+   validation asks the BROKER whether the source's topic exists, but a scratch topic
+   is auto-created on first produce. The replay plan is the authority for those ids,
+   so validation now takes an assumed-source set.
+4. **Paced replay would sleep ~56 years** on an item far from the rest (a lifecycle
+   marker, or markers bracketing a window wider than the data). Pacing is now
+   cumulative per-item deltas with each gap clamped to `maxGapUs` (2s): local timing
+   exact, dead air compressed.
+
+Also worth remembering: `start_stream_graph` answers an invalid graph with
+`stream_graph_validation`, NOT an error — a client that waits only for
+`stream_graph_started` hangs forever. That cost time chasing a "crash" that was
+really my test client. And a gdb attach inside the container needs
+`add-auto-load-safe-path`, else the backtraces are unusable garbage.
+
+**Broker left exactly as found**: the original 7 topics at their original offsets
+(Data 1,032,486 / Heartbeat 38,267 / 3 Marker / 2 Meta); all 18 leaked replay topics
+and ~25 test marker topics removed. Stores clean (0 experiments, 0 instances).
+
+**Phase 5 UI DONE too — 13/13 live checks.** The instance review panel gained a
+Replay section: Mode (Review paced / Recompute unpaced), a Speed selector
+(0.25×–8×) that hides itself in recompute mode because it is meaningless unpaced, a
+Replay button, live progress (frames/total + bar + markers) and Stop.
+
+The ordering matters and is encoded in the page, not the panel: **the page starts the
+graph against the replay only when the backend confirms the replay started** (which
+it does only after the first record is on the scratch topic). Doing it from the click
+handler would race topic auto-creation, and a transform resolving its source topic on
+the broker would fail to start. Stop tears down both the replay and the graph —
+leaving workers bound to a topic that is about to be deleted would strand them.
+
+Verified live: controls render, speed hides in recompute, pressing Replay streams
+(progress observed at 1/80 and climbing), the board reaches `running` against the
+replay, Stop returns the controls, the scratch topics are gone afterwards, no console
+errors. Screenshot confirms the panel reads correctly end to end (real recorded date,
+humanized `3s`, `alpha 80` histogram at 100% labelled — the sidecar-clipping fix
+showing through).
+
+**Still not built (deliberate, not forgotten):** scrub/seek within a replay. The plan
+lists it under review mode ("with a speed multiplier and scrub"); the speed
+multiplier ships, scrubbing does not. It needs a seek in `ReplaySource` (skip the
+timeline to a timestamp) plus a scrub control wired to the existing TimelineStrip —
+a self-contained follow-on.
+
+## Phase 6 DONE — train from instances (2026-07-29). PLAN COMPLETE.
+
+**10/10 live checks: a real LDA model trained from an instance's materialized
+Parquet, with no broker involved.** `/models/<job>/lda-model.json`, report naming
+`run-0001` as its lineage.
+
+The training path turned out to already featurize from *a Parquet + a markers file* —
+which is exactly what an instance materializes. So the work was seams, not a rewrite:
+- **natVR `featurize_instances()`**: featurize straight from an instance's artifacts,
+  skipping Kafka discovery/reconstruction. Reconstruction only works while records are
+  inside retention (168h), so before this a model could not be retrained from an older
+  session; and two reconstructions aren't guaranteed identical if retention rolled.
+- **Label-column compatibility**: natVR writes `cue_gesture`/`cue_phase`, the natKit
+  exporter writes `label`/`label_phase`. `rows_to_sample_stream` now accepts either
+  rather than forcing one writer to imitate the other.
+- **Samples are read as float, not int.** They were truncated because EMG is int16 and
+  truncation was lossless for it — an instance can hold any sensor, and IMU
+  accel/gyro are genuinely fractional.
+- **`finish_pipeline()` extracted** so the Kafka path and the instance path share the
+  family evaluation / bundle / report code. A model trained from an instance must be
+  produced by the same code as one from a reconstruction, or comparing them is
+  meaningless.
+- **Backend resolves instance ids → artifact paths** when proxying the job
+  (`resolveTrainInstanceDatasets`): the browser must not know container paths and the
+  control plane must not read the graph store. Refuses a live board, a non-complete
+  instance, or one with no artifacts.
+- **Instance lineage survives the report sanitizer.** Paths are still stripped (they're
+  container-local) but `instance_id`/`instance_graph_id` now travel — a model whose
+  lineage can't be traced to its snapshot is the problem this phase exists to solve.
+- Compose: `/instances` mounted **read-only** into the control plane and worker.
+- Frontend: train inspector gained a **Recorded instances** picker (rows + classes per
+  instance, train/validate toggles, a warning when an instance has no labelled
+  classes); submit accepts either dataset kind.
+
+Three real bugs found by verifying, two of them pre-existing:
+1. **`ensureMlControlPlaneClient` self-deadlocked and wedged the WHOLE backend.**
+   `connectToServer` runs its callback SYNCHRONOUSLY when the control plane is
+   unreachable, and that callback re-locked the non-recursive `ml_client_mutex_` the
+   caller still held. Every `ml_proxy` action starts by calling that function, so the
+   deadlock consumed each drogon event loop in turn until nothing answered — HTTP
+   included. **Restarting the control-plane container was enough to trigger it.** Fixed
+   by releasing the lock before connecting; verified by three CP down/up cycles with
+   proxy actions fired at a dead CP (backend stayed responsive throughout). This was
+   pre-existing Phase-5-era ML-proxy code, not new work.
+2. **Featurization wrote its feature file next to the source Parquet** — i.e. into the
+   read-only, checksummed instance directory. The read-only mount caught it; had
+   /instances been writable, the trainer would have silently added unlisted files to a
+   sealed historical record. Features now go to the job workspace.
+3. **`annotate_rows_with_cue_markers` died with a bare `KeyError: 'prompt'`** on a cue
+   marker lacking that display-only attribute. Instance sidecars can come from any
+   producer, so the optional fields are now tolerated (label fields stay strict).
+
+Also learned: the control plane advertises thread slots for **workers that no longer
+exist** (its scheduler state outlives container recreates — 148 slots advertised, ~16
+live), and a job assigned to a dead worker never runs and never reports. The
+frontend's `pickThreadSlot` sorts by busy-ness across ALL advertised slots, so a user
+can silently submit into a black hole. **Not fixed** — flagged as the next thing worth
+doing.
+
+natVR suite: 92 passed / 9 pre-existing failures (the Kafka-ABI tests need a broker
+the local `.so` can't reach) — baseline held, plus 3 new tests. One of the new tests
+is SKIPPED under system python (no pyarrow), so the instance-featurization path is
+verified in the ml-worker container instead, where training actually runs.
+
+**All 6 plan phases are now complete.** Deliberately not built: replay scrub/seek, and
+the dead-slot filter above.
+
+**Still open (do not block Phase 1):** storage budget/retention for instances
+(permanent by design, ~2.3 MB per 30s of IMU parquet); is a live graph owned 1:1 by
+one experiment (I'd start yes); per-source opt-out from materialization.
+
+---
+
+## Also completed this session (2026-07-28/29)
+
+### Parquet export — built in Python, then REBUILT in C++ at Zach's direction
+Plan: `plans/parquet-export-node-plan.html`. First cut ran as a natVR +
+control-plane job; Zach pushed back ("I would rather not use python for as much as
+I can"), so it was reworked to run entirely in the backend and the Python path was
+DELETED (`natvr/session_export.py`, its tests, `start_export_job`, the `/exports`
+volume). See auto-memory `prefer-cpp-over-python.md` — treat a new C++ dep as
+cheap and new Python in the data path as expensive.
+
+Shipped:
+- `export` node kind (allow-list, validation, port normalization, catalog entry,
+  start dispatch) — terminal + variadic + topic-aware.
+- `ParquetExport.{hpp,cpp}` (~780 lines new): drain a channel's Data+Marker topics,
+  project frames, join cue labels via `nat::core::assignIntervalsToTimeline` (the
+  SAME stitcher the training path uses), write Parquet.
+- `GET /api/export/parquet?stream_id=…` — auth-gated, returns the file as an
+  attachment plus `X-Natkit-Frame-Count` / `-Labelled-Frame-Count` /
+  `-Marker-Count` / `-Session-Id` / `-Truncated`. Optional `marker_stream_id`
+  (markers from a different channel, so a `combine` bundle is convenient not
+  mandatory), `label_field`, `run_index`, `start_us`/`end_us`, timeouts.
+- Arrow/Parquet dep: Apache's APT source + `libparquet-dev` in
+  `Dockerfile_natkit_backend`; CMake gates it behind `find_package(Parquet)` →
+  `NATKIT_HAVE_PARQUET`, so a build without it still compiles and the endpoint
+  answers 501.
+- Frontend: export node card + inspector + fetch/blob download with the counts
+  surfaced; the `ml_proxy` export-job plumbing removed.
+- **Shared `projectRecordToChannelFrame(record, streamId)`** in
+  `StreamViewerWebSocket` — canonical channel-frame contract first, then
+  `findCompatibleAlternateInputMapping`. Both the streaming path and the exporter
+  call it. This is why IMU/Muse export at all; duplicating the canonical path is
+  how export ended up silently supporting fewer sensors than transforms.
+- **Window seek**: the exporter resolves a start offset from the session window via
+  `queryStreamTime`/`offsetsForTimes` (rewound 10s of slack, since that keys on the
+  broker append timestamp not `device_ts_us`) and stops once past the window end.
+  Reading from OFFSET_BEGINNING could never reach a recent session on a busy topic.
+
+Verified live end-to-end: 1,575 frames / 1,179 labelled in 6.9s from a 930k-record
+topic, labels `still|moving|None` correct, plus a whole-stream IMU export
+(56,513 rows, Accel/Gyro channels, real values).
+
+### Bridge log flood silenced
+`KafkaMosquittoBridge.cpp`: per-message payload tracing is now OFF by default
+behind `NATKIT_BRIDGE_LOG_MESSAGES=1`, checked BEFORE formatting (the format call
+decoded the whole record — ~100 lines per bulk IMU frame, twice per frame). Also
+warn-once per unrecognized MQTT topic. Measured over identical 20s runs with the
+device streaming: **53,306 lines → 0** per-message lines, while still forwarding
+~30 records/s. Flag documented in `docker-compose.dev.yml`.
+
+### Two build/deploy traps fixed or documented
+- **Arrow broke the drogon link.** `libparquet-dev` pulls `libgrpc29` →
+  `libc-ares-dev`; the Dockerfile installs Arrow BEFORE building drogon, so trantor
+  compiled `AresResolver.cc` and the backend's hardcoded link list had no
+  `-lcares`. Fixed with a conditional `find_library(CARES_LIBRARY)` appended AFTER
+  `trantor` (static-archive resolution is order-sensitive). **Underlying
+  fragility:** the backend hardcodes drogon's transitive deps instead of using its
+  exported CMake target — any future ambient library drogon auto-detects breaks the
+  link the same way.
+- **`podman-compose up -d` does NOT recreate a container after an image rebuild.**
+  It silently keeps the old one, so you retest the old binary and see the identical
+  failure. Need `podman rm -f --depend natkit-v0-backend` first (the ml-worker pins
+  it via `--requires`). Verify with `podman inspect <c> --format '{{.Image}}'`.
+- **A host build compiles NONE of the exporter** — without libparquet-dev,
+  `NATKIT_HAVE_PARQUET` is off and the body is `#if`'d out, so a green host build
+  only proves the 501 stub compiles. Validate exporter changes in the image.
+
+### Two operational faults diagnosed (pre-existing, not from this work)
+- **Frontend wouldn't load:** `natkit_natkit-v0-frontend_1` was an orphan created by
+  a hand-rolled `podman run` WITHOUT `:Z`, so npm got EACCES on
+  `/app/package.json` (exit 243, crash-looping). The compose file was correct; the
+  orphan held the name so compose skipped the service. Fixed by
+  `podman rm -f` + recreating through compose.
+- **ML worker crash-looping (1370 restarts) on HTTP 401.** `NATKIT_AUTH_DISABLED`
+  only short-circuits `authenticateRequest()`; `/api/auth/login` still does a real
+  credential check, and the stored admin password (set 2026-07-08) didn't match
+  `.env`. Zach fixed it by resetting the password via `/api/admin/users/update`
+  (reachable precisely because auth is bypassed). Real fix later: a component
+  shouldn't need to log in when the backend has auth disabled.
+
+---
+
+## Blockers / known issues carried forward
+
+- ~~**Kafka storage is INSIDE the container**~~ **FIXED 2026-07-29.**
+  `docker-compose.yml` now uses `KAFKA_LOG_DIRS=/var/lib/kafka/data` on a named
+  volume `natkit-v0-kafka-data` — matching what `docker-compose.portainer.yml` had
+  always done (the dev/base stack was the outlier). **The existing 608M of topics
+  was MIGRATED, not wiped**, and verified: all 7 topics at identical end offsets
+  (Data 1,032,486 / Heartbeat 38,267 / 3 Marker / 2 Meta), a deep segment read at
+  IMU offset 1,000,000, the 07-29 `finger-counting-1785336502546` markers readable,
+  the backend enumerating 4 streams, and **the whole set surviving a full container
+  recreate** — which is the point.
+  - Gotchas worth remembering: `podman rm` a service with dependents needs
+    `--depend` (kafka pins backend/bridge/control-plane/worker/frontend), and it
+    took two passes plus a by-id `rm` to actually go. **podman-compose prefixes
+    named volumes with the project** (`natkit_natkit-v0-kafka-data`), so a
+    hand-created unprefixed volume is silently ignored and the broker comes up on
+    an empty one — check `podman volume ls` after, not just the compose file.
+  - Migration recipe (if ever needed again): `podman stop` kafka →
+    `podman cp <c>:/tmp/kraft-storage /tmp/stage` → load into the volume via a
+    root helper container (`cp -a` + `chown -R appuser:appuser`, so the uid lands
+    right inside the userns) → recreate → compare `kafka-get-offsets`.
+  - Still open, deliberately: **retention is 168h**, so a recorded session's
+    markers/data still age out in 7 days. Permanence is Phase 3's job (materialize
+    to Parquet), not a broker setting.
+- **The bridge silently stops forwarding and never recovers.** Found it frozen for
+  ~10 hours (last Kafka record 07-28 22:45) while the device was still publishing to
+  MQTT; it had created **40,941** producers and did not exit, so `restart: always`
+  couldn't help. `podman restart natkit-v0-bridge` restored flow immediately. This
+  is why Zach's 07-29 08:48 experiment recorded ZERO data frames. Needs a real
+  health check / fail-fast.
+- **IMU frames are ~90% zero padding** — 100 sample slots carrying ~10 real
+  samples. Now visible in exported Parquet. Possibly related to the known ADC stall.
+- Everything this session is **UNCOMMITTED** (root repo + `libnatkit` submodule +
+  new `plans/*.html`).
+- `graphiti-memory` MCP was NOT available this session, so the architectural
+  decisions above live in `plans/` + the auto-memory files instead of episodes.
+
+---
+
+## Prior Task (paused) — natKit-IMU firmware overhaul (Phase 2, CHECKPOINTED)
+
+Plan: `plans/natkit-imu-esp-idf-c-overhaul-plan.html`. Full detail (root causes,
+commits, gotchas) lives in the auto-memory `natkit-imu-overhaul-roadmap.md`.
+Phases 0 + 1 DONE and HW-verified (frame envelope, heartbeat, sensor-regression
+fix, MQTT reliability, heap-leak fix, dead-dep removal, boot MQTT retry, -frtti
+drop). Phase 2 = migrate Arduino→ESP-IDF.
+
+**Phase 2 re-baseline to ESP-IDF 5.x — DONE + HW-VERIFIED 2026-07-27.**
+Re-baselined the platform (espressif32@6 / arduino 2.0.17 / IDF 4.4.7 → pioarduino
+55.03.311 / arduino 3.3.11 / **ESP-IDF 5.5.5**, matching natVR). The firmware now
+BOOTS + STREAMS on the ESP32-PICO-D4: BNO08x inits, WiFi + NTP + MQTT up, framed
+`NatImuBulkDataSchema` at ~2.5/s, **zero crashes over 45s**. Branch
+**`phase2-esp-idf5`** @ `69dd080`. The device is CURRENTLY running this build.
+
+The fix = **`custom_sdkconfig`** in platformio.ini → pioarduino from-source
+Arduino/IDF HybridCompile (builds esp-idf v5.5.5 libs with our overrides):
+- `CONFIG_SPIRAM=n` + `CONFIG_BT_ENABLED=n` — prebuilt esp32 libs assumed a PSRAM
+  board (`SPIRAM=y`, `RESERVE_INTERNAL=0`) + full BTDM (~64KB DRAM); PICO-D4 has
+  neither → internal heap starved → esp_timer couldn't create its task at boot.
+- `CONFIG_LWIP_CHECK_THREAD_SAFETY=n` — ESPNtpClient calls raw lwIP `udp_new()` off
+  the TCPIP thread; IDF 5.x's default assert (old 2.0.17 had it off) killed it.
+Commits on `phase2-esp-idf5`: `8f7b2fe` (arduino-3.x source fixes: WiFiEvent
+ARDUINO_EVENT_*, wdt config struct, esp_mac.h), `d8287f4` (custom_sdkconfig fix +
+project-local huge_app.csv), `69dd080` (gitignore HybridCompile artifacts +
+drop stale Phase-2a files).
+
+⚠️ GOTCHA: pioarduino & espressif32 both name themselves `espressif32` and SHARE
+`~/.platformio/packages/framework-arduinoespressif32` — they can't coexist.
+Switching between builds = `rm -rf` that framework dir + project `.pio`, then
+rebuild. `experimental` is pinned `platform = espressif32@6.12.0` (`3124d98`).
+
+**Branch state:** `experimental` @ `3124d98` = known-good arduino-2.0.17 build (was
+verified streaming). `phase2-esp-idf5` @ `69dd080` = working ESP-IDF-5.x build.
+NOT merged — pending user decision + frontend-render confirmation.
+
+**Next:** (a) frontend-render check / longer soak on the IDF-5.x build; (b) decide
+merge phase2-esp-idf5 → experimental; (c) continue Phase 2 by peeling subsystems to
+native ESP-IDF (NTP → esp_netif_sntp first — removes the lwIP-assert workaround —
+then esp-mqtt / esp_wifi; BNO08x native LAST) → eventually `framework = espidf`.
+
+---
+
+## Prior Task (paused) — Visual Programming Rework
+
 **Last updated:** 2026-07-08
 **Session duration:** ~2 sessions
 
-## Active Task
+### Active Task
 
 Visual Programming Rework (`plans/visual-programming-rework-plan.html`) — a 9-phase
 (0–8) sensor-agnostic reactive-canvas rework. **Phases 0 and 1 COMPLETE and

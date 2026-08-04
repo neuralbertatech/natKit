@@ -8,6 +8,8 @@
         CircleDot,
         Download,
         Eye,
+        FileDown,
+        FlaskConical,
         GitBranch,
         Monitor,
         Package,
@@ -36,6 +38,7 @@
         ConnectionState,
     } from "../StreamViewer/websocket";
     import MuseViewer from "../StreamViewer/MuseViewer.svelte";
+    import ImuViewer from "../StreamViewer/ImuViewer.svelte";
     import ChannelFrameViewer from "../StreamViewer/ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "../StreamViewer/FeatureVectorViewer.svelte";
     import SchemaDescriptorInspector from "../StreamViewer/SchemaDescriptorInspector.svelte";
@@ -82,6 +85,7 @@
     } from "../StreamViewer/experiment";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
+    import ExperimentPanel from "./ExperimentPanel.svelte";
     import {
         DEFAULT_VIEWPORT,
         NODE_WIDTH,
@@ -94,8 +98,6 @@
         graphRunStateClass,
         isProvenancePort,
         sanitizeIdentifier,
-        PROVENANCE_PORT_SOURCE,
-        PROVENANCE_PORT_EXPERIMENT,
         PROVENANCE_PORT_MODELS,
         PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
@@ -133,16 +135,19 @@
         TransformCapability,
         TransformCapabilityConfigField,
         NodeCatalogEntry,
-        ExperimentNodeConfig,
         SessionProtocol,
         StreamGraphExperimentNode,
         StreamGraphTrainNode,
+        StreamGraphExportNode,
+        ExportNodeConfig,
+        ExportDownloadResult,
         TrainNodeConfig,
         TrainedModel,
         LiveStreamData,
         OutputChannelTopic,
         ChannelKind,
         Profile,
+        Experiment,
     } from "../StreamViewer/types";
     import {
         channelKindFromTopics,
@@ -168,6 +173,49 @@
         listProfiles: () => void;
         saveProfile: (profile: Profile) => boolean;
         deleteProfile: (participantId: string) => boolean;
+        // Experiments (experiment-history-snapshots-plan, Phase 1): the stored
+        // objects that own a board + its history. saveExperiment doubles as the
+        // bind action (its live_graph_id is the board).
+        experiments: Experiment[];
+        saveExperiment: (experiment: Experiment) => boolean;
+        deleteExperiment: (experimentId: string) => boolean;
+        // Instances (Phases 2 + 3): recording mints an immutable snapshot welded to
+        // the data captured in its window.
+        startExperimentInstance: (
+            experimentId: string,
+            windowStartUs: number,
+        ) => boolean;
+        finishExperimentInstance: (
+            graphId: string,
+            windowEndUs: number,
+            completed: boolean,
+        ) => boolean;
+        deleteStreamGraph: (graphId: string, force?: boolean) => boolean;
+        // The instance currently recording, if any (minted by the backend).
+        recordingInstanceGraphId: string | null;
+        // Phase 4 (review): fork an instance into an editable copy, and re-check an
+        // instance's artifacts against their recorded checksums.
+        forkStreamGraph: (sourceGraphId: string, label?: string) => boolean;
+        verifyExperimentInstance: (graphId: string) => boolean;
+        instanceVerifications: Record<
+            string,
+            import("../StreamViewer/types").ExperimentInstanceVerificationMessage
+        >;
+        // A fork just created that should be opened, and the ack to clear it.
+        forkedGraphToOpen: string | null;
+        onForkOpened: () => void;
+        // Replay (Phase 5): stream an instance's Parquet back onto scratch topics and
+        // run the graph over it. Review is paced from the original timestamps;
+        // recompute is unpaced.
+        startInstanceReplay: (
+            graphId: string,
+            mode: "review" | "recompute",
+            speed: number,
+        ) => boolean;
+        stopInstanceReplay: (replayId: string) => boolean;
+        activeReplay:
+            | import("../StreamViewer/types").InstanceReplayMessage
+            | null;
         // Phase 7: incremental reactivity — restart a node + downstream after a
         // debounced config edit while the graph is running.
         restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
@@ -199,7 +247,11 @@
             completed_at_us: number;
         } | null;
         validateStreamGraph: (graph: StreamGraphDefinition) => boolean;
-        startStreamGraph: (graphId: string, startOffset?: number) => boolean;
+        startStreamGraph: (
+            graphId: string,
+            startOffset?: number,
+            replayId?: string,
+        ) => boolean;
         stopStreamGraph: (graphId: string) => boolean;
         // Phase 5: replay support — query a stream's offset bounds / the offset
         // for a scrubbed timestamp, with replies surfaced in streamTimeExtents.
@@ -239,6 +291,21 @@
         listProfiles,
         saveProfile,
         deleteProfile,
+        experiments,
+        saveExperiment,
+        deleteExperiment,
+        startExperimentInstance,
+        finishExperimentInstance,
+        deleteStreamGraph,
+        recordingInstanceGraphId,
+        forkStreamGraph,
+        verifyExperimentInstance,
+        instanceVerifications,
+        forkedGraphToOpen,
+        onForkOpened,
+        startInstanceReplay,
+        stopInstanceReplay,
+        activeReplay,
         restartStreamGraphNode,
         publishSessionBundle,
         submitTrainJob,
@@ -287,6 +354,16 @@
     // over it; each can be hidden to reclaim canvas space.
     let showSidebar = $state(true);
     let showInspector = $state(true);
+    // The experiment panel is where the protocol is authored and Record lives now
+    // that the experiment owns the board rather than sitting on the canvas.
+    let showExperimentPanel = $state(false);
+    // The toolbar floats over the canvas and WRAPS: its height changes with how
+    // many buttons are showing (selecting a node adds Group, a composite adds two
+    // more) and with the viewport width. The side panels are absolutely positioned
+    // and used to clear it with a hardcoded 72px, so a wrapped toolbar covered
+    // their first row and — being on a higher z-index — swallowed clicks on it.
+    // Measure it instead and derive the panels' offset.
+    let toolbarHeight = $state(44);
 
     function runPaletteAction(action: () => void) {
         paletteOpen = false;
@@ -365,19 +442,34 @@
     function resolveDraftForGraph(
         backendGraph: StreamGraphDefinition,
     ): EditorGraphDefinition {
-        const editorGraph = loadEditorGraph(backendGraph.graph_id);
-        if (editorGraph) {
-            return cloneGraph(editorGraph);
+        const draft = ((): EditorGraphDefinition => {
+            const editorGraph = loadEditorGraph(backendGraph.graph_id);
+            if (editorGraph) {
+                return cloneGraph(editorGraph);
+            }
+            // Fall back to the backend-persisted composite tree (Phase 7) so a
+            // graph saved elsewhere still reloads with its composites intact — no
+            // local copy required. Only the flattened primitives remain otherwise.
+            if (backendGraph.editor_metadata) {
+                return cloneGraph(
+                    backendGraph.editor_metadata as EditorGraphDefinition,
+                );
+            }
+            return cloneGraph(backendGraph) as EditorGraphDefinition;
+        })();
+        // Identity belongs to the record we were asked to open — never to the
+        // editor tree we recovered it from. An instance (or fork) is minted by
+        // snapshotting a board, and that snapshot's editor_metadata still carries
+        // the ORIGINAL board's graph_id and label. Trusting them opened the
+        // instance in the inspector while leaving draftGraph pointing at the live
+        // board it came from, so every graph_id-keyed action — Start, Stop, Save,
+        // status polling — silently addressed the wrong graph. On a fork (which is
+        // NOT read-only) a save would have written over its parent.
+        draft.graph_id = backendGraph.graph_id;
+        if (backendGraph.label) {
+            draft.label = backendGraph.label;
         }
-        // Fall back to the backend-persisted composite tree (Phase 7) so a graph
-        // saved elsewhere still reloads with its composites intact — no local
-        // copy required. Only the flattened primitives remain otherwise.
-        if (backendGraph.editor_metadata) {
-            return cloneGraph(
-                backendGraph.editor_metadata as EditorGraphDefinition,
-            );
-        }
-        return cloneGraph(backendGraph) as EditorGraphDefinition;
+        return draft;
     }
 
     $effect(() => {
@@ -437,6 +529,220 @@
         graphStatuses[selectedGraphId] ?? null,
     );
 
+    // --- Experiment binding (experiment-history-snapshots-plan, Phase 1) -----
+    // The board record as the BACKEND has it. Provenance — experiment_id,
+    // instance_id, immutable, recording — is backend-owned (handleSaveStreamGraph
+    // re-pins it from the stored record), so it is read from here rather than from
+    // the local draft, which can only ever be a stale copy of it.
+    const selectedGraphRecord = $derived(
+        graphDefinitions.find((graph) => graph.graph_id === selectedGraphId) ??
+            null,
+    );
+
+    const boundExperimentId = $derived(selectedGraphRecord?.experiment_id ?? "");
+
+    const boundExperiment = $derived(
+        boundExperimentId
+            ? (experiments.find(
+                  (experiment) => experiment.experiment_id === boundExperimentId,
+              ) ?? null)
+            : null,
+    );
+
+    // Field edits are debounced before they reach the backend. Every save rewrites
+    // the whole experiment store (re-serialize + atomic rename) and re-runs the
+    // binding sweep, so a per-keystroke save would do that once per character.
+    // Edits accumulate locally in the meantime, otherwise a burst of keystrokes
+    // would each build its patch from the same stale record and only the last field
+    // typed would survive. Everything that READS the experiment reads this view, so
+    // the UI reflects the edit immediately regardless of when the save lands.
+    let pendingExperimentEdit = $state<Experiment | null>(null);
+    let experimentSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const boundExperimentView = $derived(
+        pendingExperimentEdit &&
+            pendingExperimentEdit.experiment_id === boundExperimentId
+            ? pendingExperimentEdit
+            : boundExperiment,
+    );
+
+    function queueExperimentEdit(next: Experiment): void {
+        pendingExperimentEdit = next;
+        if (experimentSaveTimer) {
+            clearTimeout(experimentSaveTimer);
+        }
+        experimentSaveTimer = setTimeout(flushExperimentEdit, 400);
+    }
+
+    // Send any queued edit now. Called before recording (the session bundle is
+    // stamped with the protocol/participant, so a snapshot must not record against
+    // a protocol the server hasn't been told about yet) and before a rebind, where
+    // WS ordering makes flush-then-bind land the fields on the old binding and the
+    // new binding last.
+    function flushExperimentEdit(): void {
+        if (experimentSaveTimer) {
+            clearTimeout(experimentSaveTimer);
+            experimentSaveTimer = null;
+        }
+        const edit = pendingExperimentEdit;
+        pendingExperimentEdit = null;
+        if (edit) {
+            saveExperiment(edit);
+        }
+    }
+
+    // Drop a queued edit unsent — used when the record it targets is going away, so
+    // a late save can't resurrect a deleted experiment or re-bind an unbound board.
+    function discardExperimentEdit(): void {
+        if (experimentSaveTimer) {
+            clearTimeout(experimentSaveTimer);
+            experimentSaveTimer = null;
+        }
+        pendingExperimentEdit = null;
+    }
+
+    // An immutable instance is read-only everywhere: the backend rejects a save
+    // over it, so the editor must not offer to write one (Phase 7's reactive
+    // auto-save would otherwise spray rejections on every keystroke).
+    const boardIsImmutable = $derived(selectedGraphRecord?.immutable === true);
+
+    // Cue-schedule preview for the bound protocol.
+    const boundExperimentSummary = $derived.by(() => {
+        const protocol = boundExperimentView?.protocol;
+        if (!protocol) {
+            return null;
+        }
+        const schedule = buildCueScheduleForProtocol(protocol);
+        return {
+            holdCues: schedule.filter((cue) => cue.phase === "hold").length,
+            durationS: Math.round(scheduleDurationMs(schedule) / 1000),
+        };
+    });
+
+    // Every source on the board is a recorded source now that the experiment owns
+    // the whole graph — that is what replaced the source→experiment provenance
+    // edge. Resolve their device_id strings so the session bundle can name the
+    // topics reconstruction should read (instead of scanning the broker to guess).
+    const recordedDeviceIds = $derived.by(() => {
+        const deviceIds = new Set<string>();
+        for (const node of draftGraph.nodes) {
+            if (node.kind !== "stream_source" || !node.stream_id) {
+                continue;
+            }
+            const deviceId = streamDeviceNames[String(node.stream_id)];
+            if (deviceId) {
+                deviceIds.add(deviceId);
+            }
+        }
+        return [...deviceIds];
+    });
+
+    // This experiment's history, newest first. Instances live in the graph store
+    // (they ARE graphs), so this reads the same list the picker filters them out of.
+    const boundExperimentInstances = $derived(
+        boundExperimentId
+            ? graphDefinitions
+                  .filter(
+                      (graph) =>
+                          graph.experiment_id === boundExperimentId &&
+                          !!graph.instance_id,
+                  )
+                  .sort(
+                      (left, right) =>
+                          (right.created_at_us ?? 0) - (left.created_at_us ?? 0),
+                  )
+            : [],
+    );
+
+    // The full history, as a TREE. Recordings sit under their experiment; forks nest
+    // under whatever they were forked from (a fork of a fork nests two deep), which
+    // is what `forked_from` is for. Built for every experiment, not just the bound
+    // one, so the sidebar shows the whole history without switching boards first.
+    interface InstanceTreeNode {
+        graph: StreamGraphDefinition;
+        children: InstanceTreeNode[];
+    }
+    const experimentTree = $derived.by(() => {
+        const instances = graphDefinitions.filter((graph) => !!graph.instance_id);
+        const byInstanceId = new Map<string, InstanceTreeNode>();
+        for (const graph of instances) {
+            byInstanceId.set(graph.instance_id as string, { graph, children: [] });
+        }
+        const roots = new Map<string, InstanceTreeNode[]>();
+        for (const node of byInstanceId.values()) {
+            const parentId = node.graph.forked_from;
+            const parent = parentId ? byInstanceId.get(parentId) : undefined;
+            if (parent) {
+                parent.children.push(node);
+                continue;
+            }
+            // A recording, or a fork whose parent has been deleted — either way it
+            // hangs off the experiment rather than vanishing from the tree.
+            const experimentId = node.graph.experiment_id ?? "";
+            const bucket = roots.get(experimentId) ?? [];
+            bucket.push(node);
+            roots.set(experimentId, bucket);
+        }
+        const byCreated = (left: InstanceTreeNode, right: InstanceTreeNode) =>
+            (right.graph.created_at_us ?? 0) - (left.graph.created_at_us ?? 0);
+        const sortDeep = (nodes: InstanceTreeNode[]) => {
+            nodes.sort(byCreated);
+            for (const node of nodes) {
+                sortDeep(node.children);
+            }
+        };
+        for (const bucket of roots.values()) {
+            sortDeep(bucket);
+        }
+        // Every experiment gets an entry, even with no history yet, so the tree is
+        // also how you find an experiment.
+        return experiments.map((experiment) => ({
+            experiment,
+            instances: roots.get(experiment.experiment_id) ?? [],
+        }));
+    });
+
+    // Instances that can be TRAINED on (Phase 6): sealed recordings with verified
+    // artifacts. A forked instance qualifies too — it inherits the same files.
+    const trainableInstances = $derived(
+        graphDefinitions
+            .filter(
+                (graph) =>
+                    !!graph.instance_id &&
+                    graph.recording?.status === "complete" &&
+                    (graph.recording?.artifacts?.data?.length ?? 0) > 0,
+            )
+            .sort(
+                (left, right) =>
+                    (right.created_at_us ?? 0) - (left.created_at_us ?? 0),
+            ),
+    );
+
+    function toggleTrainInstance(graphId: string, list: "train" | "eval") {
+        const key = list === "train" ? "train_instances" : "eval_instances";
+        const current = selectedTrainNode?.config[key] ?? [];
+        const next = current.includes(graphId)
+            ? current.filter((entry) => entry !== graphId)
+            : [...current, graphId];
+        updateTrainConfig({ [key]: next });
+    }
+
+    // The selected instance, when the open board IS one (Phase 4 review).
+    const selectedInstance = $derived(
+        selectedGraphRecord?.instance_id ? selectedGraphRecord : null,
+    );
+
+    const selectedInstanceVerification = $derived(
+        selectedInstance ? (instanceVerifications[selectedInstance.graph_id] ?? null) : null,
+    );
+
+    // Boards the picker offers. Instances and forks live in the graph store too,
+    // so without this filter every recorded snapshot would show up as a board;
+    // they are reached through the experiment's history instead.
+    const boardDefinitions = $derived(
+        graphDefinitions.filter((graph) => !graph.instance_id),
+    );
+
     const selectedNode = $derived(
         draftGraph.nodes.find((node) => node.id === selectedNodeId) ?? null,
     );
@@ -453,45 +759,148 @@
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
 
-    const selectedSessionNode = $derived(
+    // A legacy `experiment` node on an unconverted board. It no longer authors
+    // anything — the inspector offers to convert it instead.
+    const selectedLegacyExperimentNode = $derived(
         selectedNode?.kind === "experiment" ? selectedNode : null,
+    );
+
+    const selectedMarkersNode = $derived(
+        selectedNode?.kind === "markers" || selectedNode?.kind === "experiment"
+            ? selectedNode
+            : null,
     );
 
     const selectedTrainNode = $derived(
         selectedNode?.kind === "train" ? selectedNode : null,
     );
 
-    // Phase 3: experiments wired into the selected train node via an
-    // experiment→train provenance edge (prov_experiment). Their experiment_id is
-    // the recorded session_id, so the run picker can scope to exactly these
-    // sessions instead of listing every run on the broker.
-    const trainLineageExperimentIds = $derived.by(() => {
-        if (!selectedTrainNode) {
-            return [] as string[];
+    const selectedExportNode = $derived(
+        selectedNode?.kind === "export" ? selectedNode : null,
+    );
+
+    // The export node is topic-aware: each inbound data edge is classified by
+    // what its source emits. A data input supplies the exported rows; a
+    // `markers` input supplies the session window + cue labels.
+    // Both are read off the RUNTIME status (output_topics), which is where the
+    // resolved stream id + schema live.
+    const exportInputs = $derived.by(() => {
+        const data: {
+            nodeId: string;
+            label: string;
+            topic: OutputChannelTopic | undefined;
+        }[] = [];
+        const experiments: {
+            nodeId: string;
+            label: string;
+            sessionId: string;
+            markerStreamId: string | undefined;
+        }[] = [];
+        if (!selectedExportNode) {
+            return { data, experiments };
         }
-        const ids = new Set<string>();
         for (const edge of draftGraph.edges) {
             if (
-                edge.edge_kind !== "provenance" ||
-                edge.target_node_id !== selectedTrainNode.id
+                edge.target_node_id !== selectedExportNode.id ||
+                edge.edge_kind === "provenance"
             ) {
                 continue;
             }
-            const src = draftGraph.nodes.find(
-                (n) => n.id === edge.source_node_id,
-            );
-            if (src?.kind === "experiment") {
-                const eid = sanitizeIdentifier(src.config.experiment_id ?? "");
-                if (eid) {
-                    ids.add(eid);
-                }
+            const src = draftGraph.nodes.find((n) => n.id === edge.source_node_id);
+            if (!src) {
+                continue;
             }
+            const status = selectedGraphStatus?.node_statuses?.[src.id];
+            if (src.kind === "markers" || src.kind === "experiment") {
+                // The session id is the bound experiment's id (a legacy node's own
+                // config is the fallback, so an unconverted board still exports).
+                const sessionId = sanitizeIdentifier(
+                    boundExperimentId ||
+                        (src.kind === "experiment"
+                            ? (src.config.experiment_id ?? "")
+                            : ""),
+                );
+                if (sessionId) {
+                    experiments.push({
+                        nodeId: src.id,
+                        label: src.label,
+                        sessionId,
+                        markerStreamId:
+                            markerTopicOfChannel(status?.output_topics)?.id ??
+                            status?.output_stream_id,
+                    });
+                }
+                continue;
+            }
+            const topic = dataTopicOfChannel(status?.output_topics);
+            data.push({ nodeId: src.id, label: src.label, topic });
         }
-        return [...ids];
+        return { data, experiments };
     });
 
-    // True when a recorded run belongs to an experiment wired into the selected
-    // train node (its session_id matches a bound experiment's id).
+    // The channel the export endpoint reads rows from.
+    const exportChannelStreamId = $derived(
+        exportInputs.data.find((entry) => entry.topic)?.topic?.id,
+    );
+
+    // Markers come from the data channel itself when a combine bundled them
+    // (Data/<id> + Marker/<id> share an id). When a markers node is wired
+    // straight into the export node instead, its marker channel is separate and
+    // has to be named explicitly.
+    const exportMarkerStreamId = $derived.by(() => {
+        const bundled = exportInputs.data.find(
+            (entry) => entry.topic,
+        )?.nodeId;
+        if (bundled) {
+            const status = selectedGraphStatus?.node_statuses?.[bundled];
+            if (markerTopicOfChannel(status?.output_topics)) {
+                return undefined;  // already bundled on the data channel
+            }
+        }
+        return exportInputs.experiments.find((e) => e.markerStreamId)
+            ?.markerStreamId;
+    });
+
+    // What the Export button will actually submit, or why it can't.
+    const exportReadiness = $derived.by(() => {
+        if (!selectedExportNode) {
+            return { ready: false, reason: "" };
+        }
+        const { data, experiments } = exportInputs;
+        if (data.length === 0) {
+            return {
+                ready: false,
+                reason: "Wire a data stream into this export node.",
+            };
+        }
+        if (experiments.length === 0) {
+            return {
+                ready: false,
+                reason:
+                    "Wire a markers node in — it defines the session window and the labels.",
+            };
+        }
+        const resolved = data.find((entry) => entry.topic);
+        if (!resolved) {
+            return {
+                ready: false,
+                reason:
+                    "Start the graph so the upstream stream resolves a topic, then export.",
+            };
+        }
+        return { ready: true, reason: "" };
+    });
+
+    // The experiment whose runs the train picker scopes to. This used to be
+    // resolved from an experiment→train provenance edge; the experiment now owns
+    // the whole board, so the board's binding says it without any wiring — which
+    // is why that edge was retired.
+    const trainLineageExperimentIds = $derived(
+        boundExperimentId ? [sanitizeIdentifier(boundExperimentId)] : [],
+    );
+
+    // True when a recorded run belongs to the board's experiment (its session_id
+    // matches that experiment's id).
     function isRunInScope(run: RecordedRunSummary): boolean {
         if (trainLineageExperimentIds.length === 0) {
             return false;
@@ -648,6 +1057,8 @@
     // Phase 8 (typed connection feedback): a transient note when a just-made
     // connection looks descriptor-incompatible.
     let connectionMessage = $state<string | null>(null);
+    // Outcome of the last parquet download from an export node's inspector.
+    let exportDownload = $state<ExportDownloadResult | null>(null);
 
     // Add a recommended transform downstream of the selected node and wire it up.
     function addRecommendedTransform(kind: string) {
@@ -758,12 +1169,41 @@
     });
 
     function markDraftChanged(nextGraph: EditorGraphDefinition) {
+        // Read-only backstop for a sealed instance. Every edit funnels through here
+        // (palette adds, drags, config changes, composite group/ungroup, param
+        // writes), so gating this one function covers all of them — rather than
+        // hoping each remembered to check. The plan lists immutability's back doors
+        // precisely because there are many; the backend rejection is the outer
+        // backstop, and this keeps the editor from ever reaching a state it cannot
+        // persist.
+        if (boardIsImmutable) {
+            connectionMessage =
+                "This is an immutable recording — fork it to edit (History → Fork to edit).";
+            return;
+        }
         nextGraph.updated_at_us = Date.now() * 1000;
         nextGraph.ui = nextGraph.ui ?? {};
         nextGraph.ui.selected_node_id = selectedNodeId;
         draftGraph = nextGraph;
         graphDirty = true;
         userTouchedSelection = true;
+    }
+
+    // Display-only state — the viewport, and whether a viewer draws its inline
+    // graph — happens to be stored IN the graph document, so it used to funnel
+    // through markDraftChanged and get refused on a sealed recording. But
+    // reviewing a recording is exactly when you pan around it and switch the
+    // graphs on, and neither changes the pipeline. So apply these to the local
+    // draft, and on an immutable board skip the dirty/persist bookkeeping: there
+    // is nothing to save, and markDraftChanged would only emit a refusal.
+    function markViewStateChanged(nextGraph: EditorGraphDefinition) {
+        if (boardIsImmutable) {
+            nextGraph.ui = nextGraph.ui ?? {};
+            nextGraph.ui.selected_node_id = selectedNodeId;
+            draftGraph = nextGraph;
+            return;
+        }
+        markDraftChanged(nextGraph);
     }
 
     function selectGraph(graphId: string) {
@@ -812,6 +1252,20 @@
         pendingConnection = null;
     }
 
+    // When a fork comes back, open it: the whole point of forking is to start
+    // editing the copy, and leaving the user on the read-only original would make
+    // them hunt for it in the tree.
+    $effect(() => {
+        const target = forkedGraphToOpen;
+        if (!target) {
+            return;
+        }
+        if (graphDefinitions.some((graph) => graph.graph_id === target)) {
+            onForkOpened();
+            selectGraph(target);
+        }
+    });
+
     // Phase 8: load a starter preset as a new board, binding its source to the
     // first available stream (the user can rebind in the inspector).
     function loadStarterTemplate(template: StarterTemplate) {
@@ -831,6 +1285,27 @@
         selectedNodeIds = new Set();
         selectedEdgeId = null;
         pendingConnection = null;
+        // A recording template needs its EXPERIMENT too, not just the board: the
+        // protocol lives in the experiment record and the board's markers node
+        // resolves its topic from the binding. persistExperiment saves the board
+        // first, so the backend has a graph to bind by the time it gets here.
+        if (template.experiment) {
+            const nowUs = Date.now() * 1000;
+            const experimentId =
+                sanitizeIdentifier(`${template.id}-${Date.now()}`) ||
+                `experiment-${Date.now()}`;
+            persistExperiment({
+                experiment_id: experimentId,
+                label: template.experiment.label,
+                protocol: { ...template.experiment.protocol },
+                participant_id: "",
+                notes: "",
+                live_graph_id: selectedGraphId,
+                created_at_us: nowUs,
+                updated_at_us: nowUs,
+            });
+            showExperimentPanel = true;
+        }
     }
 
     // Phase 4: profiles. Save the CURRENT (saved) graph as a person's profile,
@@ -855,9 +1330,10 @@
         const participantId =
             sanitizeIdentifier(displayName) || `profile-${Date.now()}`;
 
-        // Pull details from the current graph.
+        // Pull details from the current graph + the board's experiment (which is
+        // where the protocol lives now).
         let modelPath = "";
-        let protocolId = "";
+        const protocolId = boundExperimentView?.protocol?.protocol_id ?? "";
         let deviceId = "";
         for (const node of draftGraph.nodes) {
             if (
@@ -868,10 +1344,6 @@
                 if (typeof path === "string") {
                     modelPath = path;
                 }
-            } else if (node.kind === "experiment") {
-                protocolId =
-                    (node.config as ExperimentNodeConfig)?.protocol
-                        ?.protocol_id ?? protocolId;
             } else if (node.kind === "stream_source" && !deviceId) {
                 deviceId = node.stream_id ?? "";
             }
@@ -1173,11 +1645,46 @@
             addCombineNode(position);
         } else if (entry.kind === "transform") {
             addTransformNode(entry.node_type, position);
-        } else if (entry.kind === "experiment") {
-            addExperimentNode(position);
+        } else if (entry.kind === "markers") {
+            addMarkersNode(position);
         } else if (entry.kind === "train") {
             addTrainNode(position);
+        } else if (entry.kind === "export") {
+            addExportNode(position);
         }
+    }
+
+    function buildDefaultExportConfig(): ExportNodeConfig {
+        return {
+            format: "parquet",
+            label_field: "label",
+            run_index: null,
+        };
+    }
+
+    // Terminal + variadic: two data inputs by default so a data stream and an
+    // experiment's markers can both be wired in without adding a port first.
+    function addExportNode(
+        position: StreamGraphPosition = contextMenu.open
+            ? contextMenu.graphPosition
+            : getDefaultInsertionPosition(),
+    ) {
+        const nextGraph = cloneGraph(draftGraph);
+        const nodeId = `export/${Date.now()}`;
+        nextGraph.nodes.push({
+            id: nodeId,
+            kind: "export",
+            label: "Export",
+            position: { ...position },
+            input_port_ids: ["in1", "in2"],
+            output_port_ids: [],
+            config: buildDefaultExportConfig(),
+        });
+        selectedNodeId = nodeId;
+        selectedNodeIds = new Set([nodeId]);
+        selectedEdgeId = null;
+        closeContextMenu();
+        markDraftChanged(nextGraph);
     }
 
     function buildDefaultTrainConfig(): TrainNodeConfig {
@@ -1208,10 +1715,9 @@
             kind: "train",
             label: "Train",
             position: { ...position },
-            // Provenance stubs: an experiment wires into prov_experiment (which
-            // sessions to train on); its models flow out of prov_models into a
-            // classify node.
-            input_port_ids: [PROVENANCE_PORT_EXPERIMENT],
+            // Runs are picked in the inspector (scoped to the board's experiment);
+            // the models flow out of prov_models into a classify node.
+            input_port_ids: [],
             output_port_ids: [PROVENANCE_PORT_MODELS],
             config: buildDefaultTrainConfig(),
         });
@@ -1222,39 +1728,23 @@
         markDraftChanged(nextGraph);
     }
 
-    // Defaults to the finger-counting (digit-movement) protocol — cues the hand
-    // at each finger count (1–5), with `rest` as the inter-cue filler. Still fully
-    // editable in the inspector (the node stays sensor-agnostic). The
-    // experiment_id is stable per node (the recording session_id and the
-    // Marker/<experiment_id> output topic key).
-    function buildDefaultExperimentConfig(): ExperimentNodeConfig {
-        return {
-            protocol: { ...FINGER_COUNTING_PROTOCOL },
-            experiment_id: sanitizeIdentifier(`finger-counting-${Date.now()}`),
-            participant_id: "",
-            notes: "",
-        };
-    }
-
-    // Source-like: no inputs. The single `markers` output carries the
-    // cue/session marker stream downstream.
-    function addExperimentNode(
+    // Source-like and config-less: no inputs, and its single `markers` output
+    // carries the BOUND experiment's cue/session marker stream downstream. There
+    // is nothing to author on it — it follows whichever experiment owns the board.
+    function addMarkersNode(
         position: StreamGraphPosition = contextMenu.open
             ? contextMenu.graphPosition
             : getDefaultInsertionPosition(),
     ) {
         const nextGraph = cloneGraph(draftGraph);
-        const nodeId = `experiment/${Date.now()}`;
+        const nodeId = `markers/${Date.now()}`;
         nextGraph.nodes.push({
             id: nodeId,
-            kind: "experiment",
-            label: "Experiment",
+            kind: "markers",
+            label: "Markers",
             position: { ...position },
-            // prov_source: a source can be wired in to record against this
-            // experiment (source->experiment lineage); no DATA inputs.
-            input_port_ids: [PROVENANCE_PORT_SOURCE],
+            input_port_ids: [],
             output_port_ids: ["markers"],
-            config: buildDefaultExperimentConfig(),
         });
         selectedNodeId = nodeId;
         selectedNodeIds = new Set([nodeId]);
@@ -1293,8 +1783,9 @@
     function utilityIcon(kind: string) {
         if (kind === "viewer") return Monitor;
         if (kind === "sink") return Archive;
-        if (kind === "experiment") return CircleDot;
+        if (kind === "markers" || kind === "experiment") return CircleDot;
         if (kind === "train") return Cpu;
+        if (kind === "export") return FileDown;
         return GitBranch;
     }
 
@@ -1386,6 +1877,11 @@
 
     function startNodeDrag(event: MouseEvent, nodeId: string) {
         event.stopPropagation();
+        if (boardIsImmutable) {
+            // Refuse the drag outright rather than letting the node follow the
+            // cursor and snap back when markDraftChanged declines it.
+            return;
+        }
         const node = draftGraph.nodes.find((entry) => entry.id === nodeId);
         if (!node) {
             return;
@@ -1446,7 +1942,7 @@
                 y: panState.startY + event.clientY - panState.startClientY,
                 zoom: nextGraph.ui.viewport?.zoom ?? DEFAULT_VIEWPORT.zoom,
             };
-            markDraftChanged(nextGraph);
+            markViewStateChanged(nextGraph);
             return;
         }
 
@@ -1516,7 +2012,7 @@
                 (graphPosition.y * nextZoom +
                     (canvasElement?.getBoundingClientRect().top ?? 0)),
         };
-        markDraftChanged(nextGraph);
+        markViewStateChanged(nextGraph);
     }
 
     function handlePortMouseDown(
@@ -1614,10 +2110,11 @@
         );
         const connectTarget = draftGraph.nodes.find((n) => n.id === nodeId);
         if (
-            connectSource?.kind === "experiment" &&
+            (connectSource?.kind === "markers" ||
+                connectSource?.kind === "experiment") &&
             connectTarget?.kind === "transform"
         ) {
-            connectionMessage = `⚠ Markers can't feed a ${connectTarget.kind}. Combine them with a data stream, wire the experiment into a viewer, or use the timeline.`;
+            connectionMessage = `⚠ Markers can't feed a ${connectTarget.kind}. Combine them with a data stream, wire the markers into a viewer, or use the timeline.`;
             pendingConnection = null;
             return;
         }
@@ -1757,48 +2254,248 @@
         markDraftChanged(nextGraph);
     }
 
-    function updateSessionProtocol(patch: Partial<SessionProtocol>) {
-        updateSelectedNode((node) => {
-            if (node.kind !== "experiment") {
-                return node;
+    // --- Experiment actions --------------------------------------------------
+    // save_experiment is the only writer of the experiment<->board pair, so every
+    // one of these is a save. The board must already exist in the graph store for
+    // the backend to stamp it, so a dirty/new board is saved FIRST — WS messages
+    // are processed in order, which is what makes that safe rather than racy.
+    function persistExperiment(experiment: Experiment): void {
+        if (graphDirty || !selectedGraphRecord) {
+            saveDraftGraph();
+        }
+        saveExperiment(experiment);
+    }
+
+    function bindExperiment(experimentId: string): void {
+        flushExperimentEdit();
+        if (!experimentId) {
+            // Unbind: clear live_graph_id on whichever experiment holds this board.
+            const current = boundExperiment;
+            if (current) {
+                persistExperiment({ ...current, live_graph_id: "" });
             }
-            return {
-                ...node,
-                config: {
-                    ...node.config,
-                    protocol: { ...node.config.protocol, ...patch },
-                },
-            };
+            return;
+        }
+        const target = experiments.find(
+            (experiment) => experiment.experiment_id === experimentId,
+        );
+        if (!target) {
+            return;
+        }
+        persistExperiment({ ...target, live_graph_id: selectedGraphId });
+    }
+
+    function createExperiment(): void {
+        flushExperimentEdit();
+        if (!selectedGraphId) {
+            window.alert("Create or select a board first.");
+            return;
+        }
+        const label = window.prompt(
+            "Experiment name (e.g. Finger counting):",
+            "",
+        );
+        if (!label) {
+            return;
+        }
+        const experimentId =
+            sanitizeIdentifier(`${label}-${Date.now()}`) ||
+            `experiment-${Date.now()}`;
+        const nowUs = Date.now() * 1000;
+        persistExperiment({
+            experiment_id: experimentId,
+            label,
+            protocol: { ...FINGER_COUNTING_PROTOCOL },
+            participant_id: "",
+            notes: "",
+            live_graph_id: selectedGraphId,
+            created_at_us: nowUs,
+            updated_at_us: nowUs,
+        });
+        showExperimentPanel = true;
+    }
+
+    function patchBoundExperiment(patch: Partial<Experiment>): void {
+        const current = boundExperimentView;
+        if (!current) {
+            return;
+        }
+        queueExperimentEdit({ ...current, ...patch });
+    }
+
+    function patchBoundProtocol(patch: Partial<SessionProtocol>): void {
+        const current = boundExperimentView;
+        if (!current?.protocol) {
+            return;
+        }
+        queueExperimentEdit({
+            ...current,
+            protocol: { ...current.protocol, ...patch },
         });
     }
 
-    function updateSessionMeta(
-        patch: Partial<Pick<ExperimentNodeConfig, "participant_id" | "notes">>,
-    ) {
-        updateSelectedNode((node) => {
-            if (node.kind !== "experiment") {
-                return node;
-            }
-            return { ...node, config: { ...node.config, ...patch } };
-        });
+    function formatDuration(seconds: number): string {
+        if (seconds < 60) {
+            return `${seconds}s`;
+        }
+        if (seconds < 3600) {
+            return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+        }
+        if (seconds < 86400) {
+            return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+        }
+        return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
     }
 
-    // The experiment_id is the recording session_id and the key of the
-    // Marker/<experiment_id> topic the `markers` output resolves to, so keep it
-    // a valid topic identifier.
-    function updateExperimentId(raw: string) {
-        updateSelectedNode((node) => {
-            if (node.kind !== "experiment") {
-                return node;
+    function formatWindow(startUs?: number, endUs?: number | null): string {
+        if (!startUs) {
+            return "—";
+        }
+        const start = new Date(startUs / 1000);
+        const durationS = endUs ? Math.round((endUs - startUs) / 1_000_000) : null;
+        return `${start.toLocaleString()}${
+            durationS !== null ? ` · ${formatDuration(durationS)}` : ""
+        }`;
+    }
+
+    // Replay controls for the open instance.
+    let replayMode = $state<"review" | "recompute">("review");
+    let replaySpeed = $state(1);
+
+    const replayForSelectedInstance = $derived(
+        selectedInstance && activeReplay?.graph_id === selectedInstance.graph_id
+            ? activeReplay
+            : null,
+    );
+
+    // Mirrors what the Instance panel requires to offer Replay: there has to be a
+    // materialised data artifact to stream back. Used by the toolbar, which shows
+    // Replay in place of Start on a sealed recording.
+    const canReplaySelectedInstance = $derived(
+        (selectedInstance?.recording?.artifacts?.data?.length ?? 0) > 0,
+    );
+
+    function replaySelectedInstance() {
+        const instance = selectedInstance;
+        if (!instance) {
+            return;
+        }
+        // The page starts the graph against the replay once the backend confirms the
+        // scratch topic exists — doing it here would race the topic's creation.
+        startInstanceReplay(instance.graph_id, replayMode, replaySpeed);
+    }
+
+    function stopSelectedReplay() {
+        const replay = replayForSelectedInstance;
+        if (!replay) {
+            return;
+        }
+        stopInstanceReplay(replay.replay_id);
+        // Stop the pipeline too: leaving workers bound to a topic that is about to be
+        // deleted would strand them on a stream that no longer exists.
+        stopStreamGraph(replay.graph_id);
+    }
+
+    function forkSelectedInstance() {
+        const instance = selectedInstance;
+        if (!instance) {
+            return;
+        }
+        forkStreamGraph(instance.graph_id);
+    }
+
+    // Download a MATERIALIZED artifact. Deliberately not the Kafka-draining export
+    // endpoint: an instance exists precisely because its data has left the broker.
+    function artifactDownloadUrl(graphId: string, path: string): string {
+        const params = new URLSearchParams({ graph_id: graphId, path });
+        return `/api/instances/artifact?${params}`;
+    }
+
+    // Deleting an instance destroys recorded data, so a SEALED one needs a second,
+    // explicit confirmation and the backend's force flag — a mis-click must not be
+    // able to erase history.
+    function deleteInstance(graphId: string, immutable: boolean): void {
+        const instance = graphDefinitions.find(
+            (graph) => graph.graph_id === graphId,
+        );
+        const label = instance?.instance_id ?? graphId;
+        const prompt = immutable
+            ? `Delete sealed recording "${label}"? Its Parquet files and marker ` +
+              `timeline are deleted too, permanently.`
+            : `Delete instance "${label}"?`;
+        if (!window.confirm(prompt)) {
+            return;
+        }
+        deleteStreamGraph(graphId, immutable);
+    }
+
+    function deleteBoundExperiment(): void {
+        const current = boundExperiment;
+        if (!current) {
+            return;
+        }
+        discardExperimentEdit();
+        const confirmed = window.confirm(
+            `Delete experiment "${current.label || current.experiment_id}"? ` +
+                "The board and any recorded data are not deleted.",
+        );
+        if (confirmed) {
+            deleteExperiment(current.experiment_id);
+        }
+    }
+
+    // Migration (Phase 1): lift a legacy `experiment` node's protocol into a
+    // stored experiment bound to this board, and swap the node for a `markers`
+    // source IN PLACE — same node id, so every edge it fed survives untouched.
+    function convertExperimentNode(node: StreamGraphExperimentNode): void {
+        if (!selectedGraphId) {
+            window.alert("Save the board first, then convert.");
+            return;
+        }
+        const config = node.config;
+        const experimentId =
+            sanitizeIdentifier(config.experiment_id ?? "") ||
+            sanitizeIdentifier(`${node.label}-${Date.now()}`) ||
+            `experiment-${Date.now()}`;
+        const nowUs = Date.now() * 1000;
+        const existing = experiments.find(
+            (experiment) => experiment.experiment_id === experimentId,
+        );
+
+        const nextGraph = cloneGraph(draftGraph);
+        for (let index = 0; index < nextGraph.nodes.length; index += 1) {
+            if (nextGraph.nodes[index].id !== node.id) {
+                continue;
             }
-            return {
-                ...node,
-                config: {
-                    ...node.config,
-                    experiment_id: sanitizeIdentifier(raw),
-                },
+            const previous = nextGraph.nodes[index];
+            nextGraph.nodes[index] = {
+                id: previous.id,
+                kind: "markers",
+                label: "Markers",
+                position: { ...previous.position },
+                input_port_ids: [],
+                output_port_ids: ["markers"],
+                ...(previous.width !== undefined ? { width: previous.width } : {}),
+                ...(previous.height !== undefined
+                    ? { height: previous.height }
+                    : {}),
             };
+        }
+        markDraftChanged(nextGraph);
+        // Order matters: the graph save carries the new markers node, then the
+        // experiment save binds the board and lands the protocol.
+        saveDraftGraph();
+        saveExperiment({
+            experiment_id: experimentId,
+            label: config.protocol?.label || node.label || experimentId,
+            protocol: config.protocol ?? { ...FINGER_COUNTING_PROTOCOL },
+            participant_id: config.participant_id ?? "",
+            notes: config.notes ?? "",
+            live_graph_id: selectedGraphId,
+            created_at_us: existing?.created_at_us ?? nowUs,
+            updated_at_us: nowUs,
         });
+        showExperimentPanel = true;
     }
 
     // Parse the comma-separated class editor into a clean vocabulary.
@@ -1816,6 +2513,92 @@
             }
             return { ...node, config: { ...node.config, ...patch } };
         });
+    }
+
+    function updateExportConfig(patch: Partial<ExportNodeConfig>) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "export") {
+                return node;
+            }
+            return { ...node, config: { ...node.config, ...patch } };
+        });
+    }
+
+    // Download the parquet straight from the backend. The whole export runs in
+    // C++ (drain the channel, join the cue labels, write the file) and comes
+    // back as an attachment — no control-plane hop, no server-side artifact.
+    async function downloadExportForNode(node: StreamGraphExportNode) {
+        const streamId = exportChannelStreamId;
+        if (!streamId) {
+            return;
+        }
+        const params = new URLSearchParams({ stream_id: streamId });
+        if (exportMarkerStreamId) {
+            params.set("marker_stream_id", exportMarkerStreamId);
+        }
+        if (node.config.label_field) {
+            params.set("label_field", node.config.label_field);
+        }
+        if (node.config.run_index) {
+            params.set("run_index", String(node.config.run_index));
+        }
+
+        exportDownload = { status: "downloading", message: "Exporting…" };
+        try {
+            const response = await fetch(`/api/export/parquet?${params}`, {
+                credentials: "same-origin",
+            });
+            if (!response.ok) {
+                // The backend answers failures as JSON with an actionable message
+                // (empty window, wrong schema, retention gap) — surface it as-is.
+                let message = `Export failed (HTTP ${response.status})`;
+                try {
+                    const body = await response.json();
+                    if (body?.message) {
+                        message = body.message;
+                    }
+                } catch {
+                    /* non-JSON body: keep the status message */
+                }
+                exportDownload = { status: "failed", message };
+                return;
+            }
+
+            const header = (name: string) => response.headers.get(name);
+            const disposition = header("Content-Disposition") ?? "";
+            const match = /filename="([^"]+)"/.exec(disposition);
+            const fileName = match?.[1] ?? `stream-${streamId}.parquet`;
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = fileName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+
+            const toCount = (value: string | null) =>
+                value === null ? null : Number(value);
+            exportDownload = {
+                status: "downloaded",
+                message: `Downloaded ${fileName}`,
+                fileName,
+                sessionId: header("X-Natkit-Session-Id") ?? undefined,
+                frameCount: toCount(header("X-Natkit-Frame-Count")),
+                labelledFrameCount: toCount(header("X-Natkit-Labelled-Frame-Count")),
+                markerCount: toCount(header("X-Natkit-Marker-Count")),
+                truncated: header("X-Natkit-Truncated") === "true",
+            };
+        } catch (error) {
+            exportDownload = {
+                status: "failed",
+                message: `Export request failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            };
+        }
     }
 
     // The run selector the train pipeline expects: "<session-id>:<run-index>".
@@ -1838,28 +2621,6 @@
         updateTrainConfig({ [key]: next });
     }
 
-    const selectedSessionSummary = $derived.by(() => {
-        if (!selectedSessionNode) {
-            return null;
-        }
-        const schedule = buildCueScheduleForProtocol(
-            selectedSessionNode.config.protocol,
-        );
-        return {
-            holdCues: schedule.filter((cue) => cue.phase === "hold").length,
-            durationS: Math.round(scheduleDurationMs(schedule) / 1000),
-        };
-    });
-
-    // Phase 5: the device id(s) this experiment records against, resolved from
-    // its source→experiment provenance edge — so the operator can read which
-    // stream the session binds to (and reconstruction reads it directly).
-    const selectedExperimentBoundDevices = $derived.by(() =>
-        selectedSessionNode
-            ? resolveExperimentSourceDeviceIds(selectedSessionNode)
-            : [],
-    );
-
     // --- Session recording (Phase 4, slice C) -------------------------------
     // Recording is client-side: run the protocol cue timeline and publish the
     // session bundle (metadata + lifecycle + cue markers) via the backend under
@@ -1867,7 +2628,7 @@
     // data is already in Kafka (the source/transform streams); the session emits
     // the marker timeline that labels and delimits the runs.
     interface SessionRecordingState {
-        nodeId: string;
+        experimentId: string;
         sessionId: string;
         protocolId: string;
         participantId: string;
@@ -1892,79 +2653,41 @@
             : null,
     );
 
-    // Resolve the device_id STRING(s) (e.g. "emg01") of the source(s) wired into
-    // this experiment via a source→experiment provenance edge (prov_source).
-    // Recording these onto the session bundle lets reconstruction read the right
-    // EMG topic directly (resolve_device_id), instead of scanning the broker to
-    // guess "the one device active in the session window" — the scan that hung
-    // and that breaks with more than one EMG device. (Phase 2.)
-    function resolveExperimentSourceDeviceIds(
-        node: StreamGraphExperimentNode,
-    ): string[] {
-        const deviceIds = new Set<string>();
-        for (const edge of draftGraph.edges) {
-            if (
-                edge.edge_kind !== "provenance" ||
-                edge.target_node_id !== node.id ||
-                edge.target_port !== PROVENANCE_PORT_SOURCE
-            ) {
-                continue;
-            }
-            const source = draftGraph.nodes.find(
-                (n) => n.id === edge.source_node_id,
-            );
-            if (!source) {
-                continue;
-            }
-            // The stream key the live device_id map is keyed by: a raw source's
-            // stream_id, or a transform/combine's runtime output stream id.
-            const streamKey =
-                source.kind === "stream_source"
-                    ? source.stream_id
-                        ? String(source.stream_id)
-                        : undefined
-                    : nodeRuntimeStatus(source.id)?.output_stream_id
-                      ? String(nodeRuntimeStatus(source.id)?.output_stream_id)
-                      : undefined;
-            const deviceId = streamKey
-                ? streamDeviceNames[streamKey]
-                : undefined;
-            if (deviceId) {
-                deviceIds.add(deviceId);
-            }
-        }
-        return [...deviceIds];
-    }
-
-    function startSessionRecording(node: StreamGraphExperimentNode) {
+    function startSessionRecording(experiment: Experiment) {
         if (sessionRecording) {
             return;
         }
-        const protocol = node.config.protocol;
+        flushExperimentEdit();
+        const protocol = experiment.protocol;
+        if (!protocol) {
+            sessionRecordMessage =
+                "This experiment has no protocol — add classes and timing first.";
+            return;
+        }
         const schedule = buildCueScheduleForProtocol(protocol);
         if (schedule.length === 0) {
             sessionRecordMessage =
                 "Protocol has no cues — add classes and timing first.";
             return;
         }
-        // Deterministic session↔stream binding (Phase 2): stamp the resolved
-        // device_id string(s) of the source(s) wired in via a source→experiment
-        // provenance edge, so reconstruction reads the right topic directly. If
-        // no source is bound (or its device_id hasn't been seen live yet), this
-        // is empty and reconstruction falls back to its window scan as before.
-        const streamIds = resolveExperimentSourceDeviceIds(node);
-        // Record under the node's stable experiment_id so the published markers
-        // land on the same Marker/<experiment_id> topic the `markers` output
-        // port resolves to (downstream marker-aware nodes subscribe to it).
-        // Fall back to a generated id for graphs saved before experiment_id.
+        // Deterministic session↔stream binding: stamp the resolved device_id
+        // string(s) of every source on the board, so reconstruction reads the
+        // right topics directly instead of scanning the broker to guess "the one
+        // device active in the session window" — the scan that hung and that
+        // breaks with more than one device. Every source is a recorded source now
+        // that the experiment owns the graph. Empty (no source, or its device_id
+        // not yet seen live) falls back to that window scan as before.
+        const streamIds = recordedDeviceIds;
+        // Record under the experiment's id so the published markers land on the
+        // same Marker/<experiment_id> topic a markers node resolves to.
         const sessionId = sanitizeIdentifier(
-            node.config.experiment_id ||
+            experiment.experiment_id ||
                 buildDefaultSessionId(protocol.protocol_id || "experiment"),
         );
         const startedAtEpochMs = Date.now();
         const startedAtUs = startedAtEpochMs * 1000;
-        const participantId = node.config.participant_id ?? "";
-        const notes = node.config.notes ?? "";
+        const participantId = experiment.participant_id ?? "";
+        const notes = experiment.notes ?? "";
         const meta = buildSessionMetadataRecordPayload({
             sessionId,
             purpose: "training",
@@ -1992,7 +2715,7 @@
             ],
         });
         sessionRecording = {
-            nodeId: node.id,
+            experimentId: experiment.experiment_id,
             sessionId,
             protocolId: protocol.protocol_id,
             participantId,
@@ -2004,6 +2727,10 @@
             startedAtUs,
             elapsedMs: 0,
         };
+        // Mint the instance: the backend snapshots the board and opens the window
+        // at the SAME timestamp the markers are stamped with, so the snapshot's
+        // window and its marker timeline describe one run.
+        startExperimentInstance(experiment.experiment_id, startedAtUs);
         sessionRecordMessage = `Recording markers as ${sessionId}…`;
         sessionRecordTimer = setInterval(tickSessionRecording, 100);
     }
@@ -2063,9 +2790,26 @@
             ],
         });
         sessionRecordMessage = completed
-            ? `Recorded ${rec.sessionId} markers.`
-            : `Stopped ${rec.sessionId} early; partial markers published.`;
+            ? `Recorded ${rec.sessionId} markers; materializing…`
+            : `Stopped ${rec.sessionId} early; materializing the partial run…`;
         sessionRecording = null;
+
+        // Close the instance window and materialize. Delayed a beat so the markers
+        // published just above have landed in Kafka before the exporter drains the
+        // topic — the same reason the recorded-runs refresh below waits.
+        const instanceGraphId = recordingInstanceGraphId;
+        if (instanceGraphId) {
+            setTimeout(
+                () =>
+                    finishExperimentInstance(instanceGraphId, endedAtUs, completed),
+                1200,
+            );
+        } else {
+            sessionRecordMessage =
+                (sessionRecordMessage ?? "") +
+                " (no instance was minted, so nothing was materialized — the markers " +
+                "are still on the broker.)";
+        }
 
         // Auto-refresh the Experiments library so the just-recorded run shows up
         // for the Train node without a manual refresh. Delay a beat so the
@@ -2086,6 +2830,11 @@
         // need to restart the node to pick it up.
         const runState = selectedGraphStatus?.run_state;
         if (!nodeId || (runState !== "running" && runState !== "stalled")) {
+            return;
+        }
+        // Phase 7's auto-save would otherwise fire on every keystroke against a
+        // sealed instance and spray rejections.
+        if (boardIsImmutable) {
             return;
         }
         const graphId = draftGraph.graph_id;
@@ -2244,6 +2993,13 @@
     }
 
     function saveDraftGraph() {
+        if (boardIsImmutable) {
+            // The backend rejects this anyway; not sending it keeps a normal action
+            // from producing an error toast the user can do nothing about.
+            connectionMessage =
+                "This is an immutable recording — fork it to make changes.";
+            return;
+        }
         // Persist the editor version (with composites collapsed) locally first.
         const editorSnapshot = $state.snapshot(draftGraph) as EditorGraphDefinition;
         saveEditorGraph(editorSnapshot);
@@ -2266,6 +3022,16 @@
 
     function startSelectedGraph() {
         if (!draftGraph.graph_id) {
+            return;
+        }
+        // A sealed recording has no live input: starting it would point its sources
+        // at whatever is on the broker NOW, which is the opposite of what the panel
+        // promises ("Replays from the Parquet on disk, not the broker"). Replay is
+        // the control for a recording; Start is for live boards and forks.
+        if (boardIsImmutable) {
+            connectionMessage =
+                "This is a recorded snapshot — use Replay (in the Instance panel) " +
+                "to run it against its recording, or fork it to edit and run live.";
             return;
         }
         // Persist any unsaved edits first — the backend starts the STORED graph,
@@ -2356,6 +3122,13 @@
         downloadCompositeFile([template]);
     }
 
+    // A modal's Escape handler only fires while focus is inside the overlay, so
+    // an unfocused dialog ignores Escape until you happen to click it. Panels
+    // already carry tabindex="-1" for exactly this; move focus there on open.
+    function focusOnOpen(element: HTMLElement) {
+        element.focus();
+    }
+
     let expandedComposite = $state<CompositeTemplate | null>(null);
 
     function openCompositeInternals(node: EditorGraphNode | null) {
@@ -2442,7 +3215,7 @@
             openCompositeInternals(node);
         } else if (node?.kind === "viewer") {
             openViewerData(node);
-        } else if (node?.kind === "experiment") {
+        } else if (node?.kind === "markers" || node?.kind === "experiment") {
             expandedExperimentNodeId = node.id;
         }
     }
@@ -2454,7 +3227,7 @@
                 node.inline_graph = enabled;
             }
         }
-        markDraftChanged(nextGraph);
+        markViewStateChanged(nextGraph);
         // Subscriptions are reconciled by the effect below — each inline viewer
         // (and the expanded overlay) subscribes its own stream, so any number
         // render live at once.
@@ -2473,18 +3246,27 @@
     function setInlineExperiment(nodeId: string, enabled: boolean) {
         const nextGraph = cloneGraph(draftGraph);
         for (const node of nextGraph.nodes) {
-            if (node.id === nodeId && node.kind === "experiment") {
+            if (
+                node.id === nodeId &&
+                (node.kind === "markers" || node.kind === "experiment")
+            ) {
                 node.inline_experiment = enabled;
             }
         }
         markDraftChanged(nextGraph);
     }
 
-    // Everything a run surface needs for one experiment node, resolved from the
-    // shared recording state (only one experiment records at a time).
-    function experimentRunView(node: StreamGraphExperimentNode) {
-        const protocol = node.config.protocol;
-        const isRecording = sessionRecording?.nodeId === node.id;
+    // Everything a run surface needs, resolved from the board's bound experiment
+    // plus the shared recording state (only one experiment records at a time).
+    // Returns null when nothing is bound — there is no protocol to run.
+    function experimentRunView() {
+        const experiment = boundExperimentView;
+        const protocol = experiment?.protocol;
+        if (!experiment || !protocol) {
+            return null;
+        }
+        const isRecording =
+            sessionRecording?.experimentId === experiment.experiment_id;
         const schedule = isRecording
             ? sessionRecording!.schedule
             : buildCueScheduleForProtocol(protocol);
@@ -2548,7 +3330,7 @@
                 }
             }
             // Timeline (Part E): subscribe to EVERY channel that carries a MARKER
-            // topic (an experiment's markers, or a combine "stream" output), so
+            // topic (a markers node's output, or a combine "stream" output), so
             // the strip shows recorded regions + cue ticks from any of them.
             const markerTopic = markerTopicOfChannel(nodeOutputTopics(node.id));
             if (markerTopic) {
@@ -2656,6 +3438,9 @@
             clearTimeout(reactiveRestartTimer);
             reactiveRestartTimer = null;
         }
+        // Send a queued experiment edit on the way out rather than dropping it —
+        // navigating away from the board shouldn't silently lose a rename.
+        flushExperimentEdit();
         if (timelineClock) {
             clearInterval(timelineClock);
             timelineClock = null;
@@ -2765,6 +3550,7 @@
                           },
                       ]
                     : [];
+            case "markers":
             case "experiment":
                 return [{ type: "Marker", id: "", schema: "MarkerEventV1" }];
             case "transform":
@@ -2900,14 +3686,16 @@
             markers.length > 0 && !hasData
                 ? MARKER_SCHEMA_NAME
                 : descriptor?.schema_name;
+        const imuSamples = data?.imuSamples ?? [];
         return {
             subscribed: data != null,
             emgSamples,
+            imuSamples,
             markers,
             latestMuse,
             descriptor,
             renderer: chooseViewerRenderer(descriptor, hint, schemaNameHint),
-            recordValue: latestEmg ?? latestMuse ?? data?.imuSamples.at(-1),
+            recordValue: latestEmg ?? latestMuse ?? imuSamples.at(-1),
         };
     }
 
@@ -2989,9 +3777,134 @@
         }, 200);
     }
 
+    // The clock also drives the always-visible time readout at the bottom of the
+    // canvas, not just the (toggled) timeline strip, so it runs unconditionally.
     $effect(() => {
-        if (showTimeline) ensureTimelineClock();
+        ensureTimelineClock();
     });
+
+    // Compact time readout: wall-clock time and time since the run started.
+    //
+    // Which "start" that is depends on what the board is doing, and the three
+    // cases genuinely differ:
+    //   - replaying  -> the RECORDING's own clock, so the numbers match the data
+    //                   on screen rather than the wall clock you are watching it
+    //                   at. Replay preserves original device timestamps, so
+    //                   last_published_ts_us is exactly where the pipeline is.
+    //   - running    -> wall clock, elapsed since the run began (active_run_id
+    //                   carries the start as "<graph_id>:<start_us>").
+    //   - a sealed recording that is not replaying -> when it was captured.
+    // The backend's replay progress messages are sparse (two in the first fifteen
+    // seconds), so a readout driven only by them sits frozen at +0.0s. A review
+    // replay is PACED at a known speed, so the position between updates is exactly
+    // (elapsed wall time x speed) — interpolate it, and re-anchor on every message
+    // so drift cannot accumulate. Recompute mode is unpaced and has no such
+    // relationship, so it just shows the last reported position.
+    let replayAnchorAtUs = $state(0);
+    let replayAnchorPositionUs = $state(0);
+
+    $effect(() => {
+        const replay = replayForSelectedInstance;
+        if (!replay) {
+            replayAnchorAtUs = 0;
+            return;
+        }
+        replayAnchorPositionUs =
+            replay.last_published_ts_us || replay.first_ts_us;
+        replayAnchorAtUs = Date.now() * 1000;
+    });
+
+    const timeReadout = $derived.by(() => {
+        const replay = replayForSelectedInstance;
+        if (replay && replay.first_ts_us) {
+            const reported = replay.last_published_ts_us || replay.first_ts_us;
+            const interpolated =
+                replayMode === "review" && replayAnchorAtUs > 0
+                    ? replayAnchorPositionUs +
+                      (timelineNowUs - replayAnchorAtUs) * replaySpeed
+                    : reported;
+            const position = Math.min(
+                replay.last_ts_us || reported,
+                Math.max(reported, interpolated),
+            );
+            const total = Math.max(0, replay.last_ts_us - replay.first_ts_us);
+            const elapsed = Math.max(0, position - replay.first_ts_us);
+            return {
+                kind: "replay" as const,
+                label: "REPLAY",
+                clock: formatReadoutClock(position),
+                elapsed: formatElapsed(elapsed),
+                total: total > 0 ? formatElapsed(total) : null,
+                fraction: total > 0 ? Math.min(1, elapsed / total) : 0,
+                // Only once the server has actually reported progress — otherwise
+                // a stale "0/1709" sits next to a time that is visibly advancing.
+                detail:
+                    replay.frames_published > 0
+                        ? `${replay.frames_published}/${replay.total_frames} frames`
+                        : null,
+            };
+        }
+        const runId = selectedGraphStatus?.active_run_id ?? "";
+        const startUs = Number(runId.slice(runId.lastIndexOf(":") + 1));
+        if (selectedGraphActive && Number.isFinite(startUs) && startUs > 0) {
+            return {
+                kind: "live" as const,
+                label: "LIVE",
+                clock: formatReadoutClock(timelineNowUs),
+                elapsed: formatElapsed(Math.max(0, timelineNowUs - startUs)),
+                total: null,
+                fraction: 0,
+                detail: null,
+            };
+        }
+        const rec = selectedInstance?.recording;
+        if (rec?.window_start_us) {
+            const total = Math.max(0, (rec.window_end_us ?? 0) - rec.window_start_us);
+            return {
+                kind: "recorded" as const,
+                label: "RECORDED",
+                clock: formatReadoutClock(rec.window_start_us),
+                elapsed: total > 0 ? formatElapsed(total) : "—",
+                total: null,
+                fraction: 0,
+                detail: total > 0 ? "duration" : null,
+            };
+        }
+        return {
+            kind: "idle" as const,
+            label: "IDLE",
+            clock: formatReadoutClock(timelineNowUs),
+            elapsed: "—",
+            total: null,
+            fraction: 0,
+            detail: null,
+        };
+    });
+
+    // Wall-clock time of a microsecond timestamp. The date is shown only when it
+    // is not today, so a live readout stays short but an old recording is never
+    // mistaken for something that happened this afternoon.
+    function formatReadoutClock(timestampUs: number): string {
+        if (!Number.isFinite(timestampUs) || timestampUs <= 0) return "—";
+        const at = new Date(timestampUs / 1000);
+        const time = at.toLocaleTimeString(undefined, { hour12: false });
+        const isToday = at.toDateString() === new Date(timelineNowUs / 1000).toDateString();
+        return isToday ? time : `${at.toLocaleDateString()} ${time}`;
+    }
+
+    // Elapsed time, always with a leading "+" so it reads as a delta rather than
+    // another clock. Sub-minute keeps tenths, which matters when scrubbing cues.
+    function formatElapsed(deltaUs: number): string {
+        if (!Number.isFinite(deltaUs) || deltaUs < 0) return "—";
+        const totalSeconds = deltaUs / 1_000_000;
+        if (totalSeconds < 60) return `+${totalSeconds.toFixed(1)}s`;
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+        return hours > 0
+            ? `+${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+            : `+${minutes}m ${String(seconds).padStart(2, "0")}s`;
+    }
 
     function setTimeContext(patch: Partial<TimeContext>) {
         const id = draftGraph.graph_id;
@@ -3135,6 +4048,12 @@
         {:else}
             <p class="inline-note">Waiting for data…</p>
         {/if}
+    {:else if view.renderer === "imu"}
+        {#if view.imuSamples.length > 0}
+            <ImuViewer samples={view.imuSamples} {formatNumber} {compact} />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
     {:else if view.descriptor}
         <SchemaDescriptorInspector
             descriptor={view.descriptor}
@@ -3154,30 +4073,67 @@
     )}
 {/snippet}
 
+{#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
+    {@const status = entry.graph.recording?.status ?? "unknown"}
+    {@const rows = entry.graph.recording?.artifacts?.total_rows}
+    <button
+        type="button"
+        class="tree-instance"
+        class:selected={entry.graph.graph_id === selectedGraphId}
+        style={`padding-left: ${0.5 + depth * 0.7}rem`}
+        title={entry.graph.recording?.message ?? entry.graph.graph_id}
+        onclick={() => selectGraph(entry.graph.graph_id)}
+    >
+        <span class="tree-instance-id">
+            {entry.graph.origin === "fork" ? "↳ " : ""}{entry.graph.instance_id}
+        </span>
+        <span class={`tree-instance-status ${status}`}>
+            {status === "complete"
+                ? `${rows ?? 0} rows`
+                : status === "failed"
+                  ? "failed"
+                  : status}
+        </span>
+    </button>
+    {#each entry.children as child}
+        {@render instanceBranch(child, depth + 1)}
+    {/each}
+{/snippet}
+
 {#snippet inlineExperiment(node: EditorGraphNode)}
-    {#if node.kind === "experiment"}
-        {@const view = experimentRunView(node)}
-        <ExperimentRunner
-            protocolLabel={view.protocolLabel}
-            classes={view.classes}
-            recording={view.recording}
-            recordingElsewhere={view.recordingElsewhere}
-            elapsedMs={view.elapsedMs}
-            durationMs={view.durationMs}
-            activeCue={view.activeCue}
-            nextCue={view.nextCue}
-            totalReps={view.totalReps}
-            currentRep={view.currentRep}
-            holdsRemaining={view.holdsRemaining}
-            holdsTotal={view.holdsTotal}
-            summary={view.summary}
-            onRecord={() => startSessionRecording(node)}
-            onStop={() => finishSessionRecording(false)}
-        />
+    {#if node.kind === "markers" || node.kind === "experiment"}
+        {@const view = experimentRunView()}
+        {#if view && boundExperimentView}
+            <ExperimentRunner
+                protocolLabel={view.protocolLabel}
+                classes={view.classes}
+                recording={view.recording}
+                recordingElsewhere={view.recordingElsewhere}
+                elapsedMs={view.elapsedMs}
+                durationMs={view.durationMs}
+                activeCue={view.activeCue}
+                nextCue={view.nextCue}
+                totalReps={view.totalReps}
+                currentRep={view.currentRep}
+                holdsRemaining={view.holdsRemaining}
+                holdsTotal={view.holdsTotal}
+                summary={view.summary}
+                onRecord={() => startSessionRecording(boundExperimentView)}
+                onStop={() => finishSessionRecording(false)}
+            />
+        {:else}
+            <p class="inline-note">
+                No experiment bound to this board — bind one from the Experiment
+                panel to run a protocol.
+            </p>
+        {/if}
     {/if}
 {/snippet}
 
-<div class="graph-editor">
+<div
+    class="graph-editor"
+    style={`--panel-top: ${toolbarHeight + 28}px`}
+>
     <div class="graph-sidebar" class:panel-hidden={!showSidebar}>
         <div class="sidebar-header">
             <div>
@@ -3200,13 +4156,13 @@
         </div>
 
         <div class="graph-list">
-            {#if graphDefinitions.length === 0}
+            {#if boardDefinitions.length === 0}
                 <div class="empty-state">
                     <Workflow size={18} />
                     <p>No saved graphs yet.</p>
                 </div>
             {:else}
-                {#each graphDefinitions as graph}
+                {#each boardDefinitions as graph}
                     <button
                         type="button"
                         class:selected={graph.graph_id === selectedGraphId}
@@ -3228,6 +4184,49 @@
                     </button>
                 {/each}
             {/if}
+        </div>
+
+        <div class="library-group">
+            <div class="library-header-row">
+                <span class="library-title">Experiments &amp; history</span>
+            </div>
+            <div class="library-actions">
+                {#if experimentTree.length === 0}
+                    <div class="empty-state">
+                        <p>
+                            No experiments yet. Bind one to a board from the header
+                            to start recording.
+                        </p>
+                    </div>
+                {:else}
+                    {#each experimentTree as branch}
+                        <div class="tree-experiment">
+                            <button
+                                type="button"
+                                class="tree-experiment-row"
+                                class:bound={branch.experiment.experiment_id ===
+                                    boundExperimentId}
+                                title={`Open this experiment's board (${branch.experiment.live_graph_id || "no board bound"})`}
+                                onclick={() =>
+                                    branch.experiment.live_graph_id &&
+                                    selectGraph(branch.experiment.live_graph_id)}
+                            >
+                                <FlaskConical size={13} />
+                                <span class="tree-experiment-label">
+                                    {branch.experiment.label ||
+                                        branch.experiment.experiment_id}
+                                </span>
+                                <span class="tree-count">
+                                    {branch.instances.length}
+                                </span>
+                            </button>
+                            {#each branch.instances as instance}
+                                {@render instanceBranch(instance, 1)}
+                            {/each}
+                        </div>
+                    {/each}
+                {/if}
+            </div>
         </div>
 
         <div class="library-group">
@@ -3447,7 +4446,7 @@
     </div>
 
     <div class="graph-main">
-        <div class="graph-toolbar">
+        <div class="graph-toolbar" bind:clientHeight={toolbarHeight}>
             <div class="toolbar-group">
                 <button
                     type="button"
@@ -3473,6 +4472,29 @@
                 {#if graphDirty}
                     <span class="dirty-pill">Unsaved</span>
                 {/if}
+                {#if boardIsImmutable}
+                    <span class="immutable-pill" title="Recorded snapshot — read-only">
+                        Immutable
+                    </span>
+                {/if}
+                <button
+                    type="button"
+                    class="experiment-pill"
+                    class:bound={boundExperimentView !== null}
+                    onclick={() => (showExperimentPanel = !showExperimentPanel)}
+                    title="Bind an experiment, author its protocol, and record"
+                >
+                    <FlaskConical size={13} />
+                    {boundExperimentView
+                        ? boundExperimentView.label ||
+                          boundExperimentView.experiment_id
+                        : "No experiment"}
+                </button>
+                {#if sessionRecording}
+                    <span class="recording-pill">
+                        ● REC {(sessionRecording.elapsedMs / 1000).toFixed(0)}s
+                    </span>
+                {/if}
                 <span
                     class="conn-pill {connectionState}"
                     title={`Backend: ${connectionState}`}
@@ -3486,20 +4508,53 @@
                 </span>
             </div>
             <div class="toolbar-actions">
-                <button
-                    type="button"
-                    class="action-btn secondary"
-                    onclick={startSelectedGraph}
-                    disabled={selectedGraphStatus?.run_state === "starting"}
-                >
-                    {#if selectedGraphStatus?.run_state === "starting"}
-                        <RefreshCw size={16} class="spin" />
-                        Starting…
+                {#if boardIsImmutable}
+                    <!-- A sealed recording has no live input, so "Start" is
+                         meaningless here — but replaying it is exactly the
+                         equivalent action, so the primary button becomes that
+                         rather than a greyed-out control that does nothing. Mode
+                         and speed stay in the Instance panel. -->
+                    {#if replayForSelectedInstance}
+                        <button
+                            type="button"
+                            class="action-btn secondary"
+                            onclick={stopSelectedReplay}
+                            title="Stop replaying this recording"
+                        >
+                            <Square size={16} />
+                            Stop replay
+                        </button>
                     {:else}
-                        <Play size={16} />
-                        Start
+                        <button
+                            type="button"
+                            class="action-btn secondary"
+                            onclick={replaySelectedInstance}
+                            disabled={!canReplaySelectedInstance}
+                            title={canReplaySelectedInstance
+                                ? "Replay this recording through the board's pipeline (mode and speed in the Instance panel)"
+                                : "This recording has no materialised data to replay"}
+                        >
+                            <Play size={16} />
+                            Replay
+                        </button>
                     {/if}
-                </button>
+                {:else}
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        onclick={startSelectedGraph}
+                        disabled={selectedGraphStatus?.run_state === "starting"}
+                        title="Start this graph"
+                    >
+                        {#if selectedGraphStatus?.run_state === "starting"}
+                            <RefreshCw size={16} class="spin" />
+                            Starting…
+                        {:else}
+                            <Play size={16} />
+                            Start
+                        {/if}
+                    </button>
+                {/if}
                 <button
                     type="button"
                     class="action-btn secondary"
@@ -3590,6 +4645,11 @@
                     >
                 </div>
             {/if}
+            <!-- The board is a pan/zoom drawing surface: role="application" is the
+                 honest role and it needs focus for keyboard panning, but Svelte's
+                 checker only accepts tabindex/mouse handlers on widget roles. -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <div
                 bind:this={canvasElement}
                 class="graph-canvas"
@@ -3600,7 +4660,9 @@
                 onmousedown={startPan}
                 onwheel={handleCanvasWheel}
             >
-                <div class="canvas-grid" oncontextmenu={openContextMenu}></div>
+                <!-- contextmenu bubbles to .graph-canvas above, and openContextMenu
+                     reads only clientX/clientY — inner handlers would be redundant. -->
+                <div class="canvas-grid"></div>
                 <svg class="graph-edges" aria-hidden="true">
                     <g
                         transform={`translate(${draftGraph.ui?.viewport?.x ?? 0}, ${
@@ -3683,7 +4745,6 @@
 
                 <div
                     class="graph-stage"
-                    oncontextmenu={openContextMenu}
                     style={`transform: translate(${draftGraph.ui?.viewport?.x ?? 0}px, ${
                         draftGraph.ui?.viewport?.y ?? 0
                     }px) scale(${draftGraph.ui?.viewport?.zoom ?? 1});`}
@@ -3697,6 +4758,10 @@
                             {pendingConnection}
                             {inlineViewerChart}
                             {inlineExperiment}
+                            boundExperimentLabel={boundExperimentView
+                                ? boundExperimentView.label ||
+                                  boundExperimentView.experiment_id
+                                : null}
                             {streamDeviceNames}
                             inputPortLabels={combineInputLabels(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
@@ -3830,12 +4895,82 @@
                 </div>
 
                 {#if draftGraph.nodes.length === 0}
-                    <div class="canvas-empty" oncontextmenu={openContextMenu}>
+                    <div class="canvas-empty">
                         <Activity size={18} />
                         <p>Right-click the board to add a source, transform, viewer, or sink.</p>
                     </div>
                 {/if}
+
+                <!-- Compact time readout. pointer-events: none is deliberate —
+                     it floats over the canvas and must never swallow a drag,
+                     a right-click, or a node click. -->
+                <div class={`time-readout ${timeReadout.kind}`}>
+                    <span class="time-readout-badge">{timeReadout.label}</span>
+                    <span class="time-readout-clock" title="Wall-clock time">
+                        <Clock size={12} />
+                        {timeReadout.clock}
+                    </span>
+                    <span
+                        class="time-readout-elapsed"
+                        title="Time since this run started"
+                    >
+                        {timeReadout.elapsed}{#if timeReadout.total}<span
+                                class="time-readout-total"
+                                >/ {timeReadout.total}</span
+                            >{/if}
+                    </span>
+                    {#if timeReadout.detail}
+                        <span class="time-readout-detail">{timeReadout.detail}</span>
+                    {/if}
+                    {#if timeReadout.kind === "replay" && timeReadout.total}
+                        <span class="time-readout-track">
+                            <span
+                                class="time-readout-fill"
+                                style={`width:${(timeReadout.fraction * 100).toFixed(1)}%`}
+                            ></span>
+                        </span>
+                    {/if}
+                </div>
             </div>
+
+            {#if showExperimentPanel}
+                <div class="graph-experiment-panel">
+                    <ExperimentPanel
+                        {experiments}
+                        bound={boundExperimentView}
+                        boardId={selectedGraphId}
+                        readOnly={boardIsImmutable}
+                        summary={boundExperimentSummary}
+                        recordedDevices={recordedDeviceIds}
+                        recording={sessionRecording &&
+                        boundExperimentView &&
+                        sessionRecording.experimentId ===
+                            boundExperimentView.experiment_id
+                            ? {
+                                  sessionId: sessionRecording.sessionId,
+                                  elapsedMs: sessionRecording.elapsedMs,
+                                  durationMs: sessionRecording.durationMs,
+                                  activeCue: activeSessionCue,
+                              }
+                            : null}
+                        recordingElsewhere={sessionRecording !== null &&
+                            sessionRecording.experimentId !==
+                                boundExperimentView?.experiment_id}
+                        message={sessionRecordMessage}
+                        instances={boundExperimentInstances}
+                        onDeleteInstance={deleteInstance}
+                        onBind={bindExperiment}
+                        onCreate={createExperiment}
+                        onPatch={patchBoundExperiment}
+                        onPatchProtocol={patchBoundProtocol}
+                        onDelete={deleteBoundExperiment}
+                        onRecord={() =>
+                            boundExperimentView &&
+                            startSessionRecording(boundExperimentView)}
+                        onStop={() => finishSessionRecording(false)}
+                    />
+                </div>
+            {/if}
 
             <div class="graph-inspector" class:panel-hidden={!showInspector}>
                 <div class="inspector-section">
@@ -3854,6 +4989,263 @@
                         ></textarea>
                     </label>
                 </div>
+
+                {#if selectedInstance}
+                    {@const rec = selectedInstance.recording}
+                    {@const artifacts = rec?.artifacts}
+                    <div class="inspector-section">
+                        <div class="inspector-section-header">
+                            <p class="eyebrow">Instance</p>
+                            <span
+                                class={`instance-badge ${selectedInstance.immutable ? "sealed" : "editable"}`}
+                            >
+                                {selectedInstance.immutable
+                                    ? "IMMUTABLE"
+                                    : selectedInstance.origin === "fork"
+                                      ? "FORK"
+                                      : (rec?.status ?? "draft")}
+                            </span>
+                        </div>
+                        <div class="summary-row">
+                            <span>Instance</span>
+                            <strong>{selectedInstance.instance_id}</strong>
+                        </div>
+                        {#if selectedInstance.forked_from}
+                            <div class="summary-row">
+                                <span>Forked from</span>
+                                <strong>{selectedInstance.forked_from}</strong>
+                            </div>
+                        {/if}
+                        <div class="summary-row">
+                            <span>Recorded</span>
+                            <strong>
+                                {formatWindow(rec?.window_start_us, rec?.window_end_us)}
+                            </strong>
+                        </div>
+                        <div class="summary-row">
+                            <span>Status</span>
+                            <strong class={`instance-status ${rec?.status ?? ""}`}>
+                                {rec?.status ?? "unknown"}
+                            </strong>
+                        </div>
+                        {#if rec?.message}
+                            <p class="muted-text">{rec.message}</p>
+                        {/if}
+
+                        {#if artifacts?.data?.length}
+                            <p class="eyebrow">Artifacts</p>
+                            {#each artifacts.data as artifact}
+                                <div class="artifact-card">
+                                    <div class="summary-row">
+                                        <span>{artifact.path}</span>
+                                        <strong>{artifact.rows ?? 0} rows</strong>
+                                    </div>
+                                    <div class="summary-row">
+                                        <span>{artifact.schema_name ?? "—"}</span>
+                                        <strong class="artifact-hash"
+                                            >{(artifact.sha256 ?? "").slice(0, 12)}</strong
+                                        >
+                                    </div>
+                                    {#if artifact.truncated}
+                                        <p class="muted-text">
+                                            ⚠ Truncated — this file is a prefix of the
+                                            stream, not the whole window.
+                                        </p>
+                                    {/if}
+                                    {#if artifact.label_counts}
+                                        <div class="label-histogram">
+                                            {#each Object.entries(artifact.label_counts).sort((a, b) => b[1] - a[1]) as [label, count]}
+                                                {@const share =
+                                                    (count / Math.max(1, artifact.rows ?? count)) * 100}
+                                                <div class="label-row">
+                                                    <span class="label-name">{label}</span>
+                                                    <span class="label-bar">
+                                                        <span
+                                                            class="label-bar-fill"
+                                                            class:unlabelled={label === "(unlabelled)"}
+                                                            style={`width: ${Math.max(2, share)}%`}
+                                                        ></span>
+                                                    </span>
+                                                    <span class="label-count">{count}</span>
+                                                </div>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                    <a
+                                        class="artifact-download"
+                                        href={artifactDownloadUrl(selectedInstance.graph_id, artifact.path)}
+                                        download
+                                    >
+                                        <Download size={13} />
+                                        Download parquet
+                                    </a>
+                                </div>
+                            {/each}
+                            {#if artifacts.markers}
+                                <a
+                                    class="artifact-download"
+                                    href={artifactDownloadUrl(selectedInstance.graph_id, artifacts.markers)}
+                                    download
+                                >
+                                    <Download size={13} />
+                                    Download markers
+                                </a>
+                            {/if}
+                        {:else if rec?.status === "complete"}
+                            <p class="muted-text">
+                                Sealed, but no artifacts are listed — the record and
+                                the store disagree.
+                            </p>
+                        {/if}
+
+                        {#if artifacts?.data?.length}
+                            <p class="eyebrow">Replay</p>
+                            {#if replayForSelectedInstance}
+                                {@const replay = replayForSelectedInstance}
+                                {@const done = replay.total_frames
+                                    ? Math.min(
+                                          100,
+                                          (replay.frames_published /
+                                              replay.total_frames) *
+                                              100,
+                                      )
+                                    : 0}
+                                <div class="runtime-card">
+                                    <div class="summary-row">
+                                        <span>Streaming</span>
+                                        <strong>
+                                            {replay.frames_published} / {replay.total_frames}
+                                            frames
+                                        </strong>
+                                    </div>
+                                    <span class="replay-bar">
+                                        <span
+                                            class="replay-bar-fill"
+                                            style={`width: ${Math.max(1, done)}%`}
+                                        ></span>
+                                    </span>
+                                    <div class="summary-row">
+                                        <span>Markers</span>
+                                        <strong>{replay.markers_published}</strong>
+                                    </div>
+                                    <p class="muted-text">
+                                        Publishing to a scratch topic; the board's
+                                        sources are bound to it for this run. Original
+                                        timestamps are preserved, so cue labels still
+                                        line up.
+                                    </p>
+                                </div>
+                                <div class="inspector-action-row">
+                                    <button
+                                        type="button"
+                                        class="action-btn secondary"
+                                        onclick={stopSelectedReplay}
+                                    >
+                                        <Square size={15} />
+                                        Stop replay
+                                    </button>
+                                </div>
+                            {:else}
+                                <div class="field-row">
+                                    <label>
+                                        <span>Mode</span>
+                                        <select
+                                            value={replayMode}
+                                            onchange={(event) =>
+                                                (replayMode = (
+                                                    event.currentTarget as HTMLSelectElement
+                                                ).value as "review" | "recompute")}
+                                        >
+                                            <option value="review">Review (paced)</option>
+                                            <option value="recompute"
+                                                >Recompute (as fast as possible)</option
+                                            >
+                                        </select>
+                                    </label>
+                                    {#if replayMode === "review"}
+                                        <label>
+                                            <span>Speed</span>
+                                            <select
+                                                value={String(replaySpeed)}
+                                                onchange={(event) =>
+                                                    (replaySpeed = Number(
+                                                        (
+                                                            event.currentTarget as HTMLSelectElement
+                                                        ).value,
+                                                    ))}
+                                            >
+                                                {#each [0.25, 0.5, 1, 2, 4, 8] as option}
+                                                    <option value={String(option)}
+                                                        >{option}×</option
+                                                    >
+                                                {/each}
+                                            </select>
+                                        </label>
+                                    {/if}
+                                </div>
+                                <div class="inspector-action-row">
+                                    <button
+                                        type="button"
+                                        class="action-btn"
+                                        onclick={replaySelectedInstance}
+                                        title="Stream this recording back through the board's pipeline"
+                                    >
+                                        <Play size={15} />
+                                        Replay
+                                    </button>
+                                </div>
+                                <p class="muted-text">
+                                    Replays from the Parquet on disk, not the broker —
+                                    a recording from a year ago replays the same as one
+                                    from a minute ago.
+                                </p>
+                            {/if}
+                        {/if}
+
+                        <div class="inspector-action-row">
+                            <button
+                                type="button"
+                                class="action-btn"
+                                onclick={forkSelectedInstance}
+                                title="Create an editable copy that reuses this recording's data"
+                            >
+                                <GitBranch size={15} />
+                                Fork to edit
+                            </button>
+                            {#if artifacts?.data?.length}
+                                <button
+                                    type="button"
+                                    class="action-btn secondary"
+                                    onclick={() => verifyExperimentInstance(selectedInstance.graph_id)}
+                                    title="Re-check the artifacts against their recorded checksums"
+                                >
+                                    <ScanSearch size={15} />
+                                    Verify
+                                </button>
+                            {/if}
+                        </div>
+                        {#if selectedInstanceVerification}
+                            <div class="runtime-card">
+                                <div class="summary-row">
+                                    <span>Integrity</span>
+                                    <strong class={selectedInstanceVerification.ok ? "ok" : "error"}>
+                                        {selectedInstanceVerification.ok
+                                            ? "all artifacts match"
+                                            : "MISMATCH"}
+                                    </strong>
+                                </div>
+                                {#each selectedInstanceVerification.artifacts.filter((entry) => !entry.ok) as bad}
+                                    <p class="muted-text">{bad.path}: {bad.problem}</p>
+                                {/each}
+                            </div>
+                        {/if}
+                        <p class="muted-text">
+                            {selectedInstance.immutable
+                                ? "This board is the graph as it was when the data was captured. It is read-only; fork it to change the pipeline and re-run against the same data."
+                                : "This instance is editable — its pipeline can change, but it still points at the recording's original files."}
+                        </p>
+                    </div>
+                {/if}
 
                 <div class="inspector-section">
                     <div class="inspector-section-header">
@@ -4133,221 +5525,71 @@
                             </div>
                         {/if}
 
-                        {#if selectedSessionNode}
-                            {@const protocol = selectedSessionNode.config.protocol}
-                            <label>
-                                <span>Protocol name</span>
-                                <input
-                                    value={protocol.label}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            label: (event.currentTarget as HTMLInputElement).value,
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Protocol id</span>
-                                <input
-                                    value={protocol.protocol_id}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            protocol_id: sanitizeIdentifier(
-                                                (event.currentTarget as HTMLInputElement).value,
-                                            ),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Experiment id</span>
-                                <input
-                                    value={selectedSessionNode.config.experiment_id ?? ""}
-                                    oninput={(event) =>
-                                        updateExperimentId(
-                                            (event.currentTarget as HTMLInputElement).value,
-                                        )}
-                                />
-                            </label>
-                            <label>
-                                <span>Classes (comma-separated labels)</span>
-                                <input
-                                    value={protocol.classes.join(", ")}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            classes: parseClassList(
-                                                (event.currentTarget as HTMLInputElement).value,
-                                            ),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Rest / idle class</span>
-                                <input
-                                    value={protocol.rest_class}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            rest_class: (event.currentTarget as HTMLInputElement).value,
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Repetitions</span>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={protocol.repetitions}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            repetitions: Number((event.currentTarget as HTMLInputElement).value),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Hold (s)</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.5"
-                                    value={protocol.hold_s}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            hold_s: Number((event.currentTarget as HTMLInputElement).value),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Rest (s)</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.5"
-                                    value={protocol.rest_s}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            rest_s: Number((event.currentTarget as HTMLInputElement).value),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Lead-in (s)</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.5"
-                                    value={protocol.lead_in_s}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            lead_in_s: Number((event.currentTarget as HTMLInputElement).value),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Tail rest (s)</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.5"
-                                    value={protocol.tail_rest_s}
-                                    oninput={(event) =>
-                                        updateSessionProtocol({
-                                            tail_rest_s: Number((event.currentTarget as HTMLInputElement).value),
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Participant id</span>
-                                <input
-                                    value={selectedSessionNode.config.participant_id ?? ""}
-                                    oninput={(event) =>
-                                        updateSessionMeta({
-                                            participant_id: (event.currentTarget as HTMLInputElement).value,
-                                        })}
-                                />
-                            </label>
-                            <label>
-                                <span>Notes</span>
-                                <input
-                                    value={selectedSessionNode.config.notes ?? ""}
-                                    oninput={(event) =>
-                                        updateSessionMeta({
-                                            notes: (event.currentTarget as HTMLInputElement).value,
-                                        })}
-                                />
-                            </label>
-                            {#if selectedSessionSummary}
-                                <div class="summary-row">
-                                    <span>Schedule</span>
-                                    <strong
-                                        >{selectedSessionSummary.holdCues} cues · ~{selectedSessionSummary.durationS}s</strong
-                                    >
-                                </div>
-                            {/if}
+                        {#if selectedMarkersNode}
+                            <p class="muted-text">
+                                This node republishes the board's experiment
+                                marker timeline — cue and session events on
+                                <code>Marker/&lt;experiment_id&gt;</code>. There is
+                                nothing to configure: it follows whichever
+                                experiment owns the board.
+                            </p>
                             <div class="summary-row">
-                                {#if selectedExperimentBoundDevices.length > 0}
-                                    <span>Records against</span>
-                                    <strong
-                                        >{selectedExperimentBoundDevices.join(
-                                            ", ",
-                                        )}</strong
-                                    >
-                                {:else}
-                                    <span
-                                        >Emits markers; wire a source into its
-                                        lineage port to bind a device</span
-                                    >
-                                {/if}
+                                <span>Experiment</span>
+                                <strong>
+                                    {boundExperimentView
+                                        ? boundExperimentView.label ||
+                                          boundExperimentView.experiment_id
+                                        : "none bound"}
+                                </strong>
                             </div>
                             <div class="inspector-action-row">
-                                {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
-                                    <button
-                                        type="button"
-                                        class="action-btn secondary"
-                                        onclick={() =>
-                                            finishSessionRecording(false)}
-                                    >
-                                        Stop recording
-                                    </button>
-                                {:else}
-                                    <button
-                                        type="button"
-                                        class="action-btn"
-                                        disabled={sessionRecording !== null}
-                                        onclick={() =>
-                                            startSessionRecording(
-                                                selectedSessionNode,
-                                            )}
-                                    >
-                                        <CircleDot size={15} />
-                                        Record experiment
-                                    </button>
-                                {/if}
+                                <button
+                                    type="button"
+                                    class="action-btn secondary"
+                                    onclick={() => (showExperimentPanel = true)}
+                                >
+                                    <FlaskConical size={15} />
+                                    {boundExperimentView
+                                        ? "Open experiment"
+                                        : "Bind an experiment"}
+                                </button>
                             </div>
-                            {#if sessionRecording && sessionRecording.nodeId === selectedSessionNode.id}
-                                <div class="runtime-card">
-                                    <div class="summary-row">
-                                        <span>Elapsed</span>
-                                        <strong
-                                            >{(
-                                                sessionRecording.elapsedMs / 1000
-                                            ).toFixed(1)}s / {(
-                                                sessionRecording.durationMs /
-                                                1000
-                                            ).toFixed(0)}s</strong
-                                        >
-                                    </div>
-                                    {#if activeSessionCue}
-                                        <div class="summary-row">
-                                            <span>Current cue</span>
-                                            <strong
-                                                >{activeSessionCue.prompt} · {activeSessionCue.gesture}</strong
-                                            >
-                                        </div>
-                                    {/if}
-                                </div>
-                            {/if}
-                            {#if sessionRecordMessage}
-                                <p class="muted-text">{sessionRecordMessage}</p>
-                            {/if}
+                        {/if}
+
+                        {#if selectedLegacyExperimentNode}
+                            <!-- A board saved before the experiment became a
+                                 first-class object. Its protocol is still here in
+                                 the node config, so it keeps recording; converting
+                                 lifts it into an experiment record and swaps the
+                                 node for a markers source in place, keeping every
+                                 edge. -->
+                            <p class="muted-text">
+                                Legacy experiment node. The experiment is now an
+                                object that owns this board, so its protocol,
+                                participant and Record button live in the
+                                Experiment panel. Convert to move
+                                <strong
+                                    >{selectedLegacyExperimentNode.config.protocol
+                                        ?.label ??
+                                        selectedLegacyExperimentNode.label}</strong
+                                >
+                                into an experiment bound to this board — the node
+                                becomes a <code>markers</code> source and its
+                                wiring is unchanged.
+                            </p>
+                            <div class="inspector-action-row">
+                                <button
+                                    type="button"
+                                    class="action-btn"
+                                    onclick={() =>
+                                        convertExperimentNode(
+                                            selectedLegacyExperimentNode,
+                                        )}
+                                >
+                                    <FlaskConical size={15} />
+                                    Convert to experiment + markers
+                                </button>
+                            </div>
                         {/if}
 
                         {#if selectedTrainNode}
@@ -4376,6 +5618,76 @@
                                         <RefreshCw size={13} />
                                     </button>
                                 </div>
+                                {#if trainableInstances.length > 0}
+                                    <p class="eyebrow">Recorded instances</p>
+                                    <p class="run-picker-scope">
+                                        Training from an instance reads its
+                                        materialized Parquet, so it works long after
+                                        the broker would have dropped the records —
+                                        and the same files give the same features
+                                        every time.
+                                    </p>
+                                    <div class="instance-picker">
+                                        {#each trainableInstances as instance}
+                                            {@const rows =
+                                                instance.recording?.artifacts
+                                                    ?.total_rows ?? 0}
+                                            {@const counts =
+                                                instance.recording?.artifacts?.data?.[0]
+                                                    ?.label_counts ?? {}}
+                                            {@const classes = Object.keys(counts).filter(
+                                                (label) => label !== "(unlabelled)",
+                                            )}
+                                            <div class="instance-pick-row">
+                                                <span class="instance-pick-label">
+                                                    <strong>{instance.instance_id}</strong>
+                                                    <span class="instance-pick-meta">
+                                                        {rows} rows{classes.length
+                                                            ? ` · ${classes.join(", ")}`
+                                                            : " · no classes"}
+                                                    </span>
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    class="run-chip"
+                                                    class:active={(
+                                                        cfg.train_instances ?? []
+                                                    ).includes(instance.graph_id)}
+                                                    onclick={() =>
+                                                        toggleTrainInstance(
+                                                            instance.graph_id,
+                                                            "train",
+                                                        )}
+                                                >
+                                                    train
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="run-chip"
+                                                    class:active={(
+                                                        cfg.eval_instances ?? []
+                                                    ).includes(instance.graph_id)}
+                                                    onclick={() =>
+                                                        toggleTrainInstance(
+                                                            instance.graph_id,
+                                                            "eval",
+                                                        )}
+                                                >
+                                                    validate
+                                                </button>
+                                            </div>
+                                            {#if classes.length === 0}
+                                                <p class="run-picker-scope warn">
+                                                    {instance.instance_id} has no
+                                                    labelled classes — training on it
+                                                    would produce a model that predicts
+                                                    one thing.
+                                                </p>
+                                            {/if}
+                                        {/each}
+                                    </div>
+                                    <p class="eyebrow">Or reconstruct from Kafka</p>
+                                {/if}
                                 {#if trainLineageExperimentIds.length > 0}
                                     <p class="run-picker-scope">
                                         Runs from the wired experiment{trainLineageExperimentIds.length >
@@ -4501,7 +5813,8 @@
                                     type="button"
                                     class="action-btn"
                                     disabled={cfg.families.length === 0 ||
-                                        cfg.train_runs.length === 0}
+                                        cfg.train_runs.length === 0 &&
+                                        (cfg.train_instances ?? []).length === 0}
                                     onclick={() =>
                                         submitTrainJobForNode(selectedTrainNode)}
                                 >
@@ -4556,6 +5869,131 @@
                                     Classify node — no manual paste needed. Start
                                     the graph to classify live.
                                 </p>
+                            {/if}
+                        {/if}
+
+                        {#if selectedExportNode}
+                            {@const ecfg = selectedExportNode.config}
+                            <p class="muted-text">
+                                Writes one Parquet file per export: the data
+                                frames as rows, with the active cue joined on as a
+                                label column. Wire a data stream in for the rows
+                                and an experiment's markers in for the session
+                                window + labels.
+                            </p>
+
+                            <div class="run-picker">
+                                <div class="run-picker-head">
+                                    <span>Wired inputs</span>
+                                </div>
+                                {#if exportInputs.data.length === 0}
+                                    <p class="run-picker-scope warn">
+                                        No data input — wire a stream, transform,
+                                        or combine into this node.
+                                    </p>
+                                {:else}
+                                    {#each exportInputs.data as entry}
+                                        <div class="summary-row">
+                                            <span>Data · {entry.label}</span>
+                                            <strong>
+                                                {entry.topic
+                                                    ? `${entry.topic.schema} (#${entry.topic.id})`
+                                                    : "unresolved — start the graph"}
+                                            </strong>
+                                        </div>
+                                    {/each}
+                                {/if}
+                                {#if exportInputs.experiments.length === 0}
+                                    <p class="run-picker-scope warn">
+                                        No experiment wired — its markers define
+                                        the session window and the labels.
+                                    </p>
+                                {:else}
+                                    {#each exportInputs.experiments as entry}
+                                        <div class="summary-row">
+                                            <span>Markers · {entry.label}</span>
+                                            <strong>{entry.sessionId}</strong>
+                                        </div>
+                                    {/each}
+                                {/if}
+                            </div>
+
+                            <label>
+                                <span>Label column</span>
+                                <input
+                                    value={ecfg.label_field}
+                                    oninput={(event) =>
+                                        updateExportConfig({
+                                            label_field: (
+                                                event.currentTarget as HTMLInputElement
+                                            ).value,
+                                        })}
+                                />
+                            </label>
+                            <label>
+                                <span>Run index (blank = whole session)</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={ecfg.run_index ?? ""}
+                                    oninput={(event) => {
+                                        const raw = (
+                                            event.currentTarget as HTMLInputElement
+                                        ).value;
+                                        updateExportConfig({
+                                            run_index: raw ? Number(raw) : null,
+                                        });
+                                    }}
+                                />
+                            </label>
+                            <div class="inspector-action-row">
+                                <button
+                                    type="button"
+                                    class="action-btn"
+                                    disabled={!exportReadiness.ready ||
+                                        exportDownload?.status === "downloading"}
+                                    onclick={() =>
+                                        downloadExportForNode(selectedExportNode)}
+                                >
+                                    <FileDown size={15} />
+                                    {exportDownload?.status === "downloading"
+                                        ? "Exporting…"
+                                        : "Download Parquet"}
+                                </button>
+                            </div>
+                            {#if !exportReadiness.ready && exportReadiness.reason}
+                                <p class="run-picker-scope warn">
+                                    {exportReadiness.reason}
+                                </p>
+                            {/if}
+
+                            {#if exportDownload}
+                                <div class="summary-row">
+                                    <span>Export</span>
+                                    <strong>{exportDownload.message}</strong>
+                                </div>
+                                {#if exportDownload.frameCount != null}
+                                    <div class="summary-row">
+                                        <span>Frames (labelled)</span>
+                                        <strong>
+                                            {exportDownload.frameCount}
+                                            ({exportDownload.labelledFrameCount ?? 0})
+                                        </strong>
+                                    </div>
+                                {/if}
+                                {#if exportDownload.markerCount != null}
+                                    <div class="summary-row">
+                                        <span>Markers</span>
+                                        <strong>{exportDownload.markerCount}</strong>
+                                    </div>
+                                {/if}
+                                {#if exportDownload.truncated}
+                                    <p class="run-picker-scope warn">
+                                        Hit the backend's export time budget — this
+                                        file is a prefix of the stream, not all of
+                                        it. Narrow the window and export again.
+                                    </p>
+                                {/if}
                             {/if}
                         {/if}
 
@@ -4846,6 +6284,7 @@
         <div
             class="context-menu"
             role="menu"
+            tabindex="-1"
             style={`left:${contextMenu.x}px; top:${contextMenu.y}px;`}
             onmousedown={(event) => event.stopPropagation()}
         >
@@ -4920,7 +6359,11 @@
     <div
         class="composite-internals-overlay"
         role="presentation"
-        onclick={closeCompositeInternals}
+        onclick={(event) => {
+            // Only a click on the backdrop itself dismisses; clicks inside the
+            // panel bubble up here and are ignored.
+            if (event.target === event.currentTarget) closeCompositeInternals();
+        }}
         onkeydown={(event) => {
             if (event.key === "Escape") {
                 closeCompositeInternals();
@@ -4932,7 +6375,7 @@
             role="dialog"
             tabindex="-1"
             aria-label={`${expandedComposite.label} internals`}
-            onclick={(event) => event.stopPropagation()}
+            use:focusOnOpen
         >
             <div class="composite-internals-header">
                 <div>
@@ -5017,7 +6460,9 @@
     <div
         class="viewer-data-overlay"
         role="presentation"
-        onclick={closeViewerData}
+        onclick={(event) => {
+            if (event.target === event.currentTarget) closeViewerData();
+        }}
         onkeydown={(event) => {
             if (event.key === "Escape") {
                 closeViewerData();
@@ -5029,7 +6474,7 @@
             role="dialog"
             tabindex="-1"
             aria-label={`Stream ${expandedViewerStreamId} live data`}
-            onclick={(event) => event.stopPropagation()}
+            use:focusOnOpen
         >
             <div class="viewer-data-header">
                 <div>
@@ -5067,12 +6512,14 @@
     </div>
 {/if}
 
-{#if expandedExperimentNode && expandedExperimentNode.kind === "experiment"}
-    {@const view = experimentRunView(expandedExperimentNode)}
+{#if expandedExperimentNode && experimentRunView() && boundExperimentView}
+    {@const view = experimentRunView()!}
     <div
         class="viewer-data-overlay experiment-modal-overlay"
         role="presentation"
-        onclick={() => (expandedExperimentNodeId = null)}
+        onclick={(event) => {
+            if (event.target === event.currentTarget) expandedExperimentNodeId = null;
+        }}
         onkeydown={(event) => {
             if (event.key === "Escape") expandedExperimentNodeId = null;
         }}
@@ -5082,12 +6529,15 @@
             role="dialog"
             tabindex="-1"
             aria-label="Run experiment"
-            onclick={(event) => event.stopPropagation()}
+            use:focusOnOpen
         >
             <div class="viewer-data-header">
                 <div>
                     <p class="eyebrow">Experiment</p>
-                    <h3>{expandedExperimentNode.label}</h3>
+                    <h3>
+                        {boundExperimentView.label ||
+                            boundExperimentView.experiment_id}
+                    </h3>
                 </div>
                 <button
                     type="button"
@@ -5113,10 +6563,7 @@
                     holdsRemaining={view.holdsRemaining}
                     holdsTotal={view.holdsTotal}
                     summary={view.summary}
-                    onRecord={() =>
-                        startSessionRecording(
-                            expandedExperimentNode as StreamGraphExperimentNode,
-                        )}
+                    onRecord={() => startSessionRecording(boundExperimentView)}
                     onStop={() => finishSessionRecording(false)}
                 />
             </div>
@@ -5225,7 +6672,7 @@
 
     .graph-sidebar {
         position: absolute;
-        top: 72px;
+        top: var(--panel-top, 72px);
         left: 14px;
         bottom: 14px;
         width: 280px;
@@ -5951,6 +7398,87 @@
         align-items: center;
     }
 
+    /* Compact time readout, bottom-centre of the canvas. */
+    .time-readout {
+        position: absolute;
+        bottom: 0.75rem;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.3rem 0.7rem;
+        border: 1px solid #24304f;
+        border-radius: 999px;
+        background: rgba(10, 15, 30, 0.86);
+        backdrop-filter: blur(6px);
+        font-size: 0.72rem;
+        color: #b9c8f0;
+        white-space: nowrap;
+        /* Never intercept canvas interaction (pan, right-click, node drags). */
+        pointer-events: none;
+        z-index: 5;
+    }
+
+    .time-readout-badge {
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        background: #1b2440;
+        color: #7f91c8;
+    }
+
+    .time-readout.live .time-readout-badge {
+        background: #10331f;
+        color: #58d68d;
+    }
+
+    .time-readout.replay .time-readout-badge {
+        background: #1a2748;
+        color: #7aa2ff;
+    }
+
+    .time-readout.recorded .time-readout-badge {
+        background: #2c2340;
+        color: #c39bf0;
+    }
+
+    .time-readout-clock {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .time-readout-elapsed {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        color: #e4ecff;
+    }
+
+    .time-readout-total,
+    .time-readout-detail {
+        color: #7f91c8;
+        font-weight: 400;
+        margin-left: 0.25rem;
+    }
+
+    .time-readout-track {
+        width: 88px;
+        height: 3px;
+        border-radius: 999px;
+        background: #1b2440;
+        overflow: hidden;
+    }
+
+    .time-readout-fill {
+        display: block;
+        height: 100%;
+        background: #4f7ef7;
+    }
+
     .canvas-empty,
     .empty-state {
         justify-content: center;
@@ -5965,7 +7493,7 @@
 
     .graph-inspector {
         position: absolute;
-        top: 72px;
+        top: var(--panel-top, 72px);
         right: 14px;
         bottom: 14px;
         width: 360px;
@@ -5977,6 +7505,312 @@
         overflow: auto;
         border-radius: 8px;
         transition: transform 0.18s ease, opacity 0.18s ease;
+    }
+
+    /* The experiment panel floats over the canvas beside the inspector: it is a
+       board-level surface, not a node inspector, so it gets its own column. */
+    .graph-experiment-panel {
+        position: absolute;
+        top: var(--panel-top, 72px);
+        right: 390px;
+        bottom: 14px;
+        width: 320px;
+        z-index: 16;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid rgba(114, 142, 255, 0.16);
+        background: rgba(9, 14, 26, 0.94);
+        backdrop-filter: blur(6px);
+    }
+
+    /* --- Experiment history tree (Phase 4) --- */
+    .tree-experiment {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    .tree-experiment-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        width: 100%;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        color: #cfe0ff;
+        padding: 0.3rem 0.45rem;
+        font-size: 0.78rem;
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .tree-experiment-row.bound {
+        border-color: rgba(120, 205, 255, 0.32);
+        background: rgba(58, 150, 221, 0.16);
+    }
+
+    .tree-experiment-label {
+        flex: 1;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .tree-count {
+        font-size: 0.7rem;
+        color: #7f91c8;
+    }
+
+    .tree-instance {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.4rem;
+        width: 100%;
+        border: 1px solid transparent;
+        border-radius: 5px;
+        background: transparent;
+        color: #9dafdf;
+        padding: 0.22rem 0.4rem;
+        font-size: 0.74rem;
+        cursor: pointer;
+        text-align: left;
+    }
+
+    .tree-instance:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tree-instance.selected {
+        border-color: rgba(160, 130, 255, 0.4);
+        background: rgba(160, 130, 255, 0.14);
+        color: #e6ecf5;
+    }
+
+    .tree-instance-id {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .tree-instance-status {
+        font-size: 0.68rem;
+        white-space: nowrap;
+    }
+
+    .tree-instance-status.complete {
+        color: #9ce6b4;
+    }
+
+    .tree-instance-status.failed {
+        color: #ffb4b4;
+    }
+
+    .tree-instance-status.recording,
+    .tree-instance-status.materializing {
+        color: #ffcf85;
+    }
+
+    /* --- Instance review (Phase 4) --- */
+    .instance-badge {
+        border-radius: 999px;
+        padding: 0.18rem 0.5rem;
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+    }
+
+    .instance-badge.sealed {
+        background: rgba(160, 130, 255, 0.18);
+        color: #cbbcff;
+    }
+
+    .instance-badge.editable {
+        background: rgba(120, 205, 255, 0.16);
+        color: #bfe6ff;
+    }
+
+    .instance-status.complete {
+        color: #9ce6b4;
+    }
+
+    .instance-status.failed {
+        color: #ffb4b4;
+    }
+
+    .artifact-card {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        background: rgba(9, 14, 26, 0.6);
+        padding: 0.5rem 0.6rem;
+    }
+
+    .artifact-hash {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.72rem;
+        color: #7f91c8;
+    }
+
+    .artifact-download {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.74rem;
+        color: #9ad4ff;
+        text-decoration: none;
+    }
+
+    .artifact-download:hover {
+        text-decoration: underline;
+    }
+
+    .instance-picker {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .instance-pick-row {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(9, 14, 26, 0.55);
+        padding: 0.3rem 0.4rem;
+    }
+
+    .instance-pick-label {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        font-size: 0.74rem;
+        overflow: hidden;
+    }
+
+    .instance-pick-label strong {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        color: #e6ecf5;
+    }
+
+    .instance-pick-meta {
+        font-size: 0.68rem;
+        color: #7f91c8;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .replay-bar {
+        display: block;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+    }
+
+    .replay-bar-fill {
+        display: block;
+        height: 100%;
+        border-radius: 3px;
+        background: rgba(156, 230, 180, 0.7);
+        transition: width 0.2s linear;
+    }
+
+    .field-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.4rem;
+    }
+
+    .label-histogram {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    .label-row {
+        display: grid;
+        grid-template-columns: minmax(60px, 30%) 1fr auto;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.7rem;
+        color: #9dafdf;
+    }
+
+    .label-name {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .label-bar {
+        display: block;
+        height: 6px;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.07);
+        overflow: hidden;
+    }
+
+    .label-bar-fill {
+        display: block;
+        height: 100%;
+        border-radius: 3px;
+        background: rgba(120, 205, 255, 0.65);
+    }
+
+    .label-bar-fill.unlabelled {
+        background: rgba(255, 255, 255, 0.22);
+    }
+
+    .label-count {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        color: #cfe0ff;
+    }
+
+    .experiment-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        border-radius: 999px;
+        border: 1px solid rgba(114, 142, 255, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+        color: #9dafdf;
+        padding: 0.24rem 0.6rem;
+        font-size: 0.78rem;
+        cursor: pointer;
+        max-width: 220px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .experiment-pill.bound {
+        border-color: rgba(120, 205, 255, 0.35);
+        background: rgba(58, 150, 221, 0.18);
+        color: #dceeff;
+    }
+
+    .immutable-pill {
+        border-radius: 999px;
+        padding: 0.24rem 0.6rem;
+        font-size: 0.76rem;
+        background: rgba(160, 130, 255, 0.16);
+        color: #cbbcff;
+    }
+
+    .recording-pill {
+        border-radius: 999px;
+        padding: 0.24rem 0.6rem;
+        font-size: 0.76rem;
+        background: rgba(255, 74, 74, 0.18);
+        color: #ffb4b4;
     }
 
     .inspector-section {
@@ -6290,7 +8124,9 @@
 
     .connection-note {
         position: absolute;
-        top: 0.6rem;
+        /* Below the toolbar, whose height varies with wrapping (see --panel-top).
+           At a fixed offset it rendered on top of the board title and pills. */
+        top: calc(var(--panel-top, 72px) - 58px);
         left: 50%;
         transform: translateX(-50%);
         z-index: 20;

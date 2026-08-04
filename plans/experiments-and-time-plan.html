@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Experiments &amp; Time Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · July 13 2026</div>
+  <h1>Experiments &amp; the Concept of Time</h1>
+  <p class="meta">
+    Add an experiment node (parameters &rarr; markers output) to the stream-graph editor, and give the
+    platform a first-class model of <em>time</em> so one graph can record an experiment, process it
+    live, classify live, or reprocess recorded history &mdash; all through a shared timeline/transport
+    surface.
+  </p>
+  <span class="status">Decisions resolved &mdash; ready to sequence Phase 1 (experiment node)</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>The mental model: a &ldquo;DVR / DAW for sensor data&rdquo;</h2>
+    <p>
+      Every natKit stream is Kafka-backed, so it already has a full recorded history and can be read
+      from any point. The unifying idea: a graph never runs at &ldquo;now&rdquo; specifically &mdash; it runs at a
+      <strong>time context</strong>, which is either the live head or a point/range in recorded history. The same
+      processing graph then serves every scenario the platform needs:
+    </p>
+    <ul>
+      <li><strong>Record</strong> an experiment &mdash; drop an experiment node in a live graph; the data (already durable in Kafka) plus the emitted markers become a labeled experiment on the timeline.</li>
+      <li><strong>Process live</strong> &mdash; the graph tails the head (today's behavior).</li>
+      <li><strong>Classify live</strong> &mdash; same graph, with a classify node loading a trained model.</li>
+      <li><strong>Reprocess history</strong> &mdash; point the same graph at a past experiment/range and run the chain over it; tweak the chain, re-run, compare processing methods.</li>
+    </ul>
+    <p>
+      Borrowed metaphors that users already understand: a <strong>DVR</strong> (&ldquo;you're watching live, but you can
+      rewind&rdquo;), a <strong>DAW / video timeline</strong> (tracks = streams, clips = experiments, playhead + transport),
+      and <strong>Grafana</strong> (a time-range picker with a live toggle). The plan adopts the pieces of each that fit.
+    </p>
+  </section>
+
+  <section>
+    <h2>What already exists (build on it)</h2>
+    <ul>
+      <li><strong>Cue engine + protocol</strong>: <code>SessionProtocol</code> (classes / rest_class / reps / hold / rest / lead-in / tail / seed) and the seeded scheduler <code>buildCueScheduleForProtocol</code> in <code>StreamViewer/experiment.ts</code> are already generic and sensor-agnostic.</li>
+      <li><strong>Markers &amp; metadata</strong>: <code>MarkerEventV1</code> (session_id / marker_type / event / label / emitted_at_us / attributes) + <code>SessionMetadataRecord</code>, written through <code>publish_session_bundle</code> &rarr; <code>handlePublishSessionBundle</code> to deterministic <code>Marker/&lt;session_id&gt;/MarkerEventV1</code> and <code>Meta/&lt;session_id&gt;</code> topics.</li>
+      <li><strong>The session node</strong> already resolves N upstream stream ids and runs a client-side cue timeline that emits the marker bundle (it records nothing itself &mdash; the raw data is already in Kafka).</li>
+      <li><strong>Run discovery</strong>: <code>reconstruct_session.discover_runs</code> turns markers into selectable runs (<code>DiscoveredRun</code> with start_us/end_us), surfaced by the ML control plane's <code>list_recorded_runs</code> and consumed by MlPipeline. This is the seed of an &ldquo;experiment library.&rdquo;</li>
+      <li><strong>Historical read capability</strong> exists at the transport layer: <code>BrokerManager::createMessenger(topicInfo, startOffset)</code> supports <code>OFFSET_BEGINNING</code> / concrete offsets; <code>reconstruct_session.drain_emg_frames_for_window</code> is a working &ldquo;read history, window by <code>device_ts_us</code>&rdquo; primitive; <code>replay.py</code> paces a recording back onto Kafka.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>The gaps this plan must close</h2>
+    <ul>
+      <li>The session node has <strong>no output ports</strong> (backend validation forbids them) &mdash; markers + passthrough outputs are net-new.</li>
+      <li>Markers are <strong>write-only</strong>: nothing in the frontend renders them. No marker viewer/overlay exists.</li>
+      <li><code>startOffset</code> is <strong>never plumbed</strong> through the graph runtime, the WebSocket <code>subscribe</code> action, the C ABI, or the frontend &mdash; every consumer is hard-wired to live tail.</li>
+      <li>No <strong>time introspection</strong>: nothing calls <code>offsets_for_times</code> / watermark queries, so there is no way to know a stream's earliest available time or map timestamp &rarr; offset for scrubbing.</li>
+      <li>No <strong>timeline / playhead / transport</strong> UI. <code>ChannelFrameViewer</code> only windows already-received <em>live</em> samples; it cannot seek Kafka history.</li>
+      <li>Transform/combine workers have <strong>no time alignment</strong> (combine is FIFO). Correct multi-stream replay from an offset needs real timestamp alignment.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part A &mdash; The experiment node (markers output)</h2>
+    <p>
+      Generalize the existing <code>session</code> node into an <code>experiment</code> node with a single
+      <code>markers</code> output. (<strong>Decided:</strong> no passthrough port &mdash; a symbolic
+      &ldquo;looks-like-it-comes-from-the-experiment but reads the input&rdquo; output isn't worth the
+      complexity; if a user wants the data downstream they just draw the link from the source
+      themselves.)
+    </p>
+    <ul>
+      <li><strong>Inputs</strong>: one (or more) data streams to annotate/record (variadic, as today).</li>
+      <li><strong>Output <code>markers</code></strong>: the <code>MarkerEventV1</code> stream for this experiment's <code>session_id</code> (the existing marker topic). Downstream marker-aware nodes subscribe to it &mdash; a marker viewer, or a train node that uses markers as the label source.</li>
+      <li><strong>Config</strong>: the existing <code>SessionProtocol</code> (classes/timing) + experiment metadata (name, participant, notes) + a <strong>Record</strong> control. Reuse the cue engine and the <code>publish_session_bundle</code> pipeline verbatim.</li>
+      <li><strong>Backend</strong>: relax the node validation (which currently forbids <em>any</em> output on a session node) to permit the single declared <code>markers</code> port; resolve it &rarr; <code>stableStreamId</code> of <code>Marker/&lt;session_id&gt;</code>; add the catalog entry. Recording stays client-driven initially (reuse today's recorder), with a follow-up to move emission server-side and tie markers to real frame timestamps (see Part E).</li>
+      <li><strong>Frontend</strong>: rename/extend the session inspector to the experiment inspector; wire the <code>markers</code> output port and the record affordance.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part B &mdash; Markers as a first-class stream</h2>
+    <p>Markers are currently invisible; make them observable and consumable.</p>
+    <ul>
+      <li><strong>Marker renderer</strong>: subscribe to a <code>MarkerEventV1</code> stream and render cue/session events as (a) ticks/regions on the timeline (Part D) and (b) vertical annotation lines overlaid on data viewers at the marker timestamps &mdash; so a cue is visible in context while scrubbing.</li>
+      <li><strong>Descriptor-driven</strong>: extend the viewer registry so a stream whose schema is <code>MarkerEventV1</code> picks the marker renderer, consistent with the existing sensor-agnostic viewer selection.</li>
+      <li><strong>Markers as input to processing</strong>: a marker stream can feed a train node (explicit labeling in the graph instead of the implicit <code>reconstruct_session</code> discovery) and, later, a &ldquo;gate/segment&rdquo; node that slices data by cue windows.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part C &mdash; The time model (backend foundation)</h2>
+    <p>Give a graph run a <strong>time context</strong> and make the runtime able to honor it.</p>
+    <pre>TimeContext = {
+  mode: "live" | "replay",
+  start:  timestamp | offset | experiment_id,   // where the playhead begins (replay)
+  end?:   timestamp,                            // optional bound (an experiment window)
+  speed?: number | "max",                       // paced (1x, 2x, 0.5x) or as-fast-as-possible
+}</pre>
+    <ul>
+      <li><strong>Plumb <code>startOffset</code></strong> (already at <code>createMessenger</code>) through the <code>subscribe</code> action, the stream-graph start path, and the frontend. This is the enabling primitive: &ldquo;start this consumer at offset X / timestamp T&rdquo; instead of always live-tail.</li>
+      <li><strong>Time introspection</strong>: add a backend query for a stream's earliest/latest offset and <code>offsets_for_times</code> (rdkafka supports it) &mdash; so the UI knows the available history extent and can map a scrubbed timestamp &rarr; offset.</li>
+      <li><strong>Paced replay</strong>: a replay run delivers frames at a controlled rate (real-time or N&times;), or as-fast-as-possible for batch reprocessing (with a progress indicator). Model on <code>replay.py</code>'s wall-clock pacing, but as an in-runtime consumer mode rather than a re-injection CLI.</li>
+      <li><strong>Canonical clock</strong>: pick one time axis for scrubbing/alignment &mdash; <code>device_ts_us</code> for data frames, <code>emitted_at_us</code> for markers &mdash; with a defined mapping between them.</li>
+    </ul>
+    <h3>A <code>Timestamped</code> base for every message (decided)</h3>
+    <p>
+      Rather than special-case each schema's timestamp field, introduce a small virtual interface in
+      <code>libnatkit-core</code> &mdash; e.g. <code>Timestamped</code> with a <code>getTimestampUs()</code> &mdash; that
+      <em>every</em> message type implements (data frames return <code>device_ts_us</code>, markers return
+      <code>emitted_at_us</code>, meta records their created/updated time, etc.). Every message on the platform
+      should carry a timestamp, so the time model, scrubbing, alignment, and combine can all operate on one
+      uniform accessor instead of per-schema knowledge. This is the clean foundation for Parts D&ndash;E and
+      is worth doing early (it also tightens the descriptor <code>*_ts_us_path</code> conventions that already
+      exist in the node catalog).
+    </p>
+  </section>
+
+  <section>
+    <h2>Part D &mdash; Timeline &amp; transport UX</h2>
+    <p>The user-facing surface for time. Proposed as an always-available strip along the bottom of the canvas (collapsible), plus transport controls in the toolbar.</p>
+    <ul>
+      <li><strong>Timeline strip</strong>: a horizontal time axis spanning the source stream's available history (earliest &rarr; the live edge). Recorded <strong>experiments appear as labeled regions</strong>; their cues appear as <strong>marker ticks</strong>. A <strong>playhead</strong> marks the current position.</li>
+      <li><strong>Live edge</strong>: a glowing right edge with a &ldquo;&#9679; LIVE&rdquo; button. When the playhead is scrubbed back, the button snaps it to the head (the DVR affordance).</li>
+      <li><strong>Transport</strong>: play / pause / step, jump-to-live, scrub, speed (0.5&times;&ndash;4&times; + &ldquo;max&rdquo; for batch), and an optional loop-region for iterating on a segment.</li>
+      <li><strong>Time-range picker</strong> (Grafana-style): quick presets &mdash; &ldquo;Live (last 30 s)&rdquo;, &ldquo;Experiment X&rdquo;, &ldquo;Absolute range&rdquo;.</li>
+      <li><strong>Recording affordance</strong>: while an experiment node records live, a &ldquo;REC&rdquo; indicator and the region growing at the live edge.</li>
+    </ul>
+    <p>
+      <strong>Alternatives considered</strong> (open for discussion): (i) a Grafana-style range picker <em>only</em>, no scrub playhead &mdash; simplest, but weak for stepping through cues; (ii) a full multi-track DAW timeline (one lane per stream) &mdash; richest, but heavy to build and possibly overkill until multi-stream is common; (iii) the hybrid above &mdash; one timeline for the graph's primary time axis, with per-stream detail on demand. The plan recommends (iii).
+    </p>
+  </section>
+
+  <section class="warn">
+    <h2>Part E &mdash; Correct multi-stream replay (the hard dependency)</h2>
+    <p>
+      Live processing tolerates loose synchronization; historical replay does not. Two correctness
+      requirements gate trustworthy reprocessing:
+    </p>
+    <ul>
+      <li><strong>Aligned start</strong>: when replaying from time T, every input consumer must start at the offset corresponding to T (via <code>offsets_for_times</code>), not offset 0 &mdash; otherwise streams start at different wall-clock points.</li>
+      <li><strong>Time-aligned combine</strong>: the combine worker is FIFO today (&ldquo;mismatched cadences will silently misalign&rdquo;). Replay needs combine (and any multi-input node) to align by <code>device_ts_us</code>/<code>seq_no</code>, not arrival order.</li>
+      <li>Server-side marker emission (Part A follow-up) should stamp markers against real frame timestamps so cues line up with data on replay, independent of the browser wall clock.</li>
+    </ul>
+    <p>Single-stream replay works without this; multi-stream replay is only <em>correct</em> once alignment lands. Sequence the phases so single-stream replay ships first and multi-stream follows.</p>
+  </section>
+
+  <section>
+    <h2>Part F &mdash; Experiment library &amp; the end-to-end workflows</h2>
+    <ul>
+      <li><strong>Experiment library</strong>: generalize <code>list_recorded_runs</code> into a browsable list of recorded experiments (session_id + metadata + marker timeline + participating streams). Selecting one sets the graph's time context to that experiment's window and paints its region/markers on the timeline.</li>
+      <li><strong>Record &rarr; explore loop</strong>: record an experiment live; it appears in the library and on the timeline; switch the graph to replay, scrub to it, and run alternative processing chains over the same data to compare methods.</li>
+      <li><strong>Train / classify tie-in</strong>: experiment markers become the label source for a train node; a trained model's <code>model_path</code> wires into an <code>lda_classify</code> node to classify live (or over replayed history to evaluate).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Suggested phasing</h2>
+    <ul>
+      <li><strong>Phase 1 &mdash; Experiment node.</strong> Session node &rarr; experiment node with <code>data</code> (passthrough) + <code>markers</code> outputs; reuse cue engine + publish pipeline. Ships value immediately, no time model needed.</li>
+      <li><strong>Phase 2 &mdash; Marker rendering.</strong> Marker viewer + data-chart overlay; markers become visible. Independent of the time model.</li>
+      <li><strong>Phase 3 &mdash; Time foundation.</strong> Introduce the <code>Timestamped</code> base (uniform <code>getTimestampUs()</code>); plumb <code>startOffset</code> through subscribe + runtime + frontend; add time introspection (earliest/latest, offsets-for-times). Enable &ldquo;start a graph at a historical offset/timestamp&rdquo; (single stream).</li>
+      <li><strong>Phase 4 &mdash; Timeline &amp; transport UI.</strong> The strip, playhead, LIVE edge, experiment regions, transport, range picker &mdash; wired to the per-graph time context (hybrid: one primary axis + per-stream detail on demand).</li>
+      <li><strong>Phase 5 &mdash; Backend re-run replay + multi-stream alignment.</strong> Backend re-runs the chain from an offset with paced delivery (speed); aligned consumer starts and timestamp-aligned combine (Part E). Makes single- then multi-stream reprocessing correct.</li>
+      <li><strong>Phase 6 &mdash; Experiment library + workflows.</strong> Browser (reusing run discovery), select-to-time-context, compare-processing loop, train/classify integration.</li>
+      <li><strong>Phase 7 (later) &mdash; Safe result caching.</strong> Where processing is deterministic/pure, cache processed outputs and replay from cache to avoid re-running the whole chain; the Phase-5 re-run stays the source of truth and the fallback.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Decisions (resolved)</h2>
+    <ul>
+      <li><strong>1. Passthrough &mdash; dropped.</strong> Experiment node exposes only the <code>markers</code> output; users draw a data link from the source themselves if they want it downstream. Not worth the symbolic-rewire complexity.</li>
+      <li><strong>2. Time-context scope &mdash; per-graph.</strong> Each graph carries its own time context; the timeline widget reflects the selected graph.</li>
+      <li><strong>3. Live + historical mixing &mdash; deferred.</strong> Out of scope for v1; expected to need real experimentation to find a sane model. A run is entirely live or entirely replay for now.</li>
+      <li><strong>4. Canonical clock &mdash; via a <code>Timestamped</code> base.</strong> Every message implements <code>getTimestampUs()</code> (data &rarr; device_ts_us, markers &rarr; emitted_at_us). One uniform accessor for the whole time model. Built early (Part C).</li>
+      <li><strong>5. Replay engine &mdash; backend re-run first, cache later.</strong> Start by having the backend re-run the processing chain from a historical offset (correct and reuses the runtime, even if not the cheapest). Then incrementally add ways to <em>safely</em> cache processed results and replay from cache where the processing is deterministic/pure. Cache is an optimization layered on the re-run baseline, never the source of truth.</li>
+      <li><strong>6. natVR reuse.</strong> Reuse <code>reconstruct_session.discover_runs</code> for the experiment library (run discovery); build seek/replay into the C++ runtime so the live and historical paths share one engine.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Risks &amp; non-goals</h2>
+    <ul>
+      <li><strong>Risk:</strong> presenting time is where products like this usually get confusing. Mitigate by shipping the experiment node + markers (Phases 1&ndash;2) before any time UI, and by leaning on the familiar DVR/range-picker idioms rather than a bespoke metaphor.</li>
+      <li><strong>Risk:</strong> incorrect multi-stream replay silently produces misaligned results that look plausible. Gate multi-stream replay on Part E; label single-stream vs aligned-multi-stream clearly in the UI.</li>
+      <li><strong>Risk:</strong> Kafka retention bounds &ldquo;all of history.&rdquo; The timeline's left edge is the earliest retained offset, not the beginning of time; surface retention honestly.</li>
+      <li><strong>Non-goal:</strong> a second storage/replay system. Reuse Kafka history + the existing marker/metadata topics; do not build a parallel recording store.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Related: plans/in-process-transport-plan.html, plans/stream-graph-programming-plan.html,
+    plans/visual-programming-rework-plan.html, ADR 001 (worker-node processing), ADR 005 (node transport boundary).
+    Building blocks: StreamViewer/experiment.ts, MarkerEventV1, handlePublishSessionBundle,
+    reconstruct_session.discover_runs, createMessenger(startOffset).
+  </footer>
+</main>
+</body>
+</html>

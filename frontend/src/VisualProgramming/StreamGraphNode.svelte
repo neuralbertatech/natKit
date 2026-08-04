@@ -4,6 +4,7 @@
         CircleDot,
         ClipboardList,
         Cpu,
+        FileDown,
         GitBranch,
         LineChart,
         Maximize2,
@@ -35,8 +36,12 @@
         pendingConnection: { nodeId: string; portId: string } | null;
         // Renders a viewer node's live chart on the card when inline_graph is on.
         inlineViewerChart?: Snippet<[EditorGraphNode]>;
-        // Renders an experiment node's run panel on the card when inline_experiment is on.
+        // Renders the bound experiment's run panel on a markers node's card when
+        // inline_experiment is on.
         inlineExperiment?: Snippet<[EditorGraphNode]>;
+        // Label of the experiment bound to this board, for a markers node's meta
+        // line (the node itself carries no experiment config).
+        boundExperimentLabel?: string | null;
         // Friendly device names per stream id (from the metadata/device_id); a
         // source node prefers this over its raw stream id.
         streamDeviceNames?: Record<string, string>;
@@ -56,7 +61,7 @@
         onResize?: (nodeId: string, width: number, height: number) => void;
         // Toggles a viewer node's inline live graph from the node card itself.
         onToggleInlineGraph?: (nodeId: string, enabled: boolean) => void;
-        // Toggles an experiment node's inline run panel from the node card.
+        // Toggles a markers node's inline run panel from the node card.
         onToggleInlineExperiment?: (nodeId: string, enabled: boolean) => void;
         onSelect: (nodeId: string, event?: MouseEvent) => void;
         onStartDrag: (event: MouseEvent, nodeId: string) => void;
@@ -84,6 +89,7 @@
         pendingConnection,
         inlineViewerChart,
         inlineExperiment,
+        boundExperimentLabel,
         streamDeviceNames,
         inputPortLabels,
         markersPhantom,
@@ -103,8 +109,15 @@
     const showInlineGraph = $derived(
         node.kind === "viewer" && node.inline_graph === true,
     );
+    // The run panel lives on the markers node now that the experiment is a
+    // board-level object; a legacy `experiment` node keeps it so an unconverted
+    // board still records.
+    const isMarkerSource = $derived(
+        node.kind === "markers" || node.kind === "experiment",
+    );
     const showInlineExperiment = $derived(
-        node.kind === "experiment" && node.inline_experiment === true,
+        (node.kind === "markers" || node.kind === "experiment") &&
+            node.inline_experiment === true,
     );
 
     function handleNodeMouseDown(event: MouseEvent) {
@@ -237,7 +250,7 @@
         if (
             node.kind === "composite" ||
             node.kind === "viewer" ||
-            node.kind === "experiment"
+            isMarkerSource
         ) {
             onExpand?.(node.id);
         }
@@ -260,10 +273,12 @@
                 <Archive size={14} />
             {:else if node.kind === "composite"}
                 <Package size={14} />
-            {:else if node.kind === "experiment"}
+            {:else if isMarkerSource}
                 <ClipboardList size={14} />
             {:else if node.kind === "train"}
                 <Cpu size={14} />
+            {:else if node.kind === "export"}
+                <FileDown size={14} />
             {:else if node.kind === "param"}
                 <SlidersHorizontal size={14} />
             {:else}
@@ -387,11 +402,9 @@
                     {(node.input_port_ids?.length ?? 0)} in /
                     {(node.output_port_ids?.length ?? 0)} out</span
                 >
-            {:else if node.kind === "experiment"}
-                <span>{node.config.protocol.label}</span>
-                <span
-                    >{node.config.protocol.classes.length} classes · markers</span
-                >
+            {:else if isMarkerSource}
+                <span>{boundExperimentLabel ?? "No experiment bound"}</span>
+                <span>markers</span>
                 <div class="experiment-controls">
                     <button
                         type="button"
@@ -430,6 +443,9 @@
             {:else if node.kind === "train"}
                 <span>Train model</span>
                 <span>{node.config.families.join(", ") || "no families"}</span>
+            {:else if node.kind === "export"}
+                <span>Export {node.config.format}</span>
+                <span>label: {node.config.label_field || "label"}</span>
             {:else if node.kind === "param"}
                 <input
                     class="param-slider"

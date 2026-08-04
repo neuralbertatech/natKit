@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Script Nodes Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .warn { border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .risk { border-left: 4px solid var(--risk); background: var(--risk-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · rev 2 · July 28 2026</div>
+  <h1>Script Nodes: User Code as a Transform</h1>
+  <p class="meta lede">
+    A node whose behavior is <strong>user-authored code</strong>, evaluated at runtime, that transforms
+    stream data like any other transform. <strong>One execution venue</strong>: an embedded, sandboxed
+    interpreter inside the C++ transform worker, so a script node is simply
+    <em>a transform whose body you type</em> — same durable Kafka output, same provenance, same
+    recording and training eligibility, same error path. Full-power Python stays a separate,
+    admin-gated <em>worker node</em> rather than a second script runtime.
+  </p>
+  <span class="status">Runtime chosen by spike (QuickJS) · contract built · embedding next</span>
+</header>
+
+<main>
+
+<section>
+  <h2>1. Where this sits</h2>
+  <p>
+    Two pieces of prior work in this repo bear on it directly, and this plan is a continuation of both
+    rather than a new direction.
+  </p>
+  <div class="callout">
+    <p style="margin:0"><strong>The architecture was already decided.</strong> From the
+    visual-programming rework plan: <em>&ldquo;Script/worker nodes are the extensibility escape hatch.
+    Hot-path DSP stays compiled C++; arbitrary user processing runs as Python worker nodes on the
+    existing control-plane/worker infrastructure.&rdquo;</em> That is the design this plan implements.
+    It also matches the standing preference recorded elsewhere &mdash; build new platform capability in
+    C++, keep new Python out of the data path &mdash; because a script node is <em>user</em> code
+    rather than platform capability, and it runs in its own process rather than the C++ worker's.</p>
+  </div>
+  <div class="warn">
+    <p style="margin:0"><strong>The sequencing was deliberately deferred, and is now being reversed.</strong>
+    Resolved decision, 2026-07-08: <em>&ldquo;Script-node sandbox: deferred. Script/worker nodes
+    (Phase 6) move to the end, gated on a separate security review. v1 extensibility is data-driven
+    config over the compiled C++ transform catalog.&rdquo;</em> Moving it early is a scheduling call and
+    entirely reasonable &mdash; but the <em>reason</em> for the deferral (arbitrary code execution on
+    shared compute) does not go away with the schedule. §6 answers it rather than re-deferring it, and
+    the answer is what splits the two runners into different phases: the ClojureScript one is
+    sandboxed by construction and can ship now; the Python one needs process isolation first.</p>
+  </div>
+  <div class="prov">
+    <p style="margin:0"><strong>Revised in rev 2: one venue, not two.</strong> Rev 1 proposed a browser
+    runner (sandboxed ClojureScript via SCI) alongside a server runner. That is dropped. The browser
+    tier's real selling point was a fast authoring loop &mdash; but the debounced
+    <code>restart_stream_graph_node</code> path already built in Phase 7 delivers that at tens of
+    milliseconds on localhost, using the same loop every other transform config edit uses. What the
+    second venue actually bought was a divergence surface (two engines, two <code>nk</code>
+    implementations, two error paths), a semantic wrinkle (a browser script cannot produce a durable
+    channel under ADR-005, so some script nodes would be recordable and others not), and a graph that
+    silently stops working when no tab is open. §7 keeps the good part &mdash; a preview action against
+    the <em>same</em> engine &mdash; for a fraction of the cost.</p>
+  </div>
+</section>
+
+<section>
+  <h2>2. What already exists (do not rebuild)</h2>
+  <p>This lands on an unusual amount of finished machinery.</p>
+  <table>
+    <tr><th>Capability</th><th>Where</th><th>Status</th></tr>
+    <tr>
+      <td>External worker processes: registration, heartbeat, session enforcement, claim/report, restart accounting, drain/resume, operator CLI</td>
+      <td><code>libnatkit/scripts/natkit_ml_worker.py</code>, <code>natkit_ml_control_plane.py</code>, <code>natkit_ml_worker_operator.py</code></td>
+      <td><span class="phase-tag have">reuse as-is</span></td>
+    </tr>
+    <tr>
+      <td>Thread slots + queueing + per-job priority + SQLite scheduler state</td>
+      <td>control plane (worker-node-processing plan, Phases 1&ndash;3)</td>
+      <td><span class="phase-tag have">reuse as-is</span></td>
+    </tr>
+    <tr>
+      <td>Admin-owned shared/dedicated compute pools with a per-user entitlement</td>
+      <td>ADR-004; <code>shared_compute_access</code> on the user record</td>
+      <td><span class="phase-tag have">this is the authz spine for §6</span></td>
+    </tr>
+    <tr>
+      <td>Kafka transport from Python via the C ABI (the committed default, <code>NATVR_KAFKA_TRANSPORT=abi</code>)</td>
+      <td><code>libnatkit-kafka-abi.h</code>, <code>natVR/src/natvr/libnatkit_kafka.py</code>, <code>kafka_transport.py</code></td>
+      <td><span class="phase-tag have">a script worker's in/out</span></td>
+    </tr>
+    <tr>
+      <td>Backend ML proxy: browser ML actions relayed over <code>/ws/stream_viewer</code></td>
+      <td><code>StreamViewerWebSocket.cpp</code> (<code>ml_proxy</code>)</td>
+      <td><span class="phase-tag have">how a script job is submitted</span></td>
+    </tr>
+    <tr>
+      <td><code>runner</code> is already a free-form string in the node catalog (<code>kafka_source</code> | <code>cpp_dsp</code> | <code>frontend</code> | <code>kafka_sink</code> | <code>control_plane</code>)</td>
+      <td><code>StreamViewerWebSocket.cpp:1292</code></td>
+      <td><span class="phase-tag have">the extension point &mdash; add two values</span></td>
+    </tr>
+    <tr>
+      <td>Canonical channel frame + descriptor registry + provenance records</td>
+      <td><code>NatSignalFrameDataSchemaV1</code>, <code>DataSchemaDescriptorRegistry</code>, <code>TransformProvenanceRecord</code></td>
+      <td><span class="phase-tag have">the contract in §3</span></td>
+    </tr>
+    <tr>
+      <td>Debounced config edit &rarr; restart just that node + downstream, in a running graph</td>
+      <td><code>restart_stream_graph_node</code> (Phase 7, live-verified)</td>
+      <td><span class="phase-tag have">this IS the authoring loop</span></td>
+    </tr>
+    <tr>
+      <td>Script contract (frame schema, frame verbs, enforce-don't-emit rule)</td>
+      <td><code>frontend-cljs/src/main/natkit/script/contract.cljs</code></td>
+      <td><span class="phase-tag have">BUILT — 30 tests</span></td>
+    </tr>
+    <tr>
+      <td>Runtime choice, settled by measurement (QuickJS vs Lua: sandbox, interrupt, memory cap, throughput)</td>
+      <td><code>spikes/script-runtime/</code></td>
+      <td><span class="phase-tag have">SPIKE DONE — see §4</span></td>
+    </tr>
+  </table>
+  <p class="meta">
+    Net new work is therefore: a vendored interpreter + an embedding layer in the C++ transform worker,
+    one catalog entry, a code editor on the node, and a preview action. The scheduler, transport, authz,
+    descriptor spine and reactive-restart loop are all already there.
+  </p>
+</section>
+
+<section>
+  <h2>3. The contract</h2>
+  <p>A script is a <strong>pure function over one canonical channel frame</strong>:</p>
+<pre>stateless:  (fn [frame] frame')
+stateful:   (fn [state frame] {:state state' :frame frame'})
+
+frame = {:device_id "exg-01"
+         :seq_no 1234
+         :device_ts_us 1784308749619698
+         :sample_rate_hz 500
+         :channels [{:label "ch0" :samples [0.1 0.2 …]} …]}</pre>
+  <p>
+    That is <code>NatSignalFrameDataSchemaV1</code> &mdash; the shape every existing transform already
+    consumes and emits. The Python side is the same function with the same shape as a dict:
+    <code>def process(frame) -> frame</code>.
+  </p>
+
+  <h3>Why the contract is fixed, and enforced both ways</h3>
+  <div class="prov">
+    <p style="margin:0">
+      The whole system is descriptor-driven: connection compatibility, viewer selection, input-mapping
+      auto-pick and the &ldquo;recommended next&rdquo; list all read a node's <strong>output
+      descriptor</strong>. For a script node that descriptor must be known <em>without running the
+      script</em> &mdash; otherwise a script node could not be wired up until after it had executed, and
+      editing a script would silently invalidate everything downstream of it.
+    </p>
+    <p>
+      So: a script consumes a channel frame and produces a channel frame, and it advertises the
+      canonical descriptor statically. It may change channel count, labels and values freely &mdash;
+      that is the entire point &mdash; but not the <em>kind</em> of thing it emits. A script that
+      returns anything else is a <strong>node error</strong>, never a frame that reaches downstream
+      consumers: they trust the descriptor, so emitting a malformed frame would relocate the failure
+      somewhere far harder to diagnose. Both runners apply that check on their own side.
+    </p>
+  </div>
+  <p>
+    A pleasant consequence: because the viewer registry keys off the live frame <em>shape</em>, a script
+    that collapses each channel to one value automatically renders as a feature vector instead of a
+    waveform, with no configuration. That behavior is under test.
+  </p>
+
+  <h3>The toolkit a script gets</h3>
+  <p>
+    Bare <code>clojure.core</code>, <code>str</code>, <code>set</code>, <code>math</code>, and an
+    <code>nk</code> namespace of frame verbs and the statistics a feature-extraction script reaches for
+    first: <code>map-samples</code>, <code>map-channels</code>, <code>reduce-channels</code>,
+    <code>select-channels</code>, <code>channel-by-label</code>, <code>mean</code>, <code>rms</code>,
+    <code>variance</code>, <code>std</code>, <code>zero-crossings</code>, <code>diff</code>,
+    <code>sum</code>, <code>min-of</code>/<code>max-of</code>, <code>clamp</code>. A per-channel RMS
+    feature extractor is one line:
+  </p>
+<pre>(fn [frame] (nk/reduce-channels frame nk/rms))</pre>
+</section>
+
+<section>
+  <h2>4. One venue, chosen by measurement <span class="phase-tag have">SPIKE DONE</span></h2>
+  <p>
+    <code>spikes/script-runtime/</code> vendors Lua 5.4.7 and QuickJS, embeds each in a C harness, and
+    measures the three controls plus throughput on realistic frames. Run it with <code>make run</code>.
+    Every result was checked against a C reference implementation; both engines matched exactly.
+  </p>
+
+  <h3>Safety &mdash; both engines pass all three</h3>
+  <table>
+    <tr><th></th><th>host escapes denied</th><th>infinite loop</th><th>runaway allocation</th></tr>
+    <tr><td><strong>Lua 5.4.7</strong></td><td>6/6</td><td><strong>aborted @ 27.5 ms</strong> (instruction budget)</td><td><strong>denied cleanly</strong> (capping allocator)</td></tr>
+    <tr><td><strong>QuickJS</strong></td><td>7/7</td><td><strong>aborted @ 200 ms</strong> (wall-clock deadline)</td><td><strong>denied cleanly</strong> (<code>JS_SetMemoryLimit</code>)</td></tr>
+  </table>
+  <p class="meta">
+    Neither needed anything exotic. Lua: open only <code>base</code>/<code>table</code>/<code>string</code>/<code>math</code>,
+    drop <code>load</code>/<code>dofile</code>/<code>loadfile</code>, and <code>io</code>/<code>os</code>/<code>package</code>/<code>debug</code>
+    never exist in the state. QuickJS: core <code>quickjs.c</code> registers <em>no</em> I/O at all &mdash;
+    <code>std</code>/<code>os</code> live in <code>quickjs-libc</code>, which you simply do not link.
+  </p>
+
+  <h3>Throughput &mdash; ms per frame</h3>
+  <table>
+    <tr><th>case</th><th>floats</th><th>frames/s produced</th><th>Lua</th><th>QuickJS<br>plain arrays</th><th>QuickJS<br>Float32Array</th></tr>
+    <tr><td><code>emg-small</code> 3ch&times;50 @500Hz</td><td>150</td><td>10</td><td>0.005</td><td>0.017</td><td><strong>0.004</strong></td></tr>
+    <tr><td><code>emg-window</code> 8ch&times;256 @1kHz</td><td>2048</td><td>~4</td><td>0.050</td><td>0.178</td><td><strong>0.009</strong></td></tr>
+    <tr><td><code>eeg-wide</code> 32ch&times;1024 @1kHz</td><td>32768</td><td>~1</td><td>0.668</td><td>2.773</td><td><strong>0.050</strong></td></tr>
+  </table>
+
+  <h3>The interrupt tax &mdash; the finding that decided it</h3>
+  <table>
+    <tr><th></th><th>without interrupt</th><th>with interrupt</th><th>cost</th></tr>
+    <tr><td>Lua (<code>emg-window</code>)</td><td>0.050 ms</td><td>0.088 ms</td><td><strong>+76%</strong></td></tr>
+    <tr><td>QuickJS F32 (<code>emg-window</code>)</td><td>0.009 ms</td><td>0.010 ms</td><td><strong>~0%</strong> (noise)</td></tr>
+  </table>
+  <p>
+    Lua's count hook fires every N VM instructions and calls into C; QuickJS's handler is polled by the
+    interpreter loop far more cheaply. The interrupt is <strong>not optional in production</strong>, so
+    Lua's real figure is 0.088 ms/frame &mdash; making QuickJS+Float32Array about <strong>9&times;
+    faster than production-configured Lua</strong> on the mid case. This flips the intuition: Lua has the
+    simpler C API and the more proven sandbox, but you pay 76% for the one control you cannot ship
+    without.
+  </p>
+
+  <h3>What the numbers do and do not decide</h3>
+  <div class="callout">
+    <p style="margin:0">
+      <strong>Performance is not a feasibility question.</strong> Even the slowest configuration measured
+      (QuickJS plain arrays on <code>eeg-wide</code>, 2.77 ms/frame) has ~360&times; headroom over the
+      ~1 frame/s that case produces. natKit's frame rates are low &mdash; an EMG stream at 500 Hz with
+      50-sample frames is 10 frames/s. Nothing here is close to a bottleneck, so the choice rests on
+      safety cost and ergonomics, not speed.
+    </p>
+    <p>
+      <strong>But the margin matters where headroom shrinks</strong> &mdash; many script nodes on one
+      worker slot, or per-sample work heavier than RMS (FFT, resampling, convolution). That is where
+      5&ndash;13&times; is the difference between comfortable and not.
+    </p>
+  </div>
+  <div class="risk">
+    <p style="margin:0"><strong>Implementation constraint: samples must cross as <code>Float32Array</code>,
+    never as JS arrays.</strong> With plain arrays QuickJS is 3.5&ndash;4&times; <em>slower</em> than
+    Lua &mdash; the entire QuickJS case rests on TypedArrays. Construction is one
+    <code>JS_NewArrayBufferCopy</code> + <code>JS_NewTypedArray</code>: a single bulk memcpy instead of
+    <em>n</em> property sets. Get this wrong and the choice was wrong.</p>
+  </div>
+
+  <h3>Decision: QuickJS with Float32Array samples</h3>
+  <ol>
+    <li>Its interrupt is effectively free; Lua's costs 76%, and the interrupt is not optional.</li>
+    <li>TypedArrays give 5&ndash;13&times; headroom where it matters, and map 1:1 onto the sample buffers
+      natKit already has.</li>
+    <li>JS is widely known, and the same script would run natively in a browser if a scratch venue is
+      ever wanted after all.</li>
+  </ol>
+  <p class="meta">
+    Cost: 820 K vs 220 K of stripped static binary, and a more verbose C API. Lua remains defensible if
+    size or API simplicity dominates &mdash; but note the &ldquo;I want a Lisp&rdquo; argument does not
+    favour it: Fennel compiles to Lua and inherits the 76% hook tax, whereas <code>squint</code>/<code>cherry</code>
+    compile Clojure-flavoured source to plain JS at zero runtime cost. A Lisp surface is available on
+    both sides and is cheaper on the QuickJS side.
+  </p>
+
+  <h3>Rejected: embedding CPython</h3>
+  <div class="risk">
+    <p style="margin:0">
+      Not a judgement call &mdash; a capability gap. CPython has no per-interpreter resource governor and
+      no capability model: <code>import os</code> is always reachable, there is no interrupt, and there is
+      no memory cap. RestrictedPython is AST hardening rather than a security boundary; subinterpreters
+      (PEP 734) isolate <em>state</em>, not <em>capability</em>; the PyPy sandbox was removed years ago.
+      Embedding it would also put the GIL and arbitrary user code inside the process owning the DSP hot
+      path, where one hang or native-extension segfault takes down every unrelated transform sharing it.
+      Python's place is §6's worker node, in its own process.
+    </p>
+  </div>
+</section>
+
+<section>
+  <h2>5. What is already built <span class="phase-tag have">contract DONE</span></h2>
+  <p>
+    <code>frontend-cljs/src/main/natkit/script/contract.cljs</code> &mdash; the frame schema (malli), the
+    frame verbs, and <code>normalize-result</code>, which is what turns a contract violation into a node
+    error instead of a corrupt frame. Plus runnable starter scripts, so a new node opens with working
+    code rather than a blank editor. 30 of the suite's 97 tests cover it (510 assertions, green).
+  </p>
+  <div class="warn">
+    <p style="margin:0"><strong>Honest accounting on the SCI evaluator.</strong>
+    <code>natkit.script.sci</code> (~200 lines + tests) was built as the rev-1 browser runner. Under
+    rev 2's single venue it is <strong>not a shipping component</strong> — it becomes either an optional
+    scratch evaluator or is deleted, and the frame verbs get reimplemented as the JS <code>nk</code>
+    library. What survives is the <em>contract</em> and its enforcement rule, which is where the design
+    thinking was. It also earned its keep as a spike: the measurement that killed it &mdash; SCI cannot
+    be interrupted or memory-capped &mdash; is precisely the requirement that selected QuickJS.</p>
+  </div>
+  <h3>Three things the tests caught while building the contract</h3>
+  <ul>
+    <li><strong>Arity cannot be guessed by calling.</strong> The first cut tried <code>(f frame)</code>
+      and fell back to <code>(f state frame)</code> on error. Unsound: a wrong-arity call to an SCI fn
+      does <em>not</em> throw, it binds the missing parameter to <code>nil</code>, so a stateful script
+      silently bound <code>state=frame, frame=nil</code> and failed with a baffling message. The same
+      trap exists in JS &mdash; <code>Function.length</code> is the check, not a try/catch.</li>
+    <li><strong>A claimed limit that did not exist.</strong> The first cut used SCI's
+      <code>:realize-max</code> with a comment saying it bounded <code>(vec (range))</code>. It does not
+      (measured &mdash; the test OOM'd the runner). Removed rather than left in to imply protection it
+      does not give. Directly motivated §4's demand for a <em>measured</em> interrupt.</li>
+    <li><strong><code>(/ 1 nil)</code> is not a runtime error in ClojureScript</strong> &mdash; it yields
+      NaN, so the user-visible failure is a <em>contract</em> violation, not a stack trace. The JS
+      equivalent behaves the same way, so the error surface carries over.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>6. Isolation &mdash; the deferral reason, answered</h2>
+  <p>
+    This is what the 2026-07-08 decision was waiting on. Under one venue the answer is short, because
+    §4 measured it rather than asserting it.
+  </p>
+  <div class="callout">
+    <p style="margin:0"><strong>For script nodes the question is closed.</strong> All three controls are
+    real and verified in-tree: no ambient authority (7/7 host escapes denied &mdash; core QuickJS
+    registers no I/O to escape from), interruptible (<code>JS_SetInterruptHandler</code> aborted an
+    infinite loop on a wall-clock deadline), memory-capped (<code>JS_SetMemoryLimit</code> denied a
+    runaway allocation cleanly). Plus <code>JS_SetMaxStackSize</code> for runaway recursion. One
+    <code>JSRuntime</code> per script node, so there is no shared interpreter state and no global lock
+    &mdash; which suits the thread-slot model better than a GIL would.</p>
+  </div>
+  <p>
+    That means a script node needs <strong>no entitlement gate</strong>: a user cannot reach the host, cannot
+    hang the worker, and cannot exhaust its memory. Blast radius is one node's own budget. What remains
+    is operational hygiene rather than security &mdash; pick a sane per-frame time budget and memory cap,
+    surface a budget breach as a node error, and make both configurable.
+  </p>
+
+  <h3>Python's place: the worker node, not a script runner</h3>
+  <p>
+    Full-power Python (scipy, sklearn, torch) is still worth having, and your VP rework plan already
+    named it separately &mdash; &ldquo;script <em>/ worker</em> nodes&rdquo;, two things. Keeping them
+    apart is what lets script nodes be ungated and safe while Python stays a deliberate, admin-granted
+    capability:
+  </p>
+  <ol>
+    <li><strong>Entitlement gate (already built).</strong> ADR-004 gives admin-owned shared/dedicated
+      slots plus a per-user <code>shared_compute_access</code> flag. Gate worker-node submission on it and
+      default to a <em>dedicated</em> slot naming the submitting user. Real control, zero new code.</li>
+    <li><strong>Resource limits on the child.</strong> <code>RLIMIT_CPU</code>, <code>RLIMIT_AS</code>, a
+      wall-clock kill, no network by default. Bounds the blast radius of an accident, the common case.</li>
+    <li><strong>Container isolation.</strong> The requirement &mdash; not a nicety &mdash; once
+      non-admin users can submit. natKit already ships a control-plane image, so this is packaging.</li>
+  </ol>
+  <p class="meta">
+    Calibration: on a single-operator lab machine (1) + (2) is proportionate, because a Python worker node
+    is no more powerful than editing a transform and rebuilding. It stops being proportionate the moment
+    someone other than the admin can submit one.
+  </p>
+</section>
+
+<section>
+  <h2>7. Editor surface</h2>
+  <ul>
+    <li><strong>A code editor on the node.</strong> CodeMirror 6 with
+      <code>@codemirror/lang-javascript</code>. rvbbit uses CM5 + <code>react-codemirror2</code>; CM6 is
+      the current line.</li>
+    <li><strong>A preview action</strong> &mdash; this is what replaces rev 1's browser venue. The
+      inspector sends the script plus one captured frame over the existing WebSocket; the backend
+      evaluates it once in the <em>same</em> QuickJS configuration the worker uses and returns the output
+      frame (or the error). You get &ldquo;try it before you wire it&rdquo; for one new WS action, with
+      zero divergence risk, no second engine and no frame-feeding plumbing.</li>
+    <li><strong>Live editing rides the loop that already exists.</strong> A debounced config edit on a
+      running graph triggers <code>restart_stream_graph_node</code>, restarting just that node and its
+      downstream &mdash; the Phase-7 path, live-verified, identical to editing any transform's config.</li>
+    <li><strong>Inline result on the node card</strong> &mdash; output shape, elapsed ms, or the error
+      message with its phase. rvbbit's flow nodes show their value inline and it is the right idiom: a
+      script node's whole point is the feedback loop.</li>
+    <li><strong>A budget readout</strong> &mdash; time and memory used against the node's configured caps,
+      so approaching a limit is visible before it trips.</li>
+    <li>No stateful toggle needed: arity comes from <code>Function.length</code>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>8. Phasing</h2>
+  <p>
+    Single venue means this no longer interleaves with the frontend plan's canvas phases for its
+    <em>engine</em> work &mdash; only for its <em>UI</em>. It does break the CLJS frontend plan's
+    &ldquo;zero backend change&rdquo; property, so S1&ndash;S2 want their own commit series against the
+    <code>libnatkit</code> submodule.
+  </p>
+  <table>
+    <tr><th>Phase</th><th>Scope</th><th>Depends on</th><th>State</th></tr>
+    <tr>
+      <td><strong>S0</strong></td>
+      <td>The frame contract + runtime selection spike.</td>
+      <td>nothing</td>
+      <td><span class="phase-tag have">DONE</span></td>
+    </tr>
+    <tr>
+      <td><strong>S1</strong></td>
+      <td>Vendor <code>third-party/quickjs</code> (submodule, following the drogon/librdkafka pattern).
+        An embedding layer in the transform worker: one <code>JSRuntime</code> per script node,
+        interrupt + memory + stack limits, frame&harr;<code>Float32Array</code> marshalling, contract
+        enforcement on the output, errors mapped onto the existing node-status <code>message</code> field.
+        The <code>nk</code> helper library as one JS source compiled into the binary.</td>
+      <td>—</td>
+      <td>next</td>
+    </tr>
+    <tr>
+      <td><strong>S2</strong></td>
+      <td>Backend: <code>script</code> in the kind allow-list + validation + port normalization + a
+        catalog entry advertising <code>runner: script_qjs</code> with <code>source</code>,
+        <code>time_budget_ms</code> and <code>memory_limit_mb</code> config fields. Mirrors how the
+        <code>train</code> and <code>experiment</code> nodes were added. Plus the preview action.</td>
+      <td>S1</td>
+      <td>after S1</td>
+    </tr>
+    <tr>
+      <td><strong>S3</strong></td>
+      <td>The node's UI: CodeMirror inspector, inline result/error, budget readout, preview wiring.</td>
+      <td>S2 + frontend Phases 2&ndash;4</td>
+      <td>after S2</td>
+    </tr>
+    <tr>
+      <td><strong>S4</strong></td>
+      <td><em>Optional.</em> Clojure surface via <code>squint</code>/<code>cherry</code>: author in
+        Clojure, compile to JS in the browser, store both source and artifact on the node. Purely
+        additive &mdash; the engine never knows.</td>
+      <td>S3</td>
+      <td>nice-to-have</td>
+    </tr>
+    <tr>
+      <td><strong>W1</strong></td>
+      <td><em>Separate feature.</em> Python worker node: a sibling of <code>natkit_ml_worker.py</code>
+        that claims a job, consumes its input topic and produces its output channel through the Kafka
+        ABI, emits a <code>TransformProvenanceRecord</code>, and applies the §6 controls. This is the
+        scipy/sklearn escape hatch, not a script runner.</td>
+      <td>—</td>
+      <td>independent</td>
+    </tr>
+  </table>
+  <p class="meta">
+    S1&ndash;S3 ≈ 2&ndash;2.5 weeks, of which S1 is the only genuinely new engineering (the spike already
+    proved the mechanisms). W1 ≈ 1.5 weeks and can run in parallel or never.
+  </p>
+</section>
+
+<section>
+  <h2>9. Open decisions</h2>
+  <p>Two of rev 1's four are now closed by measurement. Defaults in <strong>bold</strong>.</p>
+  <ol>
+    <li><span style="color:#0b7a53;font-weight:600">CLOSED &mdash; Runtime:</span> QuickJS with
+      Float32Array samples, per the §4 spike. Lua measured as a viable alternative that loses on the
+      mandatory-interrupt tax.</li>
+    <li><span style="color:#0b7a53;font-weight:600">CLOSED &mdash; Venue:</span> one, embedded. The browser
+      runner is replaced by a preview action against the same engine.</li>
+    <li><span class="q">Default budgets:</span> <strong>50 ms per frame and 64 MB per script node</strong>,
+      both overridable per node. Generous next to the measured 0.010 ms/frame, and low enough that a
+      breach means a genuine bug. Worth a sanity check against the widest board you expect.</li>
+    <li><span class="q">Clojure surface (S4):</span> <strong>defer</strong> &mdash; ship JS, add
+      <code>squint</code> later if the appetite is real. It is purely additive and the engine is
+      indifferent.</li>
+    <li><span class="q">Python worker node (W1) at all?</span> <strong>Yes, eventually</strong> &mdash;
+      it is the scipy/sklearn reach a sandboxed interpreter will never give you. But it is now genuinely
+      optional rather than load-bearing, and it carries the isolation obligations in §6 that script nodes
+      no longer do.</li>
+    <li><span class="q">Stateful script state:</span> <strong>in-memory per run</strong>. The
+      <code>JSContext</code> persists across frames, so state is just an object. Checkpointing it across
+      restarts is possible (the worker infra already checkpoints job cancellation) but unmotivated.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>10. Acceptance</h2>
+  <p>
+    <strong>S3:</strong> a user drops a script node on a running graph, types
+    <code>frame =&gt; ({channels: frame.channels.map(c =&gt; ({label: c.label, samples: [rms(c.samples)]}))})</code>,
+    hits preview and sees the output frame, wires it up, and the downstream viewer plots a per-channel
+    feature vector live &mdash; having switched from waveform to feature-vector rendering on its own,
+    because the frame shape changed. A syntax error shows inline on the node and stops the script rather
+    than the graph. An infinite loop trips the time budget, marks the node <code>error</code> with the
+    reason, and leaves every other node running.
+  </p>
+  <p>
+    And the property that makes it a <em>transform</em> rather than a special case: its output is a
+    durable Kafka channel that a viewer taps, an experiment records, and a train node consumes &mdash;
+    indistinguishable downstream from a compiled C++ transform, carrying a provenance record that names
+    the script.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>natKit &mdash; Script Nodes Plan · rev 2, July 28 2026 (rev 1 proposed two runners, browser
+    ClojureScript + worker Python; rev 2 collapses to one embedded venue and selects the runtime by
+    measurement &mdash; see <code>spikes/script-runtime/</code>). Implements the script/worker-node
+    extensibility already specified in <code>plans/visual-programming-rework-plan.html</code> (Phase 6,
+    previously deferred) on the infrastructure delivered by
+    <code>plans/worker-node-processing-plan.html</code>. Constrained by ADR-004 (admin-owned compute
+    pools) and ADR-005 (node transport boundary). The frame contract is built in
+    <code>frontend-cljs/src/main/natkit/script/contract.cljs</code>; the runtime spike is in
+    <code>spikes/script-runtime/</code>. Record the isolation decision in
+    <code>.claude/decisions.md</code> &mdash; it supersedes the 2026-07-08 deferral.</p>
+</footer>
+</body>
+</html>

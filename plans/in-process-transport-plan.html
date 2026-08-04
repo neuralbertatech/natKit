@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit In-Process Transport Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · backend · plan · July 9 2026</div>
+  <h1>In-Process Transport for Colocated Graph Edges</h1>
+  <p class="meta">
+    Add an in-process message-queue transport for graph edges whose endpoints are provably colocated,
+    selected by the scheduler, behind the existing messenger interface. Realizes the boundary defined in
+    ADR 005 and honors the worker-node direction in ADR 001.
+  </p>
+  <span class="status">Phases 0&ndash;4 implemented (static: builds + gtest) · Phase 5 tie-in staged behind the colocation proof</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Implementation Principle</h2>
+    <ul>
+      <li>Keep transport choice orthogonal to correctness. Startup and topic resolution must never depend on which transport an edge uses.</li>
+      <li>Choose transport by <strong>provable colocation</strong> decided by the scheduler, never by composite membership (ADR 005).</li>
+      <li>Reuse the existing <code>MessagingQueue</code> / <code>TopicMessenger</code> interface. An in-process edge is a second <code>MessagingQueue</code> implementation, not a new abstraction bolted alongside Kafka.</li>
+      <li>Default to Kafka. An edge earns the in-process path only by proving it is safe; when in doubt, stay on Kafka.</li>
+      <li>Any edge that is exposed as a composite port, tapped by a viewer/sink, or recorded/replayed by a session/train node is <em>published</em> and must be on Kafka.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 0 &mdash; Decouple intra-graph resolution from Kafka discovery</h2>
+    <p><strong>Done.</strong> This removes the chained-transform startup race independently of transport, so later phases are a pure optimization rather than a correctness fix.</p>
+    <ul>
+      <li>Implemented: <code>findGraphInternalOutputTopicForStream</code> in <code>StreamViewerWebSocket.cpp</code> resolves an upstream transform/combine node's deterministic output topic from the in-process worker registries when Kafka broker metadata does not yet list it.</li>
+      <li>Implemented: <code>createTransformWorker</code> and <code>createCombineWorker</code> fall back to that resolver before failing; Kafka discovery remains the path for hardware <code>stream_source</code> inputs.</li>
+      <li>Implemented: <code>getOutputTopicInfo()</code> accessors on the transform and combine worker classes.</li>
+      <li>Implemented: the resolution decision is extracted into a pure, dependency-injected helper (<code>nat::tools::resolveGraphSourceTopic</code> in <code>tools/.../GraphTopicResolution.hpp</code>), which <code>createTransformWorker</code>/<code>createCombineWorker</code> route through and which <code>createTopicInfo</code> shares for deterministic topic identity.</li>
+      <li>Implemented: gtest regression coverage (<code>libnatkit-tools-unittest-cxx</code>, <code>GraphTopicResolutionTest.cpp</code>) &mdash; the first backend test target &mdash; asserting deterministic output-topic identity and that resolution falls back to the graph-internal topic when broker discovery has not yet materialized it.</li>
+      <li>Remaining: nothing for correctness. A full end-to-end test that starts a deep chained pipeline against a live broker would additionally cover worker wiring, but requires broker test infrastructure that does not yet exist.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 1 &mdash; In-process MessagingQueue implementation</h2>
+    <p><strong>Implemented.</strong> <code>nat::tools::InProcessMessagingQueue</code> (implements <code>core::MessagingQueue</code>) + <code>InProcessChannel</code>/<code>InProcessChannelRegistry</code> and a <code>createInProcessMessenger</code> factory in <code>tools/&hellip;/InProcessTransport.{hpp,cpp}</code>. Channels are keyed by <code>stableStreamId</code> (== topic id) so a producer and its consumers rendezvous without a broker; frames cross as reference-counted <code>message_t</code> handles (no broker round-trip). Single-producer / multi-consumer fan-out with per-subscriber FIFO slots. gtest <code>InProcessTransportTest.cpp</code> covers produce/consume ordering, fan-out (shared handle), drop-oldest bounding, block+close, teardown, and a full round-trip of a real schema through the <code>TopicMessenger</code>+<code>Registry</code> path a worker uses.</p>
+    <p>Introduce a same-process transport behind the existing interface, with no scheduler wiring yet.</p>
+    <ul>
+      <li>Add an <code>InProcessMessagingQueue</code> implementing <code>core::MessagingQueue</code>, backed by a shared bounded ring buffer keyed by a stable channel id (reuse the deterministic <code>stableStreamId</code> so a channel maps 1:1 to what would have been a Kafka topic).</li>
+      <li>Add a process-local registry of live in-process channels so a producer and its consumer(s) rendezvous by channel id.</li>
+      <li>Pass frames by reference-counted handle (no serialization) while keeping the same record types that cross the messenger boundary today, so a channel can be swapped for Kafka without touching node code.</li>
+      <li>Support single-producer / multi-consumer, since a node output can fan out to several downstream nodes.</li>
+      <li>Unit-test produce/consume, fan-out, and teardown in isolation.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 2 &mdash; Edge classification and colocation proof</h2>
+    <p><strong>Implemented.</strong> Pure, unit-tested <code>classifyPrivateOutputs</code> in <code>tools/&hellip;/GraphTransportPlan.hpp</code> runs over the <em>flattened</em> graph (so composite grouping cannot change transport, per ADR 005) and returns the producer outputs that are private + colocated. An output is private iff every consuming edge targets a transform/combine (no viewer/sink/session/train tap) and the injectable <code>areColocated</code> proof holds for each &mdash; <code>defaultColocationProof</code> returns true today. <code>executeStreamGraphStart</code> and <code>handleRestartStreamGraphNode</code> recompute this every run and pass per-edge <code>input_in_process</code>/<code>output_in_process</code> flags into <code>createTransformWorker</code>/<code>createCombineWorker</code>, which mint an in-process or Kafka messenger accordingly. A global kill-switch (<code>NATKIT_INPROCESS_TRANSPORT</code>) forces all-Kafka.</p>
+    <p>Give the runtime the two facts it needs to pick a transport per edge.</p>
+    <ul>
+      <li><strong>Published vs private:</strong> classify each edge. An edge is <em>published</em> if its source output is exposed via a composite output port, or its consumer is a viewer/sink/session/train node, or a top-level graph edge subscribes to it. Otherwise it is a candidate <em>private</em> edge.</li>
+      <li><strong>Colocation proof:</strong> an edge may use the in-process path only if the scheduler can prove both endpoints run in the same worker process. Until Phase 5 splits transforms onto separate worker processes, all graph nodes share the backend process, so the proof is trivially true &mdash; but it must be asked as a scheduler question, not assumed.</li>
+      <li>Transport decision = (private AND colocated) ? in-process : Kafka. Record the decision per edge in the graph runtime so status reporting and teardown can see it.</li>
+      <li><strong>React to edits:</strong> if a graph edit exposes a previously private edge (e.g. a new viewer is attached, or the subgraph is ungrouped), the edge must be re-classified and its channel promoted to Kafka on the next run.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 3 &mdash; Backpressure and buffering policy</h2>
+    <p><strong>Implemented.</strong> Each channel is bounded (default 256 frames, per frame not per sample; tunable via <code>NATKIT_INPROCESS_CHANNEL_CAPACITY</code>). Graph signal edges use <code>drop-oldest</code> (matches live-monitoring); <code>block</code> is available for lossless handoff. Per-channel <code>published</code>/<code>dropped</code>/<code>depth</code>/subscriber counts are surfaced per node in <code>makeGraphStatusJson</code> alongside a <code>transport: "in_process"|"kafka"</code> tag, on the same status surface Kafka transforms report. Teardown: a stopped producer closes + deregisters its channel (waking any blocked producer via <code>close()</code>); polling consumers drain then see empty, so nothing wedges.</p>
+    <p>In-process channels have no broker-side buffer, so the policy must be explicit.</p>
+    <ul>
+      <li>Bound each channel to a fixed capacity. On overflow, apply a per-channel policy: <code>drop-oldest</code> for real-time signal edges (matches live-monitoring semantics) vs <code>block</code> where lossless handoff is required.</li>
+      <li>Handle rate-changing stages (e.g. sliding window emits one frame per N samples) &mdash; buffering is per frame, not per sample, so window/feature stages need no special case beyond capacity sizing.</li>
+      <li>Surface per-channel drop counts and depth into the same worker-summary/status surface that Kafka transforms already report, so an overloaded in-process edge is observable.</li>
+      <li>Decide teardown ordering so a stopped producer drains or discards cleanly without wedging a blocked consumer.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 4 &mdash; Preserve tap-ability, recording, and replay</h2>
+    <p><strong>Implemented by construction.</strong> Because classification runs on every run, attaching a viewer/sink/session/train node to a formerly private edge re-classifies its producer output as published and promotes it to Kafka on the next run &mdash; the existing viewer/recording path then works with no frontend special case. Session and train nodes are published consumers, so a private in-process edge can never be a recording/replay source. The composite &ldquo;expose internal node as output port&rdquo; case is handled for free: after flattening it is just an edge to whatever taps it, so a viewer tap forces Kafka while a transform-only tap stays legitimately private regardless of grouping. (Accepted tradeoff, per ADR 005: an <em>ad-hoc</em> standalone tap on an intermediate private stream sees nothing until a viewer node is added and the graph re-run; the <code>NATKIT_INPROCESS_TRANSPORT=off</code> kill-switch restores universal tap-ability.)</p>
+    <p>Do not silently lose the observability Kafka gives.</p>
+    <ul>
+      <li>When a user attaches a viewer to an edge that is currently in-process, promote that edge to Kafka (or dual-write) so the existing viewer path keeps working with no special case in the frontend.</li>
+      <li>Ensure session recording and replay only ever read published (Kafka) edges; a private in-process edge is never a recording source.</li>
+      <li>Confirm the composite &ldquo;expose internal node as output port&rdquo; feature (e.g. the linear-envelope second output) forces its edge onto the published path.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Phase 5 &mdash; Worker-node migration tie-in</h2>
+    <p><strong>Staged.</strong> The colocation proof is already an injected predicate (<code>classifyPrivateOutputs</code>'s <code>areColocated</code>, defaulting to <code>defaultColocationProof</code> == always true). When ADR 001 Phase 4 lands slot placement, swap in a scheduler proof at the single call site in <code>classifyGraphPrivateOutputs</code>; a cross-slot consumer then answers false and its upstream falls back to Kafka automatically &mdash; no new transport, no other change. A unit test (<code>NonColocatedConsumerForcesKafka</code>) already exercises that fallback.</p>
+    <p>When ADR 001 Phase 4 moves EMG transforms off the Drogon process onto worker slots, the colocation proof stops being trivial.</p>
+    <ul>
+      <li>The scheduler must decide slot placement for graph nodes and only then can two nodes be known co-located.</li>
+      <li>Cross-slot / cross-node edges fall back to Kafka automatically under the Phase 2 rule &mdash; no new transport needed, consistent with &ldquo;Kafka is the cross-node data plane.&rdquo;</li>
+      <li>Optionally let the scheduler bias placement to co-locate a private chain on one worker to maximize in-process fast-path usage, subject to slot capacity and ownership policy (ADR 004).</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Risks and non-goals</h2>
+    <ul>
+      <li><strong>Non-goal:</strong> a websocket or any second network transport. Cross-node transport is Kafka (ADR 005).</li>
+      <li><strong>Risk:</strong> transport-dependent behavior differences (ordering, loss, latency) leaking into node logic. Mitigate by keeping node code transport-agnostic behind the messenger interface and testing each node against both transports.</li>
+      <li><strong>Risk:</strong> stale edge classification after graph edits causing a tapped edge to be silently private. Mitigate with the Phase 4 promotion path and re-classification on every run.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Related: ADR 005 (node transport boundary), ADR 001 (worker-node processing),
+    plans/worker-node-processing-plan.html, plans/stream-graph-programming-plan.html.
+  </footer>
+</main>
+</body>
+</html>

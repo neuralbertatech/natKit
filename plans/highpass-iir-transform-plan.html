@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit High-Pass IIR Transform Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 920px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · transforms · plan · July 3 2026</div>
+  <h1>High-Pass IIR Transform Plan</h1>
+  <p class="subtitle">
+    Add a new generic numeric-channel transform named <code>highpass_iir</code> that runs on the
+    descriptor-driven transform path, emits <code>NatSignalFrameDataSchemaV1</code>, and lets the
+    caller choose either a Butterworth design or a direct biquad high-pass section without bundling
+    rectification into the same operation.
+  </p>
+  <div class="meta">
+    Scope: Stream Viewer transform capability model, backend transform worker DSP path, frontend
+    transform controls, validation, and transform provenance.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Add <code>highpass_iir</code> as a new transform kind rather than overloading <code>highpass_rectify</code>.</li>
+      <li>Keep rectification as a separate transform concern, not a flag hidden inside the new high-pass transform.</li>
+      <li>Use <code>NatSignalFrameDataSchemaV1</code> as the derived output contract so the new transform remains chainable.</li>
+      <li>Treat <code>butterworth</code> as a response-family choice implemented internally as cascaded sections.</li>
+      <li>Treat <code>biquad</code> as a single configurable 2nd-order section with explicit <code>q</code>.</li>
+      <li>Keep the current <code>highpass_rectify</code> path temporarily for compatibility while the pure high-pass transform is introduced.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Implementation Progress</h2>
+    <ul>
+      <li><strong>2026-07-03:</strong> created this plan and fixed the transform boundary: the new work is a pure high-pass stage, while rectification remains separate.</li>
+      <li><strong>2026-07-03:</strong> started the first implementation slice in the Stream Viewer transform protocol, backend worker, and frontend transform controls.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Current state</h3>
+        <ul>
+          <li>The generic transform path already supports descriptor-based numeric channel inputs.</li>
+          <li>The backend currently exposes <code>bandpass_envelope</code> and <code>highpass_rectify</code>.</li>
+          <li>The runtime high-pass stage is only a one-pole filter inside the WebSocket worker.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Target state</h3>
+        <ul>
+          <li>A user can request a pure high-pass transform without implicitly rectifying the signal.</li>
+          <li>The transform config can choose between Butterworth and biquad IIR methods.</li>
+          <li>The new transform can run over any compatible descriptor-driven numeric channel frame.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>This should stay on the generic transform path, not reintroduce EMG-specific branching.</li>
+          <li>The first slice should improve capability and signal-processing fidelity without forcing a full transform-DSP library extraction in the same patch.</li>
+          <li>Compatibility for existing <code>highpass_rectify</code> clients should remain explicit during the transition.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Transform Contract</h2>
+    <p>
+      The new transform keeps the same input requirements as the existing numeric-channel transform
+      surface. Only the DSP config changes.
+    </p>
+    <table>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Notes</th>
+      </tr>
+      <tr>
+        <td><code>transform_kind</code></td>
+        <td>string</td>
+        <td><code>highpass_iir</code></td>
+      </tr>
+      <tr>
+        <td><code>config.cutoff_hz</code></td>
+        <td>number</td>
+        <td>Required positive cutoff frequency</td>
+      </tr>
+      <tr>
+        <td><code>config.iir_method</code></td>
+        <td>enum</td>
+        <td><code>butterworth</code> or <code>biquad</code></td>
+      </tr>
+      <tr>
+        <td><code>config.butterworth_order</code></td>
+        <td>integer</td>
+        <td>Used only when <code>iir_method=butterworth</code></td>
+      </tr>
+      <tr>
+        <td><code>config.biquad_q</code></td>
+        <td>number</td>
+        <td>Used only when <code>iir_method=biquad</code></td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Execution Model</h2>
+    <pre>source topic
+  -> descriptor compatibility check
+  -> normalize numeric channel frame
+  -> select highpass_iir config
+  -> build per-channel IIR state
+  -> apply Butterworth cascade or biquad section
+  -> emit NatSignalFrameDataSchemaV1
+  -> publish provenance with exact method/config</pre>
+    <p>
+      Butterworth and biquad share the same source and output frame model. The difference is only
+      the internal section design and state allocation.
+    </p>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <div class="status">New plan · active on 2026-07-03</div>
+    <ul>
+      <li><strong>Phase 1 · Protocol shape:</strong> add <code>highpass_iir</code> to capability discovery, request parsing, provenance serialization, and transform summaries.</li>
+      <li><strong>Phase 2 · Worker DSP:</strong> replace the one-pole-only high-pass branch for the new transform kind with configurable Butterworth and biquad IIR processing.</li>
+      <li><strong>Phase 3 · Frontend controls:</strong> add method selection plus conditional controls for Butterworth order and biquad Q.</li>
+      <li><strong>Phase 4 · Validation:</strong> reject invalid method values, non-positive cutoff, invalid orders, and invalid Q values before worker startup.</li>
+      <li><strong>Phase 5 · Follow-on cleanup:</strong> decide whether <code>highpass_rectify</code> becomes a compatibility preset over separate high-pass and rectify transforms or remains temporarily as a legacy combined action.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Whether a standalone <code>rectify</code> transform should be added immediately after this slice or in a follow-on patch.</li>
+      <li>How aggressively to move DSP helpers out of <code>StreamViewerWebSocket.cpp</code> into reusable core utilities once the first backend slice is stable.</li>
+      <li>Whether Butterworth order should be capped at a small fixed maximum in the public API or only in the current implementation.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>What Not To Do</h2>
+    <ul>
+      <li>Do not hide rectification inside the new high-pass transform.</li>
+      <li>Do not create a new output schema just because the filter method changed.</li>
+      <li>Do not add schema-name allowlists when the descriptor path model already expresses compatibility.</li>
+      <li>Do not silently reinterpret <code>biquad</code> and <code>butterworth</code> as equivalent user-visible methods.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  The immediate goal is a clean pure high-pass transform that fits the generic transform surface.
+  Rectification can then become an explicit downstream stage instead of an accidental side effect.
+</footer>
+</body>
+</html>

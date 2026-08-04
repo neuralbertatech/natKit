@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit ClojureScript Visual-Programming Frontend Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .warn { border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .risk { border-left: 4px solid var(--risk); background: var(--risk-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); padding: 12px 14px; border-radius: 8px; margin-top: 14px; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(0,0,0,.2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · frontend · plan · rev 3 · July 28 2026</div>
+  <h1>A ClojureScript Frontend for Visual Programming</h1>
+  <p class="meta lede">
+    Build a <strong>standalone frontend in ClojureScript</strong> whose entire scope is the Visual
+    Programming page: author, validate, run and observe stream graphs; record experiments; train and
+    classify. It speaks the <em>existing</em> <code>/ws/stream_viewer</code> protocol and
+    <code>/api/auth/*</code> &mdash; <strong>zero backend change</strong> &mdash; and adopts the
+    stack <em>and</em> the design language of
+    <a href="https://github.com/ryrobes/rvbbit">rvbbit</a>: reagent + re-frame, garden-driven
+    theming, and a dark neon direct-manipulation canvas. Not a visual port of the Svelte page &mdash;
+    a better-looking rebuild with behavioral equivalence where it counts.
+  </p>
+  <span class="status">Phase 0 done &mdash; Phase 1 in progress &mdash; code in <code>frontend-cljs/</code></span>
+</header>
+
+<main>
+
+<section>
+  <h2>1. Why this is tractable</h2>
+  <p>
+    The Visual Programming page is already a <strong>client of a data protocol</strong>, not a view
+    over an ORM. Everything it knows arrives as JSON over one WebSocket; everything it changes leaves
+    the same way. That protocol is the seam, and it is stable enough that the whole frontend below it
+    is replaceable without touching C++.
+  </p>
+  <p>
+    Second, the page is already <em>data-driven by design</em>. Per the visual-programming rework
+    (Phases 0&ndash;8, all landed), the palette and inspector render from the runtime
+    <code>list_node_catalog</code>, and viewer choice comes from a descriptor registry, never a sensor
+    name. There are no node-type unions to re-encode.
+  </p>
+  <p>
+    Third, the thing most in need of a rewrite is exactly the thing ClojureScript is good at.
+    <code>StreamGraphEditor.svelte</code> is <strong>6,326 lines</strong>, and a prior session
+    <em>tried and abandoned</em> splitting it further because canvas/palette/inspector/context-menu
+    share mutable interaction state (drag, pan, pending-connection, context-menu) that can't leave the
+    component. In a re-frame app that state is data in <code>app-db</code>, and the file decomposes
+    into ~20 namespaces on the first pass. That is the concrete, non-aesthetic payoff.
+  </p>
+  <div class="callout">
+    <strong>The bet:</strong> the graph editor becomes a set of <em>subscriptions</em> over one
+    inspectable <code>app-db</code> plus pure functions over graph data (geometry, flattening,
+    validation, cue schedules). Interaction becomes events (<code>[:node/drag-start id]</code>).
+    Everything hard to test today becomes trivially testable, and undo/redo comes almost free.
+  </div>
+</section>
+
+<section>
+  <h2>2. Scope</h2>
+  <h3>In scope</h3>
+  <ul>
+    <li>The Visual Programming page in full: graph library sidebar, toolbar, canvas (nodes, edges,
+      pan/zoom, connect, context menu, command palette), inspector for every node kind, run control,
+      live inline viewers, timeline/transport, experiment recording, train submit, classify wiring,
+      composites, param nodes, profiles.</li>
+    <li>The parts of the shared <code>StreamViewer/</code> layer VP depends on: the WS client, the
+      descriptor helpers, the viewer registry, the cue/experiment engine, and the eight viewer
+      surfaces VP renders on-canvas.</li>
+    <li>A minimal auth gate (session check + login form) so the app is usable standalone.</li>
+    <li>An rvbbit-flavored design system in garden (§6) &mdash; the visual identity, not a copy of the
+      Svelte CSS.</li>
+    <li>Dev + prod packaging (compose service, Dockerfile, nginx) alongside the Svelte app.</li>
+  </ul>
+  <h3>Explicitly not in scope</h3>
+  <ul>
+    <li>Porting <code>StreamViewer</code>, <code>MlPipeline</code>, <code>AdlExperiment</code>,
+      <code>ImuExperiment</code>, <code>Admin</code>, home/about. They stay in Svelte.</li>
+    <li>Any change to the C++ backend, the ML control plane, or the WS protocol. If the port wants a
+      protocol change, that's a separate plan &mdash; this one must be able to succeed without one.</li>
+    <li><strong>Visual parity with the Svelte page.</strong> Explicitly abandoned (see §6). Behavioral
+      and protocol equivalence still gate every phase; pixels do not.</li>
+    <li>Deleting the Svelte app. Retiring its VP page is the last phase, gated on function.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>3. Inventory &mdash; what actually has to be ported</h2>
+  <p>Measured line counts, grouped by how they port. This is the honest size of the job.</p>
+  <table>
+    <tr><th>Module</th><th>LOC</th><th>Role</th><th>Port character</th></tr>
+    <tr>
+      <td><code>VisualProgramming/page.svelte</code></td><td>1,002</td>
+      <td>WS lifecycle, per-stream live buffers + 200&nbsp;ms flush, ML-proxy state, props into the editor</td>
+      <td>Becomes <code>socket</code> (websocket-fx) + <code>buffers</code> + <code>db</code>. Mostly mechanical; the polling loop becomes re-pollsive.</td>
+    </tr>
+    <tr>
+      <td><code>StreamGraphEditor.svelte</code></td><td>6,326<br><span class="meta">3,099 script / 2,113 markup / 1,114 CSS</span></td>
+      <td>Everything: sidebar, toolbar, canvas, inspector, palette, context menu, timeline, recorder, composites, params, train, classify</td>
+      <td><strong>The job.</strong> Splits into ~20 namespaces. The 1,114 CSS lines are <em>discarded</em>, not lifted (§6).</td>
+    </tr>
+    <tr><td><code>StreamGraphNode.svelte</code></td><td>826</td><td>Node card: ports, resize, inline chart slot, inline experiment slot</td><td>One view fn + port-layout events. Redesigned per §6.</td></tr>
+    <tr><td><code>TimelineStrip.svelte</code></td><td>365</td><td>Transport + marker ticks/regions</td><td>Pure view over <code>experiment/time</code> output. Becomes the bottom transport bar.</td></tr>
+    <tr><td><code>ExperimentRunner.svelte</code></td><td>435</td><td>Participant-facing cue panel</td><td>Pure view over recorder state.</td></tr>
+    <tr>
+      <td>Pure TS logic: <code>composites</code> 650, <code>starterTemplates</code> 362,
+        <code>defaultComposites</code> 329, <code>streamGraph</code> 193, <code>timeContext</code> 190,
+        <code>compositeLibrary</code> 161</td>
+      <td>1,885</td>
+      <td>Graph geometry/ids/defaults, flatten/extract/instantiate, starter presets, time context, localStorage library</td>
+      <td><strong>Direct, test-covered port.</strong> Shrinks materially in Clojure.</td>
+    </tr>
+    <tr>
+      <td>Shared: <code>StreamViewer/types.ts</code> 1,042, <code>websocket.ts</code> 314,
+        <code>schemaDescriptor.ts</code> 346, <code>viewerRegistry.ts</code> ~150,
+        <code>experiment.ts</code> 390, <code>MlPipeline/types.ts</code> 332</td>
+      <td>2,574</td>
+      <td>Protocol contract, WS client, descriptor probing, viewer choice, cue engine</td>
+      <td>~1,400 is <em>pure type declarations that evaporate</em> (→ ~200 lines of malli); <code>websocket.ts</code> largely evaporates too (→ websocket-fx config). The rest is real logic.</td>
+    </tr>
+    <tr>
+      <td>Viewer surfaces VP renders: <code>ChannelFrameViewer</code> 859★,
+        <code>FeatureVectorViewer</code> 480, <code>ImuViewer</code> 434★, <code>MuseViewer</code> 341,
+        <code>SchemaDescriptorInspector</code> 254, <code>MarkerViewer</code> 238,
+        <code>ClassificationViewer</code> 199, <code>NodeConfigFields</code> 102</td>
+      <td>2,907</td>
+      <td>Live rendering. ★ = Chart.js</td>
+      <td>Two keep Chart.js (hot path, see §6.5); six are redesigned as hiccup/SVG.</td>
+    </tr>
+    <tr>
+      <td>Existing vitest suites (the executable spec): <code>composites</code> 381,
+        <code>viewerRegistry</code> 190, plus <code>experiment</code>, <code>timeContext</code>,
+        <code>starterTemplates</code>, <code>defaultComposites</code>, <code>channel</code></td>
+      <td>~1,100</td>
+      <td>28 passing assertions encoding real behavior</td>
+      <td><strong>Port these first.</strong> They are the contract for the whole port.</td>
+    </tr>
+  </table>
+  <p class="meta">
+    Total in scope ≈ <strong>13,000 lines</strong> of Svelte + TS. ~1,400 are type declarations that
+    disappear, ~2,500 are CSS now <em>discarded</em> rather than ported, and ~1,100 are tests that
+    become the spec. The genuinely new authoring is the editor's interaction surface, the inspector,
+    and the design system.
+  </p>
+</section>
+
+<section>
+  <h2>4. The protocol is the contract</h2>
+  <p>
+    The new app must speak exactly this and nothing more. All of it is implemented and live-verified
+    on the backend; the port consumes it unchanged.
+  </p>
+  <table>
+    <tr><th>Direction</th><th>Wire name</th><th>Purpose in VP</th></tr>
+    <tr><td>→ out</td><td><code>get_streams</code></td><td>Discover selectable source streams (+ descriptors)</td></tr>
+    <tr><td>→ out</td><td><code>list_node_catalog</code></td><td><strong>Single source of truth</strong> for the palette + inspector fields</td></tr>
+    <tr><td>→ out</td><td><code>list_stream_graphs</code>, <code>save_stream_graph</code>, <code>validate_stream_graph</code>, <code>get_stream_graph_status</code>, <code>start_stream_graph</code>, <code>stop_stream_graph</code>, <code>restart_stream_graph_node</code></td><td>Graph CRUD, validation, run control, incremental restart</td></tr>
+    <tr><td>→ out</td><td><code>list_profiles</code>, <code>save_profile</code>, <code>delete_profile</code></td><td>Person → saved classify graph</td></tr>
+    <tr><td>→ out</td><td><code>subscribe</code> / <code>unsubscribe</code> (+ <code>start_offset</code>), <code>query_stream_time</code></td><td>Live inline viewers; replay offset resolution</td></tr>
+    <tr><td>→ out</td><td><code>publish_session_bundle</code></td><td>Client-driven experiment recording (metadata + markers)</td></tr>
+    <tr><td>→ out</td><td><code>ml_proxy</code></td><td>Wraps a control-plane action (train submit, <code>list_thread_slots</code>, <code>list_recorded_runs</code>)</td></tr>
+    <tr><td>← in</td><td><code>stream_list</code>, <code>node_catalog</code>, <code>status</code>, <code>error</code></td><td>Discovery + errors</td></tr>
+    <tr><td>← in</td><td><code>stream_graph_list</code> / <code>_saved</code> / <code>_validation</code> / <code>_status</code> / <code>_started</code> / <code>_stopped</code></td><td>Graph + per-node runtime state, diagnostics</td></tr>
+    <tr><td>← in</td><td><code>profile_list</code> / <code>_saved</code> / <code>_deleted</code></td><td>Profiles</td></tr>
+    <tr><td>← in</td><td><code>frame</code> (generic) / <code>emg_data</code> (alias), <code>imu_data</code>, <code>imu_bulk_data</code>, <code>muse_data</code>, <code>muse_bulk_data</code>, <code>marker</code>, <code>stream_time</code></td><td>Live sample + marker feeds</td></tr>
+    <tr><td>← in</td><td><code>ml_control_plane</code> (envelope: <code>hello</code>, <code>workers</code>, <code>thread_slots</code>, <code>job_list</code>, <code>job_accepted</code>, <code>job_status</code>, <code>recorded_runs</code>, <code>error</code>)</td><td>Train job lifecycle, compute slots, experiment library</td></tr>
+  </table>
+
+  <h3>Three invariants the port must not break</h3>
+  <div class="prov">
+    <p style="margin:0"><strong>1. <code>editor_metadata</code> is an opaque round-trip.</strong>
+    The backend stores and returns it <em>verbatim</em> (it holds the unflattened composite editor
+    tree, which is how a composite graph reloads from the backend alone with no localStorage). Any key
+    renaming &mdash; snake_case → kebab-case in and back &mdash; silently corrupts it.
+    <strong>Decision: keep wire keys verbatim as snake_case keywords end-to-end</strong>
+    (<code>:graph_id</code>, <code>:output_stream_id</code>). No global key transformation. This is
+    un-Clojure-y and it is correct; one round-trip test on a captured payload pins it.</p>
+  </div>
+  <div class="risk">
+    <p style="margin:0"><strong>1b. Only plain FIELD NAMES may become keywords</strong> (found in
+    Phase 1, against captured payloads). <code>(js-&gt;clj x :keywordize-keys true)</code> turns a key
+    containing a slash into a <em>namespaced</em> keyword, and writing it back with
+    <code>clj-&gt;js</code> emits only the name &mdash; so
+    <code>"source/13793649670644-1785250699870"</code> silently becomes
+    <code>"13793649670644-1785250699870"</code>. natKit node ids routinely contain a slash
+    (<code>source/&hellip;</code>, <code>viewer/&hellip;</code>, <code>composite/&hellip;</code>,
+    <code>param/1</code>) and <code>node_statuses</code>, <code>node_diagnostics</code> and
+    <code>edge_diagnostics</code> are all keyed BY NODE ID &mdash; three of five
+    <code>node_statuses</code> keys in a real captured payload hit this. The rule: keywordize a key
+    only when it matches <code>^[A-Za-z_][A-Za-z0-9_]*$</code>, leave every other key a string. That
+    also lands on the right semantics &mdash; field names keywordize, identifier keys stay strings,
+    and every id-keyed lookup table is accessed with the raw id.</p>
+  </div>
+  <p><strong>2. The node catalog stays the source of truth.</strong> No <code>TransformKind</code>-style
+    union in the new app either. Adding a C++ transform must remain a zero-frontend-change event.</p>
+  <p><strong>3. Viewer choice is descriptor-driven.</strong> <code>chooseViewerRenderer</code> keys off
+    descriptor/channel-label shape, never a schema or sensor name. Its 10 unit cases port verbatim
+    even as the visuals change.</p>
+</section>
+
+<section>
+  <h2>5. Toolchain &mdash; decided</h2>
+  <p class="meta">
+    Verified on this machine: <strong>Clojure CLI 1.12.5.1664</strong>, Java 25, Node, and babashka
+    are installed (<code>~/.m2</code> is empty and will populate on first run).
+  </p>
+
+  <h3>5.1 Build &mdash; shadow-cljs, deps from <code>deps.edn</code></h3>
+  <p>
+    shadow-cljs for the build (npm interop is the whole point: Chart.js and any React widget come
+    straight from <code>node_modules</code>), with dependencies declared in <code>deps.edn</code> via
+    <code>:deps true</code> in <code>shadow-cljs.edn</code>. Now that the Clojure CLI exists, that
+    gives one dependency file that also serves <code>clj -M:test</code>, clj-kondo, cljfmt and nREPL
+    tooling. rvbbit runs plain <code>:dependencies</code> inside <code>shadow-cljs.edn</code>; either
+    works, and <code>deps.edn</code> is the better default here.
+  </p>
+  <p class="meta">
+    Rejected: figwheel-main (weaker npm interop, and shadow is what the reference project uses);
+    squint/cherry (no JVM needed, but not real ClojureScript &mdash; no full macro system, no
+    <code>core.async</code>, different stdlib &mdash; wrong trade for a 13k-line port leaning on
+    malli and re-frame).
+  </p>
+
+  <h3>5.2 Renderer + state &mdash; reagent + re-frame <span class="phase-tag have">decided</span></h3>
+  <p>
+    <strong>This supersedes the earlier Replicant recommendation.</strong> The deciding factor is the
+    rvbbit target: rvbbit is a re-frame app, and its supporting library set is not incidental &mdash;
+    it maps almost one-to-one onto things the VP page already does by hand. Adopting the stack means
+    inheriting the infrastructure along with the look.
+  </p>
+  <table>
+    <tr><th>rvbbit dependency</th><th>What natKit VP does today</th><th>What it buys</th></tr>
+    <tr><td><code>reagent 1.1.1</code> + <code>re-frame 1.4.3</code></td><td>Svelte 5 runes; interaction state trapped in a 6.3k-line component</td><td>One inspectable <code>app-db</code>; events + subscriptions; the decomposition that was previously blocked</td></tr>
+    <tr><td><code>websocket-fx</code> <span class="phase-tag gap">rejected in build</span></td><td>Hand-rolled <code>StreamViewerWebSocket</code> class: reconnect, backoff, dispatch table (314 lines)</td><td><strong>Does not fit</strong> — see the note below. Replaced by ~100 lines of hand-rolled re-frame effects.</td></tr>
+    <tr><td><code>re-pollsive</code></td><td><code>setInterval</code> at 500&nbsp;ms driving <code>get_stream_graph_status</code> every 1&nbsp;s</td><td>Polling as declarative re-frame events, pausable on disconnect</td></tr>
+    <tr><td><code>day8.re-frame/undo</code></td><td><strong>Nothing</strong> &mdash; the graph editor has no undo</td><td>Undo/redo on a node-graph editor, nearly free. A genuine feature win.</td></tr>
+    <tr><td><code>re-pressed</code></td><td>A hand-written <code>handleWindowKeydown</code></td><td>Declarative keybindings, incl. the ⌘K palette</td></tr>
+    <tr><td><code>garden</code></td><td>~2,500 lines of scoped CSS</td><td>Theme as a Clojure map → runtime theming (§6)</td></tr>
+    <tr><td><code>re-com</code></td><td>Hand-rolled flex CSS everywhere</td><td>Layout primitives (h-box/v-box/gap), so §6 is about identity not plumbing</td></tr>
+    <tr><td><code>react-zoom-pan-pinch</code></td><td>Hand-rolled pan/zoom + wheel handling</td><td>Canvas pan/zoom, well-trodden</td></tr>
+    <tr><td><code>cljs-drag-n-drop</code>, <code>re-frame-window-fx</code>, <code>breaking-point</code></td><td>Hand-rolled pointer/resize plumbing</td><td>Drag, window events, responsive breakpoints</td></tr>
+  </table>
+  <div class="risk">
+    <strong>Correction from the build (Phase 0):</strong> <code>websocket-fx</code> was tried and
+    <strong>rejected</strong>. It imposes its own envelope on every frame &mdash;
+    <code>{:id &lt;uuid&gt; :proto :request|:subscription|:push :data &lt;payload&gt;}</code> &mdash;
+    and routes inbound frames by matching <code>:id</code> against an outstanding request or an open
+    subscription. natKit's protocol is flat and mostly push-driven: outbound is
+    <code>{"action": &hellip;}</code>, inbound is <code>{"type": &hellip;}</code>, and most inbound
+    frames are <em>unsolicited</em> broadcasts (<code>stream_graph_status</code>, live frames,
+    <code>ml_control_plane</code> relays) that correlate to no request id. Under websocket-fx those
+    frames route nowhere, so adopting it would have meant changing the backend protocol &mdash;
+    explicitly out of scope. <code>protocol/socket.cljs</code> is the ~100 lines that actually apply
+    (connect, exponential backoff, send, inbound dispatch). Every other row of the table stands.
+  </div>
+  <p>
+    <strong>Decision: mirror that stack.</strong> The Phase-0 renderer spike is
+    <strong>cancelled</strong> &mdash; there is no longer a question to answer. Replicant would have
+    meant re-implementing every row of that table by hand for an aesthetic gain that the rvbbit target
+    makes moot.
+  </p>
+  <div class="warn">
+    <strong>Adopt rvbbit's stack and aesthetic, not its file layout.</strong> rvbbit's
+    <code>bricks.cljs</code> is 1.35&nbsp;MB, <code>views.cljs</code> 565&nbsp;KB,
+    <code>flows.cljs</code> 364&nbsp;KB. Escaping a 6,326-line file is a <em>primary motivation</em>
+    for this port &mdash; keep the ~20-namespace decomposition in §7 and treat any namespace crossing
+    ~800 lines as a smell.
+  </div>
+
+  <h3>5.3 Data validation &mdash; malli</h3>
+  <p>
+    Schemas for the inbound message union, the outbound action union, and
+    <code>StreamGraphDefinition</code>. Used in tests (against golden payloads captured from the live
+    backend) and as a <em>dev-only</em> assertion at the socket boundary, compiled out of release via
+    <code>goog.DEBUG</code>. ~1,400 lines of TS interfaces become ~200 lines of data that also
+    validates at runtime.
+  </p>
+
+  <h3>5.4 Charts &mdash; Chart.js on the hot path, free choice elsewhere</h3>
+  <p>
+    rvbbit reaches for recharts / nivo / vega-lite. Those are React+SVG and are the right call for
+    static or low-rate visuals &mdash; but <strong>not</strong> for a 20-second rolling waveform being
+    fed frames continuously, which is what <code>ChannelFrameViewer</code> and
+    <code>ImuViewer</code> do. Those two keep Chart.js behind a single lifecycle wrapper (create on
+    mount, <code>.update</code> with <code>{:duration 0}</code>, destroy on unmount). The
+    low-rate surfaces &mdash; classification bars, feature vectors, markers, descriptor inspector
+    &mdash; are redesigned as plain hiccup/SVG, where the rvbbit look is easiest to hit anyway.
+  </p>
+
+  <h3>5.5 Icons and the command palette</h3>
+  <p>
+    Inline the ~30 lucide SVG paths the editor uses into an <code>icons</code> map (kills a JS dep).
+    <code>cmdk-sv</code> is Svelte-only; the palette becomes a ~120-line filtered list over
+    <code>re-pressed</code> keybindings &mdash; the catalog it filters is already plain data. rvbbit's
+    right-click context palette is the interaction model to copy here.
+  </p>
+
+  <h3>5.6 Tests &mdash; cljs.test on <code>:node-test</code></h3>
+  <p>
+    Port all seven vitest suites first. Add golden-payload round-trips using real captured
+    <code>node_catalog</code> / <code>stream_graph_list</code> JSON &mdash; the same technique already
+    used for the C-ABI golden vectors and the marker-ABI real-payload tests.
+  </p>
+</section>
+
+<section>
+  <h2>6. Design language &mdash; rvbbit-flavored</h2>
+  <p>
+    Parity with the Svelte page is <strong>explicitly abandoned</strong>. The target is rvbbit's feel:
+    <em>&ldquo;Part Blade Runner, part living whiteboard, part movie Hacker terminal&rdquo;</em> &mdash;
+    a direct-manipulation canvas that reads as a game engine rather than a form. What follows is
+    derived from rvbbit's own flow editor and board screenshots (<code>docs/ffl.jpg</code>,
+    <code>docs/sigsol.jpg</code>, <code>docs/rvbbit-dev-mosiac.jpg</code>), which is fortunate:
+    rvbbit's flow editor <em>is</em> a node-graph editor with ports, curved edges, an inspector panel
+    and a transport bar &mdash; the same object as natKit's VP canvas.
+  </p>
+
+  <h3>6.1 Surfaces</h3>
+  <ul>
+    <li><strong>Translucent dark panels over a backdrop.</strong> Near-black surfaces
+      (<code>rgba(10,12,20,.82)</code>) with <code>backdrop-filter: blur()</code>, floated over an
+      optional wallpaper/backdrop layer that shows through. Rounded ~10&nbsp;px outer panels; small
+      radii on inner boxes.</li>
+    <li><strong>1&nbsp;px accent borders, no heavy shadows.</strong> Structure comes from thin bright
+      lines and translucency, not elevation.</li>
+    <li><strong>Nested boxes render nested data.</strong> rvbbit draws a nested structure as nested
+      bordered cards (see the <code>:or</code>/<code>:and</code> signal editor). natKit's transform
+      config, session protocol and train spec are all nested maps &mdash; use the same idiom instead
+      of flat form rows.</li>
+    <li><strong>Dense, low-chrome lists</strong> with a search filter at the top, value right-aligned
+      per row, selected row boxed.</li>
+    <li><strong>Tab strip</strong> across the top of a panel for the sidebar's modes (graphs /
+      experiments / composites / profiles), active tab lighter + underlined.</li>
+    <li><strong>Toast stack, bottom-right</strong> for connection events, validation results and job
+      status &mdash; replaces today's single floating error banner.</li>
+  </ul>
+
+  <h3>6.2 Type</h3>
+  <p>
+    Mixed, not mono-everywhere: a geometric sans for labels, titles and prose; monospace for
+    identifiers, values, stream ids, code and numeric readouts. Small sizes, generous line-height in
+    lists, low-contrast secondary text. Big soft display type for the current graph's name in the
+    canvas's top-right corner (rvbbit puts the flow name there) and for headline numbers
+    (accuracy, frame counts).
+  </p>
+
+  <h3>6.3 Color &mdash; one accent per graph</h3>
+  <p>
+    rvbbit's boards each read as a single-accent scene (hot magenta, cyan, amber, purple) against
+    near-black. Do the same: derive a <strong>per-graph accent</strong> (hashed from
+    <code>graph_id</code>, overridable in graph metadata) and drive borders, port dots, selected
+    states and the primary chart series from it. Semantic colors stay fixed so status never depends on
+    the accent:
+  </p>
+  <table>
+    <tr><th>Role</th><th>Value</th><th>Applies to</th></tr>
+    <tr><td><span class="swatch" style="background:#0a0c14"></span>Surface</td><td><code>rgba(10,12,20,.82)</code> + blur</td><td>Panels, node cards, inspector</td></tr>
+    <tr><td><span class="swatch" style="background:#00e5ff"></span>Data edge / live</td><td>cyan <code>#00e5ff</code></td><td>Solid data edges, <code>running</code> node border, live port dots</td></tr>
+    <tr><td><span class="swatch" style="background:#ffab70"></span>Provenance edge</td><td>salmon <code>#ffab70</code>, <em>dashed + thick</em></td><td>The <code>edge_kind "provenance"</code> lineage edges</td></tr>
+    <tr><td><span class="swatch" style="background:#c792ea"></span>Selection</td><td>violet <code>#c792ea</code></td><td>Selected node/edge outline, multi-select box</td></tr>
+    <tr><td><span class="swatch" style="background:#ff5370"></span>Error / blocked</td><td>red <code>#ff5370</code></td><td>Diagnostics, <code>error</code>/<code>blocked</code> node states</td></tr>
+    <tr><td><span class="swatch" style="background:#ffcb6b"></span>Warning / stalled</td><td>amber <code>#ffcb6b</code></td><td>Warnings, <code>stalled</code>, <code>starting</code></td></tr>
+    <tr><td><span class="swatch" style="background:#546e7a"></span>Muted</td><td>slate <code>#546e7a</code></td><td><code>draft</code>/<code>stopped</code>, secondary text, grid</td></tr>
+  </table>
+  <div class="callout">
+    <strong>Free win:</strong> rvbbit's flow editor already distinguishes edge kinds by
+    <em>solid thick curve</em> vs <em>thick dashed curve</em>. natKit needs exactly that distinction
+    &mdash; data edges vs the provenance edges from the provenance-edges plan &mdash; and currently
+    conveys it with a subtle CSS class on a thin path. Adopting the rvbbit treatment makes lineage
+    legible at a glance.
+  </div>
+
+  <h3>6.4 The canvas</h3>
+  <ul>
+    <li><strong>Node cards:</strong> compact, translucent, 1&nbsp;px accent border, monospace title,
+      an inline value/status readout, and round port dots on the card edge. Selected = violet outline
+      + a corner ✕. Runtime state colors the border, not a separate badge.</li>
+    <li><strong>Edges:</strong> thick beziers &mdash; solid for data, dashed for provenance
+      &mdash; with a visible glow on the running path. Chunky and high-contrast; rvbbit's edges are
+      unmissable and natKit's currently are not.</li>
+    <li><strong>Transport bar</strong> pinned to the bottom of the canvas: play / stop / clock /
+      save / layout, matching rvbbit's flow controls. This is where natKit's start/stop and the
+      timeline scrubber belong.</li>
+    <li><strong>Right-click context palette</strong> as the primary way to add nodes, with the ⌘K
+      palette and sidebar as secondary surfaces (all three already exist and are catalog-driven).</li>
+    <li><strong>Optional backdrop layer</strong> behind the grid. Cheap to implement, and it is a
+      large part of why rvbbit looks the way it does. Ship one tasteful default plus off.</li>
+  </ul>
+
+  <h3>6.5 Theme as data</h3>
+  <p>
+    rvbbit's theming is &ldquo;fully data-driven &mdash; you can style or re-skin your boards on the
+    fly, or even control the theme via the output of a query.&rdquo; Implement the theme as a Clojure
+    map in <code>app-db</code>, compiled to CSS by garden. That yields dark/light/high-contrast
+    switching for free and leaves the door open to the genuinely interesting version later: a
+    <em>classifier's live output driving the theme</em>, which for a biosignal tool is a real
+    demo, not a gimmick.
+  </p>
+  <p class="meta">
+    Scope guard: the design system is one namespace plus a theme map, built in Phase 2 and refined
+    thereafter. It is not a phase of its own, and it is not a component library &mdash; re-com covers
+    layout.
+  </p>
+</section>
+
+<section>
+  <h2>7. Target layout</h2>
+  <p>
+    Everything above <code>ui/</code> is renderer-agnostic and node-test-able. Views are thin;
+    <code>app-db</code> plus pure functions carry the weight.
+  </p>
+<pre>frontend-cljs/
+  deps.edn                   dependency source of truth (shadow reads it via :deps true)
+  shadow-cljs.edn            :app (:browser) + :test (:node-test) + :nrepl
+  package.json               chart.js, react, react-zoom-pan-pinch, shadow-cljs
+  resources/public/          index.html, backdrop assets
+  src/main/natkit/
+    core.cljs                init-fn, mount, auth gate
+    db.cljs                  app-db shape + defaults + malli spec for it
+    events.cljs subs.cljs    the re-frame surface (thin; delegates to pure ns below)
+    protocol/
+      wire.cljs              json &lt;-&gt; clj codec — VERBATIM snake_case keys
+      schema.cljs            malli: message union, action union, graph definition
+      socket.cljs            websocket-fx config + inbound message -&gt; event routing
+      ml_proxy.cljs          ml_proxy send + ml_control_plane fan-in
+    auth.cljs                /api/auth/session|login|logout
+    stream/
+      buffers.cljs           per-stream buffers, refcounted subs, capped flush tick
+      descriptor.cljs        &lt;- schemaDescriptor.ts
+      viewer_registry.cljs   &lt;- viewerRegistry.ts
+    graph/
+      model.cljs             &lt;- streamGraph.ts  (geometry, ids, defaults, provenance ports)
+      composite.cljs         &lt;- composites.ts   (flatten / extract / instantiate / param nodes)
+      library.cljs           &lt;- compositeLibrary.ts (localStorage + import/export)
+      starters.cljs          &lt;- starterTemplates.ts + defaultComposites.ts
+      validate.cljs          client-side connect rules + descriptor compatibility
+    experiment/
+      protocol.cljs          &lt;- experiment.ts (cue schedule, marker + metadata payloads)
+      recorder.cljs          session recording state machine (lifted out of the editor)
+      time.cljs              &lt;- timeContext.ts (live / record / replay, playhead, ticks)
+    theme.cljs               the theme map + garden stylesheet  (§6)
+    ui/
+      icons.cljs shell.cljs sidebar.cljs toolbar.cljs transport.cljs toasts.cljs
+      canvas.cljs edges.cljs node_card.cljs palette.cljs context_menu.cljs
+      inspector/ source transform combine experiment train classify param viewer graph
+      config_fields.cljs     &lt;- NodeConfigFields (nested-card idiom, §6.1)
+      timeline.cljs experiment_runner.cljs
+      chart.cljs             the single Chart.js lifecycle wrapper
+      viewers/ channel_frame imu muse feature_vector classification marker descriptor_inspector
+  test/natkit/               the seven ported suites + golden-payload round-trips
+  test/resources/            captured node_catalog / stream_graph_list / frame JSON</pre>
+</section>
+
+<section>
+  <h2>8. Phases</h2>
+  <p>
+    Each phase is independently verifiable and leaves the Svelte app untouched and working. Note the
+    verification shift: with parity abandoned, gates are <strong>behavioral and protocol-level</strong>
+    &mdash; the strongest one (the flattened-graph JSON diff) survives intact, because it tests the
+    thing that actually has to match.
+  </p>
+
+  <h3>Phase 0 &mdash; Toolchain <span class="phase-tag">~½ day</span></h3>
+  <ul>
+    <li>deps.edn + shadow-cljs skeleton with re-frame/reagent/re-com/garden; dev server; nREPL;
+      release build proves out.</li>
+    <li>websocket-fx connected to the live backend; <code>get_streams</code> → stream list in
+      <code>app-db</code>, visible in the re-frame inspector.</li>
+    <li><strong>Verify the auth cookie reaches the socket from a different port.</strong> Cookies are
+      host-scoped, not port-scoped, so <code>natkit_session</code> set on <code>localhost</code>
+      should be sent to <code>ws://localhost:7409</code> from a dev server on <code>:8280</code>.
+      Confirm empirically. Fallbacks: an nginx dev service, or <code>NATKIT_AUTH_DISABLED=1</code> on
+      the dev backend (an existing dev-only flag).</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> live stream list in <code>app-db</code> against the running
+    podman stack. <em>(The renderer spike is cancelled &mdash; §5.2 settled it.)</em></p>
+
+  <h3>Phase 1 &mdash; Protocol + pure logic + the ported test suite <span class="phase-tag">~1 week</span> <span class="phase-tag partial">IN PROGRESS</span></h3>
+  <ul>
+    <li><code>protocol/wire</code>, <code>protocol/schema</code> (malli), <code>protocol/socket</code>
+      routing, <code>protocol/ml_proxy</code>.</li>
+    <li>Every pure namespace: <code>graph/model</code>, <code>graph/composite</code>,
+      <code>graph/starters</code>, <code>graph/library</code>, <code>graph/validate</code>,
+      <code>experiment/protocol</code>, <code>experiment/time</code>,
+      <code>stream/descriptor</code>, <code>stream/viewer_registry</code>.</li>
+    <li>All seven vitest suites translated to <code>cljs.test</code>; golden payloads captured from
+      the live backend into <code>test/resources/</code>.</li>
+    <li><strong>No UI.</strong></li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> <code>npx shadow-cljs compile test &amp;&amp; node
+    out/test.js</code> green with at least the current 28 assertions' coverage; malli validates real
+    captured <code>node_catalog</code> and <code>stream_graph_list</code> payloads; the
+    flatten round-trip preserves <code>editor_metadata</code> byte-for-byte.</p>
+
+  <h3>Phase 2 &mdash; Canvas + design system, read-only <span class="phase-tag">~1.5 weeks</span></h3>
+  <ul>
+    <li><code>theme.cljs</code> + garden stylesheet: the §6 surfaces, type scale, semantic colors,
+      per-graph accent, optional backdrop.</li>
+    <li>Shell: sidebar tab strip with the graph list, toolbar, bottom transport bar, toast stack.</li>
+    <li>Canvas rendering a graph loaded from the backend: node cards with ports, thick bezier edges
+      (solid data / dashed provenance), runtime state on the border, diagnostics.</li>
+    <li>Pan/zoom via react-zoom-pan-pinch; re-pollsive driving the 1&nbsp;s status refresh.</li>
+    <li>No editing.</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> an existing saved graph renders with correct topology, correct
+    per-node runtime state, and the intended aesthetic; status updates arrive live while a graph runs
+    (started from the Svelte page or the smoke script).</p>
+
+  <h3>Phase 3 &mdash; Editing, palette, save round-trip <span class="phase-tag">~1.5 weeks</span></h3>
+  <ul>
+    <li>Selection (single + multi), node drag, delete, right-click context palette, ⌘K palette
+      (re-pressed), catalog-driven node creation.</li>
+    <li>Connect with descriptor compatibility + typed rejection feedback; edge selection; edge topic
+      badges.</li>
+    <li>Save / validate round-trip including <code>editor_metadata</code>; starter templates;
+      <strong>undo/redo</strong> via day8 undo.</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> build the &ldquo;Filter + envelope&rdquo; starter from
+    scratch, save, clear localStorage, reload from the backend alone, and <strong>diff the flattened
+    graph JSON against what the Svelte editor produces for the same board</strong> &mdash; they must
+    match. Undo restores the previous topology.</p>
+
+  <h3>Phase 4 &mdash; Inspector + run control <span class="phase-tag">~1.5 weeks</span></h3>
+  <ul>
+    <li>Inspector for every kind &mdash; source, transform (catalog config fields via the nested-card
+      idiom, input mapping, inline node doc), combine (variadic ports), experiment (protocol authoring
+      + schedule summary), train, classify, param, viewer, graph metadata.</li>
+    <li>Start / stop from the transport bar; diagnostics as toasts + inline; &ldquo;recommended
+      next&rdquo; from the output descriptor.</li>
+    <li>Debounced config edit → <code>restart_stream_graph_node</code>.</li>
+    <li>Profiles: save / load / delete.</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> start a graph, edit a band-pass cutoff while running, confirm
+    <code>restart_stream_graph_node</code> fires and the node returns <em>live</em> with the same
+    output id and the source untouched &mdash; the existing Phase-7 acceptance, re-proven here.</p>
+
+  <h3>Phase 5 &mdash; Live data + viewers <span class="phase-tag">~1.5 weeks</span></h3>
+  <ul>
+    <li><code>stream/buffers</code>: refcounted subscribe/unsubscribe, per-stream buffers, capped
+      200&nbsp;ms flush, EMG trim-by-duration + bounded trims.</li>
+    <li>Descriptor-driven registry over seven renderers; the Chart.js wrapper for channel-frame + IMU;
+      the low-rate viewers redesigned per §6; inline-on-node charts; marker overlay and the viewer's
+      phantom markers input.</li>
+  </ul>
+  <div class="risk">
+    <strong>Carry the <code>$state.raw</code> lesson forward.</strong> The Svelte page hit a
+    progressive stutter because deep-reactive proxies wrapped every sample read on the chart hot path;
+    the fix was raw state plus a decoupled flush. The re-frame equivalent: <strong>sample buffers do
+    not live in <code>app-db</code></strong> &mdash; keep them in a separate atom (or plain JS arrays
+    behind the chart wrapper) and put only a small per-stream summary/reference in
+    <code>app-db</code>. A 100-frame × N-channel buffer inside a subscribed path will reintroduce the
+    exact bug, and undo/redo would snapshot it too.
+  </div>
+  <p class="meta"><strong>Exit:</strong> an inline viewer node plots the live EMG stream, and three
+    inline charts open simultaneously stay responsive.</p>
+
+  <h3>Phase 6 &mdash; Experiments, timeline, ML <span class="phase-tag">~1.5 weeks</span></h3>
+  <ul>
+    <li><code>experiment/recorder</code>: session id generation, start bundle, 100&nbsp;ms cue tick,
+      cue + lifecycle markers on completion/stop, via <code>publish_session_bundle</code>.</li>
+    <li>ExperimentRunner inline + modal; timeline in the transport bar with ticks/regions, playhead,
+      speed, scrub → <code>query_stream_time</code> → replay <code>start_offset</code>.</li>
+    <li>Train submit through <code>ml_proxy</code> with thread-slot auto-pick; job status, accuracy and
+      bundle path landing on the node; classify model dropdown from train→classify provenance edges;
+      recorded-runs experiment library.</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> record a 2-class session end-to-end (one
+    <code>session_id</code>, markers published), submit a train job, and see status → accuracy →
+    bundle path appear on the train node and auto-fill the classify node.</p>
+
+  <h3>Phase 7 &mdash; Composites + param nodes <span class="phase-tag">~1 week</span></h3>
+  <ul>
+    <li>Extract from selection, instantiate, ungroup, import/export, composite internals view.</li>
+    <li>Param nodes with inline sliders driving a target transform's config + the reactive restart.</li>
+  </ul>
+  <p class="meta"><strong>Exit:</strong> ported <code>composites</code> suite green (param nodes and
+    provenance edges dropped by flattening), and a slider restarting a running subgraph live.</p>
+
+  <h3>Phase 8 &mdash; Packaging + cutover <span class="phase-tag">~3 days</span></h3>
+  <ul>
+    <li>Dev compose service; two-stage prod Dockerfile (node+JVM builder → nginx) reusing
+      <code>frontend/nginx.conf</code>'s <code>/api</code> + <code>/ws</code> proxy blocks.</li>
+    <li>Route the CLJS app at <code>/vp/</code>; point the Svelte nav's VP entry at it.</li>
+    <li>Retire (or flag off) the Svelte VP page; write the decision-log entry and update
+      <code>.claude/state.md</code>.</li>
+  </ul>
+  <p class="meta">Total ≈ <strong>9&ndash;10 weeks</strong> of focused work (Phase 2 grew by ~½ week
+    for the design system; Phase 0 shrank by ~½ day now that the renderer question is closed).
+    Phases 0&ndash;4 (≈5.5 weeks) are the go/no-go: they deliver an authoring editor with run control,
+    which is the load-bearing half.</p>
+</section>
+
+<section>
+  <h2>9. Serving and deployment</h2>
+  <h3>Dev</h3>
+<pre>  natkit-v0-frontend-cljs:
+    build: { context: ./frontend-cljs, dockerfile: Dockerfile.dev }
+    command: npx shadow-cljs watch app
+    ports: ["8280:8280", "8777:8777"]   # :dev-http + :nrepl
+    volumes: ["./frontend-cljs:/app:Z", "natkit-v0-cljs-m2:/root/.m2", ...]</pre>
+  <p>
+    The WS base URL is configuration, not a hardcode: read from
+    <code>js/window.NATKIT_WS_URL</code> (injected by a <code>&lt;script&gt;</code> in
+    <code>index.html</code>) defaulting to the current same-origin derivation. In-container that is
+    <code>ws://natkit-v0-backend:7409</code>; from the host during a bare
+    <code>shadow-cljs watch</code> it is <code>ws://localhost:7409</code>, which relies on the Phase-0
+    cookie finding. Cache the Maven repo in a named volume so restarts don't re-resolve deps.
+  </p>
+  <h3>Prod</h3>
+  <p>
+    Two-stage: a builder image with Node + a JDK running <code>npx shadow-cljs release app</code>,
+    then <code>nginx:1.27-alpine</code> serving <code>resources/public</code> with the same
+    <code>/api/</code> and <code>/ws/</code> proxy blocks the Svelte app already uses. The JVM is a
+    <em>build-time</em> dependency only; the shipped artifact is plain JS.
+  </p>
+</section>
+
+<section>
+  <h2>10. Risks and mitigations</h2>
+  <table>
+    <tr><th>Risk</th><th>Why it's real here</th><th>Mitigation</th></tr>
+    <tr>
+      <td>The 6,326-line editor has undocumented behavior</td>
+      <td>Eight phases of features accreted into it; a prior split attempt was abandoned</td>
+      <td>Port the seven test suites <em>first</em> as the spec; keep the Svelte page live for A/B on <em>behavior</em>; the flattened-JSON diff as the hard gate</td>
+    </tr>
+    <tr>
+      <td>&ldquo;No parity&rdquo; becomes &ldquo;no spec&rdquo;</td>
+      <td>Dropping screenshot parity removes the easiest verification crutch, and a redesign can quietly lose a feature nobody noticed was there</td>
+      <td>Keep a written feature checklist per phase derived from this inventory; the protocol-level and functional gates in §8 are unaffected by visual change</td>
+    </tr>
+    <tr>
+      <td><code>editor_metadata</code> corruption</td>
+      <td>It round-trips opaquely; any key transform breaks composite reload. re-frame idiom pushes toward kebab-case keys.</td>
+      <td>Verbatim snake_case keywords, no global renaming, plus a round-trip test on a captured payload (Phase 1 exit)</td>
+    </tr>
+    <tr>
+      <td>Live-chart performance regression</td>
+      <td>Already bitten once by reactive proxies on the sample hot path; <code>app-db</code> + undo makes it easy to repeat</td>
+      <td>Buffers outside <code>app-db</code>; capped flush; explicit three-simultaneous-charts check (Phase 5 exit)</td>
+    </tr>
+    <tr>
+      <td>Aesthetic ambition outruns the functional plan</td>
+      <td>The rvbbit look is genuinely appealing and the canvas is a fun thing to polish; also rvbbit uses a <em>forked</em> re-com, so some of its exact polish isn't off-the-shelf</td>
+      <td>Design system is one namespace + a theme map, built once in Phase 2; upstream re-com only; backdrop/theming extras are explicitly optional</td>
+    </tr>
+    <tr>
+      <td>Auth cookie across dev origins</td>
+      <td>The CLJS dev server is a different port than the backend</td>
+      <td>Verified in Phase 0; fallbacks are an nginx dev service or <code>NATKIT_AUTH_DISABLED=1</code></td>
+    </tr>
+    <tr>
+      <td>Two frontends to maintain</td>
+      <td>Real, ongoing cost until the Svelte VP page retires</td>
+      <td>Hard gate: if Phases 0&ndash;4 don't land, stop and keep Svelte. The Svelte page is never broken by this work, so abandoning costs only invested time.</td>
+    </tr>
+    <tr>
+      <td>Scope creep into StreamViewer / MlPipeline</td>
+      <td>VP needs eight viewer surfaces that also serve the StreamViewer page</td>
+      <td>Build them in the CLJS app only; <strong>accept temporary duplication</strong>. No shared library across the two frontends.</td>
+    </tr>
+    <tr>
+      <td>Protocol drift during the port</td>
+      <td>The backend keeps evolving (provenance edges, topic-aware channels are recent)</td>
+      <td>malli fails loudly in dev on an unknown message; refresh the golden payloads; the port adds no protocol requirements of its own</td>
+    </tr>
+  </table>
+</section>
+
+<section>
+  <h2>11. Open decisions</h2>
+  <p>Two of the original five are now closed. Defaults in <strong>bold</strong>.</p>
+  <ol>
+    <li><span style="color:#0b7a53;font-weight:600">CLOSED &mdash; Renderer:</span> reagent + re-frame,
+      mirroring rvbbit's stack (§5.2). The two-way spike is cancelled.</li>
+    <li><span style="color:#0b7a53;font-weight:600">CLOSED &mdash; Parity:</span> abandoned in favor of
+      an rvbbit-flavored design language (§6); behavioral and protocol gates remain.</li>
+    <li><span class="q">Coexistence:</span> <strong>serve at <code>/vp/</code> alongside the Svelte
+      app</strong> vs replace <code>/</code> outright. The default de-risks everything else here.</li>
+    <li><span class="q">Theming depth:</span> <strong>per-graph accent + one optional backdrop</strong>
+      vs full rvbbit-style user-editable themes (vs. eventually: theme driven by a live classifier's
+      output). Start at the default; the theme-as-data structure keeps the rest reachable.</li>
+    <li><span class="q">Long-term intent:</span> is this the first step toward replacing the whole
+      Svelte app, or permanently a VP-only app? Doesn't change Phases 0&ndash;7, but it decides whether
+      Phase 8 invests in a shared shell, routing and nav.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>12. Acceptance</h2>
+  <p>The whole-plan gate, phrased as one operator run:</p>
+  <p>
+    A user logs in, opens the ClojureScript app, sees their saved graphs, builds a
+    source&nbsp;→&nbsp;band-pass&nbsp;→&nbsp;viewer board from the right-click palette, starts it from
+    the transport bar, watches live data plot inline on the node, edits the cutoff and sees only that
+    subgraph restart, records a two-class experiment against the same source, submits a training job
+    and sees accuracy land on the train node, wires the resulting model into a classify node, runs it
+    and sees predictions &mdash; <strong>without ever opening the Svelte VP page, and with no backend
+    change anywhere in the diff.</strong>
+  </p>
+  <p class="meta">
+    Supporting gates: the ported test suite green in CI; the flattened graph JSON byte-identical to
+    Svelte's for the same board; three inline charts responsive; a composite graph reloading from the
+    backend alone with <code>editor_metadata</code> intact; undo restoring topology.
+  </p>
+</section>
+
+<section>
+  <h2>13. Smallest honest first slice</h2>
+  <ol>
+    <li>Phase 0 &mdash; toolchain + cookie verification (½ day).</li>
+    <li>Phase 1 &mdash; protocol + pure logic + the seven ported suites (1 week). <em>Worth having on
+      its own</em>: an independently tested model of the graph, the cue engine and the descriptor
+      rules, currently only reachable through a Svelte component.</li>
+    <li>Phase 2 &mdash; the canvas and the design system, rendering a real saved graph with live
+      runtime status (1.5 weeks). This is also the phase that answers &ldquo;does it actually
+      <em>feel</em> like rvbbit?&rdquo; &mdash; the cheapest possible test of the aesthetic premise.</li>
+  </ol>
+  <p>
+    Three weeks in you have a good-looking live canvas and a tested core, plus a grounded estimate for
+    the remaining six phases. If it looks wrong at that point, the Svelte app has not been touched.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>natKit &mdash; ClojureScript Visual-Programming Frontend Plan · rev 3, July 28 2026 (rev 1 drafted
+    the same day; rev 2 closes the renderer decision on reagent + re-frame and replaces visual parity
+    with an rvbbit-derived design language, after the Clojure CLI was installed; rev 3 records two
+    corrections from actually building Phase 0 + part of Phase 1 &mdash; websocket-fx rejected, and
+    the codec keyword rule). Builds on the
+    stream-graph-programming, visual-programming-rework, experiments-and-time, topic-aware-channels and
+    vp-provenance-edges plans &mdash; all of whose frontend surface this port must reproduce
+    functionally. Design reference: <code>github.com/ryrobes/rvbbit</code> (frontend/shadow-cljs.edn,
+    docs/ffl.jpg, docs/sigsol.jpg, docs/rvbbit-dev-mosiac.jpg). Record the coexistence and theming
+    decisions in <code>.claude/decisions.md</code>; track active progress in
+    <code>.claude/state.md</code>.</p>
+</footer>
+</body>
+</html>

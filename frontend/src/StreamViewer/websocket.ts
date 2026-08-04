@@ -25,6 +25,14 @@ import type {
   ProfileListMessage,
   ProfileSavedMessage,
   ProfileDeletedMessage,
+  ExperimentListMessage,
+  ExperimentSavedMessage,
+  ExperimentDeletedMessage,
+  ExperimentInstanceMessage,
+  StreamGraphDeletedMessage,
+  StreamGraphForkedMessage,
+  ExperimentInstanceVerificationMessage,
+  InstanceReplayMessage,
   StreamGraphValidationMessage,
   StreamGraphStatusMessage,
   StreamGraphStartedMessage,
@@ -63,6 +71,16 @@ export interface StreamViewerCallbacks {
   onProfileList?: (message: ProfileListMessage) => void;
   onProfileSaved?: (message: ProfileSavedMessage) => void;
   onProfileDeleted?: (message: ProfileDeletedMessage) => void;
+  onExperimentList?: (message: ExperimentListMessage) => void;
+  onExperimentSaved?: (message: ExperimentSavedMessage) => void;
+  onExperimentDeleted?: (message: ExperimentDeletedMessage) => void;
+  onExperimentInstance?: (message: ExperimentInstanceMessage) => void;
+  onStreamGraphDeleted?: (message: StreamGraphDeletedMessage) => void;
+  onStreamGraphForked?: (message: StreamGraphForkedMessage) => void;
+  onExperimentInstanceVerification?: (
+    message: ExperimentInstanceVerificationMessage,
+  ) => void;
+  onInstanceReplay?: (message: InstanceReplayMessage) => void;
   onError?: (message: ErrorMessage) => void;
 }
 
@@ -248,6 +266,30 @@ export class StreamViewerWebSocket {
           break;
         case "profile_deleted":
           this.callbacks.onProfileDeleted?.(message);
+          break;
+        case "experiment_list":
+          this.callbacks.onExperimentList?.(message);
+          break;
+        case "experiment_saved":
+          this.callbacks.onExperimentSaved?.(message);
+          break;
+        case "experiment_deleted":
+          this.callbacks.onExperimentDeleted?.(message);
+          break;
+        case "experiment_instance":
+          this.callbacks.onExperimentInstance?.(message);
+          break;
+        case "stream_graph_deleted":
+          this.callbacks.onStreamGraphDeleted?.(message);
+          break;
+        case "stream_graph_forked":
+          this.callbacks.onStreamGraphForked?.(message);
+          break;
+        case "experiment_instance_verification":
+          this.callbacks.onExperimentInstanceVerification?.(message);
+          break;
+        case "instance_replay":
+          this.callbacks.onInstanceReplay?.(message);
           break;
         case "error":
           this.callbacks.onError?.(message);

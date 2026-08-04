@@ -50,6 +50,12 @@ class RunArtifacts:
     metadata_path: Path
     feature_path: Path
     sample_rate_hz: int
+    # Set when this dataset came from a recorded INSTANCE rather than a Kafka
+    # reconstruction. Carried into the report so a trained model names the exact
+    # snapshot it came from — lineage that a "session:run" selector cannot give,
+    # because the records behind a selector can age out or change.
+    instance_id: str = ""
+    instance_graph_id: str = ""
 
 
 EMG_CHANNEL_FIELD_RE = re.compile(r"^channels\.(\d+)\.samples$")
@@ -292,7 +298,18 @@ def featurize_reconstruction(
     selected_channel_indexes: list[int] | tuple[int, ...] | None,
     window_ms: int,
     hop_ms: int,
+    feature_path: Path | None = None,
 ) -> tuple[Path, int]:
+    """Featurize a Parquet + markers pair.
+
+    `feature_path` overrides where the features are written. It defaults to sitting
+    beside the Parquet, which is right for a scratch reconstruction but WRONG for an
+    instance: an instance's directory holds immutable, checksummed artifacts and is
+    mounted read-only, so derived files must land in the job workspace instead.
+    Writing them into the instance would quietly add unlisted files to a sealed
+    historical record (and fail outright on the read-only mount, which is how this
+    was caught).
+    """
     rows = load_rows(parquet_path, marker_path=marker_path)
     stream, sample_rate_hz = rows_to_sample_stream(
         rows,
@@ -306,9 +323,98 @@ def featurize_reconstruction(
         window_ms=window_ms,
         hop_ms=hop_ms,
     )
-    feature_path = build_feature_output_path(parquet_path)
-    write_feature_vectors(feature_path, vectors)
-    return feature_path, sample_rate_hz
+    destination = feature_path or build_feature_output_path(parquet_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_feature_vectors(destination, vectors)
+    return destination, sample_rate_hz
+
+
+def featurize_instances(
+    args: argparse.Namespace,
+    instances: list[dict[str, Any]],
+    *,
+    selected_channel_indexes: list[int] | tuple[int, ...] | None = None,
+    progress: ProgressCallback | None = None,
+    should_stop: StopRequestedCallback | None = None,
+    phase_label: str = "instance",
+) -> list[RunArtifacts]:
+    """Featurize recorded INSTANCES straight from their materialized artifacts.
+
+    An instance already is what reconstruction produces: a Parquet of channel
+    frames plus a markers sidecar, both immutable and checksummed. So this skips
+    Kafka entirely -- which is the point. Reconstructing from the broker only works
+    while the records are still inside retention (168h here), so a model could not
+    be retrained from a session recorded last month; and two reconstructions of the
+    same session are not guaranteed identical if retention rolled in between. An
+    instance is a fixed input: the same files produce the same features forever.
+
+    Each entry needs `parquet` and (optionally) `markers` paths, plus the
+    `session_id`/`run_index` used to label the artifacts in the report.
+    """
+    artifacts: list[RunArtifacts] = []
+    for index, entry in enumerate(instances, start=1):
+        check_cancelled(should_stop)
+        session_id = str(entry.get("session_id") or entry.get("instance_id") or "instance")
+        run_index = int(entry.get("run_index") or index)
+        parquet_path = Path(str(entry["parquet"]))
+        marker_raw = entry.get("markers")
+        marker_path = Path(str(marker_raw)) if marker_raw else None
+        report_progress(
+            progress,
+            f"Featurizing {phase_label} {index}/{len(instances)}: "
+            f"{session_id} ({parquet_path.name})",
+        )
+        if not parquet_path.is_file():
+            raise RuntimeError(
+                f"instance artifact is missing: {parquet_path} — the instance record "
+                "and the artifact store disagree, so this dataset cannot be trained on"
+            )
+        if marker_path is not None and not marker_path.is_file():
+            # Labels come from the sidecar; training unlabelled data silently would
+            # produce a model that predicts one class.
+            raise RuntimeError(
+                f"instance markers sidecar is missing: {marker_path}"
+            )
+        # Features go to the JOB's output dir: the instance directory is read-only
+        # and its contents are checksummed, so derived data has no business there.
+        workspace = Path(str(getattr(args, "output_dir", None) or "."))
+        feature_path, sample_rate_hz = featurize_reconstruction(
+            parquet_path,
+            marker_path=marker_path,
+            selected_channel_indexes=selected_channel_indexes,
+            window_ms=args.window_ms,
+            hop_ms=args.hop_ms,
+            feature_path=workspace
+            / f"{session_id}-{run_index}-{parquet_path.stem}.features.jsonl",
+        )
+        run = DiscoveredRun(
+            session_id=session_id,
+            run_index=run_index,
+            start_us=int(entry.get("window_start_us") or 0),
+            end_us=int(entry.get("window_end_us") or 0) or None,
+            device_ids=tuple(str(d) for d in (entry.get("device_ids") or ())),
+            purpose=str(entry.get("purpose") or "training"),
+            participant_id=str(entry.get("participant_id") or ""),
+            protocol_id=str(entry.get("protocol_id") or ""),
+            tags=tuple(str(t) for t in (entry.get("tags") or ())),
+            notes=str(entry.get("instance_id") or ""),
+            marker_count=int(entry.get("marker_count") or 0),
+            last_activity_us=int(entry.get("window_end_us") or 0),
+        )
+        artifacts.append(
+            RunArtifacts(
+                run=run,
+                device_id=str(entry.get("device_id") or ""),
+                parquet_path=parquet_path,
+                marker_path=marker_path or parquet_path,
+                metadata_path=parquet_path,
+                feature_path=feature_path,
+                sample_rate_hz=sample_rate_hz,
+                instance_id=str(entry.get("instance_id") or ""),
+                instance_graph_id=str(entry.get("graph_id") or ""),
+            )
+        )
+    return artifacts
 
 
 def reconstruct_and_featurize_runs(
@@ -454,57 +560,22 @@ def evaluate_family(
     }
 
 
-def run_pipeline(
+def finish_pipeline(
     args: argparse.Namespace,
+    *,
+    train_artifacts: list[RunArtifacts],
+    eval_artifacts: list[RunArtifacts],
+    selected_channel_indexes: list[int] | tuple[int, ...] | None,
     progress: ProgressCallback | None = None,
     should_stop: StopRequestedCallback | None = None,
 ) -> dict[str, object]:
-    args.direct_assign = not args.no_direct_assign
-    selected_channel_indexes = parse_selected_channel_indexes(
-        getattr(args, "selected_fields", None)
-    )
-    check_cancelled(should_stop)
-    report_progress(progress, "Discovering recorded runs from Kafka")
-    runs = discover_runs(args)
-    if not runs:
-        raise RuntimeError("no Kafka recorded runs were discovered")
-    check_cancelled(should_stop)
-    train_runs, eval_runs = resolve_train_eval_runs(args, runs)
-    report_progress(
-        progress,
-        (
-            f"Selected {len(train_runs)} training runs and "
-            f"{len(eval_runs)} validation runs"
-        ),
-    )
-    check_cancelled(should_stop)
-    runs_per_session: dict[str, int] = {}
-    for run in runs:
-        runs_per_session[run.session_id] = max(
-            runs_per_session.get(run.session_id, 0),
-            run.run_index,
-        )
-    report_progress(progress, "Preparing training run reconstructions")
-    train_artifacts = reconstruct_and_featurize_runs(
-        args,
-        train_runs,
-        runs_per_session=runs_per_session,
-        selected_channel_indexes=selected_channel_indexes,
-        progress=progress,
-        should_stop=should_stop,
-        phase_label="training run",
-    )
-    check_cancelled(should_stop)
-    report_progress(progress, "Preparing validation run reconstructions")
-    eval_artifacts = reconstruct_and_featurize_runs(
-        args,
-        eval_runs,
-        runs_per_session=runs_per_session,
-        selected_channel_indexes=selected_channel_indexes,
-        progress=progress,
-        should_stop=should_stop,
-        phase_label="validation run",
-    )
+    """Evaluate the families, pick a winner, build the bundle, assemble the report.
+
+    Shared by both dataset paths (Kafka reconstruction and instance artifacts) so
+    they cannot drift: a model trained from an instance must be produced by exactly
+    the same code as one trained from a live reconstruction, or comparing them means
+    nothing.
+    """
     check_cancelled(should_stop)
     families = args.families or list(MODEL_FAMILIES)
     report_progress(progress, f"Evaluating {len(families)} model families")
@@ -572,6 +643,9 @@ def run_pipeline(
                 "parquet_path": str(artifact.parquet_path),
                 "marker_path": str(artifact.marker_path),
                 "feature_path": str(artifact.feature_path),
+                # Empty for a Kafka reconstruction; set for an instance-backed run.
+                "instance_id": getattr(artifact, "instance_id", ""),
+                "instance_graph_id": getattr(artifact, "instance_graph_id", ""),
             }
             for artifact in train_artifacts
         ],
@@ -583,6 +657,9 @@ def run_pipeline(
                 "parquet_path": str(artifact.parquet_path),
                 "marker_path": str(artifact.marker_path),
                 "feature_path": str(artifact.feature_path),
+                # Empty for a Kafka reconstruction; set for an instance-backed run.
+                "instance_id": getattr(artifact, "instance_id", ""),
+                "instance_graph_id": getattr(artifact, "instance_graph_id", ""),
             }
             for artifact in eval_artifacts
         ],
@@ -592,14 +669,114 @@ def run_pipeline(
         # Accuracy/coverage are only meaningful with a held-out validation set.
         # With none, the model still trains — report null rather than a
         # misleading 0% (the family is chosen by preference, not accuracy).
-        "selected_mean_accuracy": selected["mean_accuracy"] if eval_runs else None,
-        "selected_min_accuracy": selected["min_accuracy"] if eval_runs else None,
-        "selected_mean_coverage": selected["mean_coverage"] if eval_runs else None,
+        # eval_artifacts, not eval_runs: this tail is shared by the Kafka path and the
+        # instance path, and only one of them has "runs".
+        "selected_mean_accuracy": selected["mean_accuracy"] if eval_artifacts else None,
+        "selected_min_accuracy": selected["min_accuracy"] if eval_artifacts else None,
+        "selected_mean_coverage": selected["mean_coverage"] if eval_artifacts else None,
         # Self-describing live-inference bundle for emg_gesture_classify (LDA-only).
         "bundle_path": bundle_path,
         "bundle_family": "lda" if bundle_path else None,
     }
 
+
+def run_pipeline(
+    args: argparse.Namespace,
+    progress: ProgressCallback | None = None,
+    should_stop: StopRequestedCallback | None = None,
+) -> dict[str, object]:
+    args.direct_assign = not args.no_direct_assign
+    selected_channel_indexes = parse_selected_channel_indexes(
+        getattr(args, "selected_fields", None)
+    )
+    check_cancelled(should_stop)
+
+    # Instance-backed training (experiment-history-snapshots-plan, Phase 6). When the
+    # job names instances, their materialized files ARE the dataset: no Kafka
+    # discovery, no reconstruction, and nothing that depends on retention.
+    train_instances = list(getattr(args, "train_instances", None) or [])
+    eval_instances = list(getattr(args, "eval_instances", None) or [])
+    if train_instances:
+        report_progress(
+            progress,
+            f"Featurizing {len(train_instances)} training instance(s) from disk "
+            f"(no Kafka reconstruction)",
+        )
+        train_artifacts = featurize_instances(
+            args,
+            train_instances,
+            selected_channel_indexes=selected_channel_indexes,
+            progress=progress,
+            should_stop=should_stop,
+            phase_label="training instance",
+        )
+        eval_artifacts = featurize_instances(
+            args,
+            eval_instances,
+            selected_channel_indexes=selected_channel_indexes,
+            progress=progress,
+            should_stop=should_stop,
+            phase_label="validation instance",
+        ) if eval_instances else []
+        return finish_pipeline(
+            args,
+            train_artifacts=train_artifacts,
+            eval_artifacts=eval_artifacts,
+            selected_channel_indexes=selected_channel_indexes,
+            progress=progress,
+            should_stop=should_stop,
+        )
+
+    report_progress(progress, "Discovering recorded runs from Kafka")
+    runs = discover_runs(args)
+    if not runs:
+        raise RuntimeError("no Kafka recorded runs were discovered")
+    check_cancelled(should_stop)
+    train_runs, eval_runs = resolve_train_eval_runs(args, runs)
+    report_progress(
+        progress,
+        (
+            f"Selected {len(train_runs)} training runs and "
+            f"{len(eval_runs)} validation runs"
+        ),
+    )
+    check_cancelled(should_stop)
+    runs_per_session: dict[str, int] = {}
+    for run in runs:
+        runs_per_session[run.session_id] = max(
+            runs_per_session.get(run.session_id, 0),
+            run.run_index,
+        )
+    report_progress(progress, "Preparing training run reconstructions")
+    train_artifacts = reconstruct_and_featurize_runs(
+        args,
+        train_runs,
+        runs_per_session=runs_per_session,
+        selected_channel_indexes=selected_channel_indexes,
+        progress=progress,
+        should_stop=should_stop,
+        phase_label="training run",
+    )
+    check_cancelled(should_stop)
+    report_progress(progress, "Preparing validation run reconstructions")
+    eval_artifacts = reconstruct_and_featurize_runs(
+        args,
+        eval_runs,
+        runs_per_session=runs_per_session,
+        selected_channel_indexes=selected_channel_indexes,
+        progress=progress,
+        should_stop=should_stop,
+        phase_label="validation run",
+    )
+    check_cancelled(should_stop)
+    return finish_pipeline(
+        args,
+        train_artifacts=train_artifacts,
+        eval_artifacts=eval_artifacts,
+        selected_channel_indexes=selected_channel_indexes,
+        progress=progress,
+        should_stop=should_stop,
+    )
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)

@@ -6,6 +6,7 @@
     import EmgExperiment from "./EmgExperiment.svelte";
     import EmgTransforms from "./EmgTransforms.svelte";
     import MuseViewer from "./MuseViewer.svelte";
+    import ImuViewer from "./ImuViewer.svelte";
     import ClassificationViewer from "./ClassificationViewer.svelte";
     import MarkerViewer from "./MarkerViewer.svelte";
     import SchemaDescriptorInspector from "./SchemaDescriptorInspector.svelte";
@@ -73,7 +74,12 @@
 
     // Buffered history per stream
     const MAX_BUFFER_SIZE = 100;
+    // IMU streams get a deeper rolling buffer so the live trace shows a few
+    // seconds of history (~100 Hz × 6 s), not just the most recent frame.
+    const MAX_IMU_BUFFER_SIZE = 600;
     const SENSOR_UNREACHABLE_TIMEOUT_MS = 3000;
+    // Rolling window used to compute the observed frames/s "receiving" rate.
+    const FPS_WINDOW_MS = 3000;
     const STATUS_REFRESH_INTERVAL_MS = 500;
     const EMG_TRANSFORM_REFRESH_INTERVAL_MS = 1000;
     let imuBuffers = $state<Map<string, ImuSample[]>>(new Map());
@@ -86,6 +92,13 @@
     >(new Map());
     let lastReceivedAt = $state<Map<string, number>>(new Map());
     let nowMs = $state(Date.now());
+    // Diagnostic: monotonic frame (message) count + recent arrival timestamps
+    // per stream, so a live-but-static stream (e.g. a stationary IMU whose
+    // rolling buffer sits at its cap) is visibly distinguishable from a real
+    // stall — the receiving rate keeps ticking even when the sample count and
+    // the values do not.
+    let frameCounts = $state<Map<string, number>>(new Map());
+    let frameRecvTimes = $state<Map<string, number[]>>(new Map());
 
     // Track stream types by stream ID
     let streamTypes = $state<Map<string, "imu" | "muse" | "emg">>(new Map());
@@ -183,19 +196,25 @@
                 lastTransformResult = null;
             },
             onImuData: (message: ImuDataMessage) => {
-                addImuSampleToBuffer(String(message.stream_id), {
-                    timestamp: message.timestamp,
-                    data: message.data,
-                    accuracies: message.accuracies,
-                    has_data: message.has_data,
-                });
+                markFrameReceived(String(message.stream_id));
+                addImuSamplesToBuffer(String(message.stream_id), [
+                    {
+                        timestamp: message.timestamp,
+                        data: message.data,
+                        accuracies: message.accuracies,
+                        has_data: message.has_data,
+                    },
+                ]);
             },
             onImuBulkData: (message: ImuBulkDataMessage) => {
-                for (const sample of message.samples) {
-                    addImuSampleToBuffer(String(message.stream_id), sample);
-                }
+                markFrameReceived(String(message.stream_id));
+                addImuSamplesToBuffer(
+                    String(message.stream_id),
+                    message.samples,
+                );
             },
             onMuseData: (message: MuseDataMessage) => {
+                markFrameReceived(String(message.stream_id));
                 addMuseSampleToBuffer(String(message.stream_id), {
                     timestamp: message.timestamp,
                     eeg_sequence: message.eeg_sequence,
@@ -208,11 +227,13 @@
                 });
             },
             onMuseBulkData: (message: MuseBulkDataMessage) => {
+                markFrameReceived(String(message.stream_id));
                 for (const sample of message.samples) {
                     addMuseSampleToBuffer(String(message.stream_id), sample);
                 }
             },
             onEmgData: (message: EmgDataMessage) => {
+                markFrameReceived(String(message.stream_id));
                 const frameDurationMs =
                     message.sample_rate_hz > 0
                         ? Math.max(
@@ -237,6 +258,7 @@
                 });
             },
             onMarker: (message: MarkerMessage) => {
+                markFrameReceived(String(message.stream_id));
                 addMarkerToBuffer(String(message.stream_id), {
                     session_id: message.session_id,
                     marker_type: message.marker_type,
@@ -274,7 +296,41 @@
         lastReceivedAt = nextMap;
     }
 
-    function addImuSampleToBuffer(streamId: string, sample: ImuSample) {
+    // Called once per received frame (message), not per sample, so the rate
+    // reflects wire frames/s regardless of how many samples a bulk frame packs.
+    function markFrameReceived(streamId: string) {
+        const now = Date.now();
+        const counts = new Map(frameCounts);
+        counts.set(streamId, (counts.get(streamId) ?? 0) + 1);
+        frameCounts = counts;
+        const times = new Map(frameRecvTimes);
+        const recent = (times.get(streamId) ?? []).filter(
+            (t) => now - t <= FPS_WINDOW_MS,
+        );
+        recent.push(now);
+        times.set(streamId, recent);
+        frameRecvTimes = times;
+    }
+
+    function getStreamFps(streamId: string): number {
+        const arr = frameRecvTimes.get(streamId);
+        if (!arr || arr.length === 0) {
+            return 0;
+        }
+        // nowMs advances on the staleness timer, so this recomputes as time
+        // passes and decays to 0 when frames stop arriving.
+        const recent = arr.filter((t) => nowMs - t <= FPS_WINDOW_MS);
+        return (recent.length * 1000) / FPS_WINDOW_MS;
+    }
+
+    // Append a whole frame's worth of samples in ONE buffer/map update. Doing this
+    // per-sample meant ~10×fps array+Map clones/s (a 600-element clone each), whose
+    // allocation churn triggered periodic multi-hundred-ms GC pauses — the "hitch
+    // every few seconds". Batching cuts that by the samples-per-frame factor.
+    function addImuSamplesToBuffer(streamId: string, samples: ImuSample[]) {
+        if (samples.length === 0) {
+            return;
+        }
         // Track stream type
         if (!streamTypes.has(streamId)) {
             const newTypes = new Map(streamTypes);
@@ -283,9 +339,9 @@
         }
 
         const existingBuffer = imuBuffers.get(streamId) || [];
-        let newBuffer = [...existingBuffer, sample];
-        if (newBuffer.length > MAX_BUFFER_SIZE) {
-            newBuffer = newBuffer.slice(-MAX_BUFFER_SIZE);
+        let newBuffer = existingBuffer.concat(samples);
+        if (newBuffer.length > MAX_IMU_BUFFER_SIZE) {
+            newBuffer = newBuffer.slice(-MAX_IMU_BUFFER_SIZE);
         }
         const newMap = new Map(imuBuffers);
         newMap.set(streamId, newBuffer);
@@ -864,6 +920,7 @@
                                 latestMuseSample !== undefined ||
                                 latestEmgSample !== undefined}
                             {@const isUnreachable = isStreamUnreachable(streamId)}
+                            {@const streamFps = getStreamFps(streamId)}
 
                             <div
                                 class="stream-data-card {isUnreachable
@@ -903,6 +960,13 @@
                                             ? "frames"
                                             : "samples"} buffered</span
                                     >
+                                    {#if streamFps > 0}
+                                        <span
+                                            class="rate-info"
+                                            title="Frames received per second. Keeps ticking while data flows even when the rolling buffer is full or the values are steady."
+                                            >{formatNumber(streamFps, 1)}/s</span
+                                        >
+                                    {/if}
                                     <span class="expand-icon"
                                         >{isExpanded ? "−" : "+"}</span
                                     >
@@ -1064,6 +1128,46 @@
                                             <div class="card-content">
                                                 <p class="waiting">
                                                     Waiting for EMG data...
+                                                </p>
+                                            </div>
+                                        {/if}
+                                    {:else if rendererKind === "imu" || streamType === "imu"}
+                                        {#if latestImuSample}
+                                            <div class="card-content">
+                                                {#if isUnreachable}
+                                                    <p
+                                                        class="sensor-unreachable-note"
+                                                    >
+                                                        Sensor may be unreachable:
+                                                        no data received for 3s+
+                                                    </p>
+                                                {:else if streamFps > 0 && imuBuffer.length >= MAX_IMU_BUFFER_SIZE}
+                                                    <p class="rolling-note">
+                                                        Receiving {formatNumber(
+                                                            streamFps,
+                                                            1,
+                                                        )} frames/s. The buffer shows
+                                                        a rolling {MAX_IMU_BUFFER_SIZE}-sample
+                                                        window, so the sample count
+                                                        holds steady while data
+                                                        streams.
+                                                    </p>
+                                                {/if}
+                                                {#if primaryDescriptor}
+                                                    <SchemaDescriptorInspector
+                                                        descriptor={primaryDescriptor}
+                                                        recordValue={descriptorRecordValue}
+                                                    />
+                                                {/if}
+                                                <ImuViewer
+                                                    samples={imuBuffer}
+                                                    {formatNumber}
+                                                />
+                                            </div>
+                                        {:else}
+                                            <div class="card-content">
+                                                <p class="waiting">
+                                                    Waiting for IMU data...
                                                 </p>
                                             </div>
                                         {/if}
@@ -1488,6 +1592,16 @@
         color: #666;
     }
 
+    .rate-info {
+        font-size: 0.78rem;
+        font-family: ui-monospace, monospace;
+        color: #047857;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        border-radius: 999px;
+        padding: 0.05rem 0.5rem;
+    }
+
     .expand-icon {
         font-size: 1.25rem;
         color: #666;
@@ -1511,6 +1625,17 @@
         background: #fff3cd;
         color: #856404;
         font-size: 0.85rem;
+    }
+
+    .rolling-note {
+        margin: 0 0 0.75rem 0;
+        padding: 0.6rem 0.75rem;
+        border-radius: 6px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1e40af;
+        font-size: 0.85rem;
+        line-height: 1.4;
     }
 
     @media (max-width: 720px) {

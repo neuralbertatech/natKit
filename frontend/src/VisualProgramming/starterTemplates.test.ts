@@ -24,14 +24,14 @@ describe("Convention EMG Quick-Start template", () => {
             "emg-live-1",
         );
 
-        // No node needs manual adding/wiring: classifier, viewers, experiment,
-        // and train node are all present.
+        // No node needs manual adding/wiring: classifier, viewers, markers, and
+        // train node are all present.
         const kinds = graph.nodes.map((n) => n.id).sort();
         expect(kinds).toEqual(
             [
                 "classify",
                 "classify-viewer",
-                "experiment",
+                "markers",
                 "markers-viewer",
                 "raw-viewer",
                 "source",
@@ -40,7 +40,7 @@ describe("Convention EMG Quick-Start template", () => {
         );
 
         // Source feeds both the raw viewer (exploration) and the classifier;
-        // classifier feeds the prediction viewer; experiment feeds the cue viewer.
+        // classifier feeds the prediction viewer; markers feed the cue viewer.
         const dataEdgePairs = graph.edges
             .filter((e) => e.edge_kind !== "provenance")
             .map((e) => `${e.source_node_id}->${e.target_node_id}`)
@@ -50,24 +50,29 @@ describe("Convention EMG Quick-Start template", () => {
                 "source->raw-viewer",
                 "source->classify",
                 "classify->classify-viewer",
-                "experiment->markers-viewer",
+                "markers->markers-viewer",
             ].sort(),
         );
 
-        // Provenance (lineage) edges make the wiring explicit: source→experiment
-        // (device binding), experiment→train (run sourcing), train→classify
-        // (model dropdown).
+        // Only train→classify (the model dropdown) survives as a provenance edge.
+        // source→experiment and experiment→train were retired: the experiment owns
+        // the whole board, so both are implicit in the binding.
         const provEdgePairs = graph.edges
             .filter((e) => e.edge_kind === "provenance")
             .map((e) => `${e.source_node_id}->${e.target_node_id}`)
             .sort();
-        expect(provEdgePairs).toEqual(
-            [
-                "source->experiment",
-                "experiment->train",
-                "train->classify",
-            ].sort(),
-        );
+        expect(provEdgePairs).toEqual(["train->classify"]);
+    });
+
+    it("carries the experiment record the board binds (protocol is not on a node)", () => {
+        const tpl = template("convention-emg-quick-start");
+        expect(tpl.experiment?.label).toBe("Convention EMG");
+        expect(tpl.experiment?.protocol.protocol_id).toBe("convention-emg-v1");
+        // The canvas holds only a config-less markers source.
+        const graph = tpl.build(null);
+        const markers = graph.nodes.find((n) => n.id === "markers");
+        expect(markers?.kind).toBe("markers");
+        expect(markers && "config" in markers).toBe(false);
     });
 
     it("pre-places emg_gesture_classify with an empty model path (filled after training)", () => {
@@ -82,13 +87,9 @@ describe("Convention EMG Quick-Start template", () => {
     });
 
     it("uses the convention protocol including a fist gesture for calibration", () => {
-        const graph = template("convention-emg-quick-start").build(null);
-        const experiment = graph.nodes.find((n) => n.id === "experiment");
-        const protocol =
-            experiment && "config" in experiment
-                ? (experiment.config as { protocol?: typeof CONVENTION_PROTOCOL })
-                      .protocol
-                : undefined;
+        const protocol = template("convention-emg-quick-start").experiment
+            ?.protocol;
+        expect(protocol).toEqual(CONVENTION_PROTOCOL);
         expect(protocol?.protocol_id).toBe("convention-emg-v1");
         // fist doubles as the rest-calibration active gesture.
         expect(protocol?.classes).toContain("fist");

@@ -12,7 +12,17 @@ export const EMG_GESTURE_OPTIONS = [
     "thumbs_up",
 ] as const;
 
-export type EmgCuePhase = "lead_in" | "hold" | "rest" | "tail_rest";
+// "instruction" and "wait" come from user-authored step protocols
+// (experimentSteps.ts): text shown to the participant, and a barrier that holds
+// until someone presses Continue. Both are part of the timeline and are recorded
+// as markers, but neither is a labelled class the trainer should learn from.
+export type EmgCuePhase =
+    | "lead_in"
+    | "hold"
+    | "rest"
+    | "tail_rest"
+    | "instruction"
+    | "wait";
 
 export interface EmgExperimentConfig {
     gestures: string[];
@@ -36,6 +46,16 @@ export interface EmgCueEvent {
     prompt: string;
     start_offset_ms: number;
     end_offset_ms: number;
+    // Practice data: emitted and recorded like any other cue so the session is a
+    // faithful record of what the participant was asked to do, but flagged so
+    // training can exclude it. Set by a step protocol's tutorial block.
+    tutorial?: boolean;
+    // A "wait" step blocks until released, so its true length is not known when
+    // the schedule is compiled. The runner reports how long it actually waited and
+    // resolveScheduleWaits() shifts everything after it before markers are built.
+    wait_for_input?: boolean;
+    // Text for the button that releases a wait step.
+    continue_label?: string;
 }
 
 export interface EmgStreamOption {

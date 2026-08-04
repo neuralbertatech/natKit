@@ -1,0 +1,2178 @@
+{
+  "nodes": [
+    {
+      "category": "source",
+      "config_fields": [],
+      "description": "A live sensor/derived stream selected from the broker. Emits its records downstream; the port descriptor is the stream's own.",
+      "input_ports": [],
+      "kind": "stream_source",
+      "label": "Stream source",
+      "node_type": "stream_source",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "runner": "kafka_source",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [],
+      "description": "Absolute-value mapping over a numeric channel frame",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Rectify",
+      "node_type": "rectify",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 5,
+          "id": "cutoff_hz",
+          "label": "Cutoff (Hz)",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        }
+      ],
+      "description": "Pure low-pass smoothing stage for numeric channel frames without implicit rectification",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Low-pass envelope",
+      "node_type": "lowpass_envelope",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 20,
+          "id": "low_cutoff_hz",
+          "label": "Low cutoff (Hz)",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        },
+        {
+          "default_value": 450,
+          "id": "high_cutoff_hz",
+          "label": "High cutoff (Hz)",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        },
+        {
+          "default_option": "butterworth",
+          "id": "iir_method",
+          "label": "IIR method",
+          "options": [
+            "butterworth",
+            "biquad"
+          ],
+          "required": true,
+          "type": "enum"
+        },
+        {
+          "default_value": 2,
+          "id": "butterworth_order",
+          "label": "Butterworth order",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        },
+        {
+          "default_value": 0.7071067811865476,
+          "id": "biquad_q",
+          "label": "Biquad Q",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        }
+      ],
+      "description": "Pure band-pass IIR filter using cascaded high-pass and low-pass stages",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Band-pass IIR",
+      "node_type": "bandpass_iir",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 60,
+          "id": "notch_hz",
+          "label": "Base notch (Hz)",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        },
+        {
+          "default_value": 30,
+          "id": "notch_q",
+          "label": "Notch Q",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        },
+        {
+          "default_value": 0,
+          "id": "harmonic_count",
+          "label": "Extra harmonics",
+          "min": 0,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        }
+      ],
+      "description": "Narrowband notch filtering with optional harmonic sections up to Nyquist",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Notch IIR",
+      "node_type": "notch_iir",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 32,
+          "id": "window_samples",
+          "label": "Window samples",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        }
+      ],
+      "description": "Sliding RMS magnitude estimate over a fixed number of samples with prefix-window startup behavior",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "RMS window",
+      "node_type": "rms_window",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 128,
+          "id": "window_samples",
+          "label": "Window samples",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        },
+        {
+          "default_value": 32,
+          "id": "step_samples",
+          "label": "Step samples",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        }
+      ],
+      "description": "Explicit overlapping sample windows emitted as derived channel frames",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Sliding window",
+      "node_type": "sliding_window",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 20,
+          "id": "cutoff_hz",
+          "label": "Cutoff (Hz)",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        },
+        {
+          "default_option": "butterworth",
+          "id": "iir_method",
+          "label": "IIR method",
+          "options": [
+            "butterworth",
+            "biquad"
+          ],
+          "required": true,
+          "type": "enum"
+        },
+        {
+          "default_value": 2,
+          "id": "butterworth_order",
+          "label": "Butterworth order",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        },
+        {
+          "default_value": 0.7071067811865476,
+          "id": "biquad_q",
+          "label": "Biquad Q",
+          "min": 0.1,
+          "required": true,
+          "step": 0.1,
+          "type": "number"
+        }
+      ],
+      "description": "Pure high-pass IIR filter with Butterworth or biquad design options",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "High-pass IIR",
+      "node_type": "highpass_iir",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [],
+      "description": "Reduces one windowed channel frame (e.g. from Sliding window) to its mean absolute value per channel",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Mean Absolute Value",
+      "node_type": "mav",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [],
+      "description": "Reduces one windowed channel frame (e.g. from Sliding window) to its root-mean-square value per channel — unlike RMS window, this is a one-shot per-window reduction, not a continuous moving filter",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "RMS (windowed)",
+      "node_type": "rms",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [],
+      "description": "Reduces one windowed channel frame to the cumulative absolute difference between consecutive samples per channel",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Waveform Length",
+      "node_type": "wl",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 0,
+          "id": "zc_threshold",
+          "label": "Threshold",
+          "min": 0,
+          "required": true,
+          "step": 0.01,
+          "type": "number"
+        }
+      ],
+      "description": "Counts zero-crossings per channel within one windowed channel frame, ignoring crossings below the threshold",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Zero Crossings",
+      "node_type": "zc",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 0,
+          "id": "ssc_threshold",
+          "label": "Threshold",
+          "min": 0,
+          "required": true,
+          "step": 0.01,
+          "type": "number"
+        }
+      ],
+      "description": "Counts slope-sign changes per channel within one windowed channel frame, ignoring changes below the threshold",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Slope Sign Changes",
+      "node_type": "ssc",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_value": 4,
+          "id": "ar_order",
+          "label": "AR order",
+          "min": 1,
+          "required": true,
+          "step": 1,
+          "type": "number"
+        }
+      ],
+      "description": "Fits a Levinson-Durbin autoregressive model to one windowed channel frame, emitting ar_order coefficients per channel",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "AR Coefficients",
+      "node_type": "ar_coeffs",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "id": "model_path",
+          "label": "Model path",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "description": "Scores a flat feature-vector frame (e.g. from a Combine node) against a diagonal-covariance LDA model loaded from disk, emitting a predicted class index and per-class confidences",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        },
+        {
+          "id": "prov_model",
+          "kind": "provenance",
+          "label": "Model"
+        }
+      ],
+      "kind": "transform",
+      "label": "LDA Classify",
+      "node_type": "lda_classify",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "id": "model_path",
+          "label": "Model bundle path",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "description": "Self-contained EMG gesture classifier: consumes raw EMG frames and internally reproduces the training pipeline (sliding window -> DSP -> Hudgins features -> rest-calibration normalization -> LDA), driven entirely by a model bundle so live accuracy matches training. Point model_path at the emg-gesture-bundle.json written by the train node.",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        },
+        {
+          "id": "prov_model",
+          "kind": "provenance",
+          "label": "Model"
+        }
+      ],
+      "kind": "transform",
+      "label": "EMG Gesture Classify",
+      "node_type": "emg_gesture_classify",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [
+        {
+          "default_option": "label",
+          "id": "select_mode",
+          "label": "Select by",
+          "options": [
+            "label",
+            "index",
+            "all"
+          ],
+          "required": true,
+          "type": "enum"
+        },
+        {
+          "default_value": "mav",
+          "id": "selection",
+          "label": "Selection (label substring, or indices e.g. 0-8,12)",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "description": "Passes through a subset of a multi-channel frame's channels — e.g. destructure a concatenated feature vector into per-family or per-source sub-vectors. Keep every channel, channels whose label contains a substring, or an explicit index range/list.",
+      "input_descriptor_paths": [
+        "device_id",
+        "seq_no",
+        "device_ts_us",
+        "sample_rate_hz",
+        "channels.0.samples.0"
+      ],
+      "input_mappings": [
+        {
+          "id": "canonical_channel_frame",
+          "label": "Canonical channel frame",
+          "mode": "canonical_channel_frame",
+          "required_descriptor_paths": [
+            "device_id",
+            "seq_no",
+            "device_ts_us",
+            "sample_rate_hz",
+            "channels.0.samples.0"
+          ]
+        },
+        {
+          "channels": [
+            {
+              "label": "TP9",
+              "sample_array_path": "eeg.tp9"
+            },
+            {
+              "label": "AF7",
+              "sample_array_path": "eeg.af7"
+            },
+            {
+              "label": "AF8",
+              "sample_array_path": "eeg.af8"
+            },
+            {
+              "label": "TP10",
+              "sample_array_path": "eeg.tp10"
+            }
+          ],
+          "device_ts_us_path": "time",
+          "id": "natmuse_eeg_v1",
+          "label": "Muse EEG channels",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "eeg_sequence",
+            "time"
+          ],
+          "sample_rate_hz_value": 256,
+          "schema_name": "NatMuseDataSchema",
+          "seq_no_path": "eeg_sequence"
+        },
+        {
+          "channels": [
+            {
+              "label": "Accel X",
+              "sample_array_path": "accel_x"
+            },
+            {
+              "label": "Accel Y",
+              "sample_array_path": "accel_y"
+            },
+            {
+              "label": "Accel Z",
+              "sample_array_path": "accel_z"
+            },
+            {
+              "label": "Gyro X",
+              "sample_array_path": "gyro_x"
+            },
+            {
+              "label": "Gyro Y",
+              "sample_array_path": "gyro_y"
+            },
+            {
+              "label": "Gyro Z",
+              "sample_array_path": "gyro_z"
+            }
+          ],
+          "device_ts_us_path": "device_ts_us",
+          "id": "natimu_motion_v1",
+          "label": "IMU accel/gyro",
+          "mode": "explicit_channel_paths",
+          "required_descriptor_paths": [
+            "seq_no",
+            "device_ts_us"
+          ],
+          "sample_rate_hz_path": "sample_rate_hz",
+          "schema_name": "NatImuBulkDataSchema",
+          "seq_no_path": "seq_no"
+        }
+      ],
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "transform",
+      "label": "Select / Split channels",
+      "node_type": "channel_select",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "output_schema_name": "NatSignalFrameDataSchemaV1",
+      "runner": "cpp_dsp",
+      "variadic_inputs": false
+    },
+    {
+      "category": "transform",
+      "config_fields": [],
+      "description": "Fans in two or more upstream channel frames into one flattened feature-vector frame (e.g. several feature extractors into a model input).",
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "combine",
+      "label": "Combine",
+      "node_type": "combine",
+      "output_ports": [
+        {
+          "id": "out",
+          "label": "Output"
+        }
+      ],
+      "runner": "cpp_dsp",
+      "variadic_inputs": true
+    },
+    {
+      "category": "viewer",
+      "config_fields": [],
+      "description": "Renders the upstream node's output live on the canvas. The renderer is chosen from the output descriptor's capabilities.",
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "viewer",
+      "label": "Viewer",
+      "node_type": "viewer",
+      "output_ports": [],
+      "runner": "frontend",
+      "variadic_inputs": false
+    },
+    {
+      "category": "sink",
+      "config_fields": [],
+      "description": "Terminal node that consumes its upstream output (e.g. records it).",
+      "input_ports": [
+        {
+          "id": "in",
+          "label": "Input"
+        }
+      ],
+      "kind": "sink",
+      "label": "Sink",
+      "node_type": "sink",
+      "output_ports": [],
+      "runner": "kafka_sink",
+      "variadic_inputs": false
+    },
+    {
+      "category": "source",
+      "config_fields": [],
+      "description": "A source of timestamped markers: runs a structured protocol (ordered cues + labels) and emits a `markers` stream (cue/session events) that marker-aware nodes downstream can render or train on. Has no inputs — the cue timeline is generated independently of any data source.",
+      "input_ports": [
+        {
+          "id": "prov_source",
+          "kind": "provenance",
+          "label": "Records"
+        }
+      ],
+      "kind": "experiment",
+      "label": "Experiment",
+      "node_type": "experiment",
+      "output_ports": [
+        {
+          "id": "markers",
+          "label": "Markers"
+        }
+      ],
+      "runner": "frontend",
+      "variadic_inputs": false
+    },
+    {
+      "category": "ml",
+      "config_fields": [],
+      "description": "Trains a classifier on a recorded session dataset (model families + feature windowing), producing a durable model artifact a classify node can load. Wire an experiment into it to scope the training runs, and its models output into a classify node to serve them.",
+      "input_ports": [
+        {
+          "id": "prov_experiment",
+          "kind": "provenance",
+          "label": "Experiment"
+        }
+      ],
+      "kind": "train",
+      "label": "Train",
+      "node_type": "train",
+      "output_ports": [
+        {
+          "id": "prov_models",
+          "kind": "provenance",
+          "label": "Models"
+        }
+      ],
+      "runner": "control_plane",
+      "variadic_inputs": false
+    }
+  ],
+  "request_id": "smoke:node-catalog",
+  "type": "node_catalog"
+}

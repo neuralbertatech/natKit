@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Descriptor-Driven Transform Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 920px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    background: #132019;
+    color: #d7eee2;
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · transforms · plan · July 3 2026</div>
+  <h1>Descriptor-Driven Transform Plan</h1>
+  <p class="subtitle">
+    Replace the current EMG-specific Stream Viewer transform path with a generic
+    descriptor-driven transform system that can inspect stream structure through
+    <code>DataSchemaDescriptor</code>, validate transform input requirements,
+    normalize compatible records into a shared channel-frame model, and emit one
+    shared transformed-frame schema for reusable derived streams.
+  </p>
+  <div class="meta">
+    Scope: <code>libnatkit-core</code> transform contracts and derived schema design,
+    Stream Viewer backend worker refactor, compatibility checks, and frontend protocol follow-on.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Move transform compatibility and field access onto <code>DataSchemaDescriptor</code> instead of hardcoding record-class branches inside the Stream Viewer transform worker.</li>
+      <li>Start generic transform output strategy with one shared core-owned transformed-frame schema for numeric multi-channel derived streams.</li>
+      <li>Name that shared output record <code>NatSignalFrameDataSchemaV1</code>.</li>
+      <li>Allow transforms to chain over intermediate derived streams as long as the source descriptor exposes the required fields by path.</li>
+      <li>Treat transform kind, configuration, lineage, and provenance as metadata concerns in the first slice rather than creating a distinct <code>DATA</code> schema per transform kind.</li>
+      <li>Keep the first algorithm set small: band-pass envelope and high-pass rectify are enough to prove the model.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Current state</h3>
+        <ul>
+          <li>The Transforms tab is wired around EMG-specific actions such as <code>create_emg_transform</code>.</li>
+          <li>The backend transform worker accepts only EXG/EMG schema classes directly.</li>
+          <li>The current derived output path emits an EMG-specific transformed record type.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Target state</h3>
+        <ul>
+          <li>Transforms declare required inputs in terms of descriptor paths and field types.</li>
+          <li>Any stream with a compatible descriptor can use the transform.</li>
+          <li>Derived streams chain through one shared transformed-frame contract.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>Field semantics must stay in core descriptors, not ad hoc backend JSON rules.</li>
+          <li>Intermediate streams must remain replayable and inspectable like any other channel data.</li>
+          <li>The first slice should solve genericity for channel-based numeric transforms without trying to cover all future transform families.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>First Transform Contract</h2>
+    <p>
+      The first generic transform proof should be a channel-based numeric transform. The initial
+      required field contract for band-pass envelope is:
+    </p>
+    <ul>
+      <li><code>sample_rate_hz</code> as a scalar numeric field.</li>
+      <li><code>channels.N.label</code> as optional but preferred display identity.</li>
+      <li><code>channels.N.samples.M</code> as the per-channel sample arrays.</li>
+    </ul>
+    <p>
+      Any source descriptor that can satisfy those requirements should be considered compatible,
+      including raw source frames and intermediate transformed frames that preserve the same
+      channel-frame shape.
+    </p>
+  </section>
+
+  <section>
+    <h2>Shared Output Strategy</h2>
+    <p>
+      The first output strategy should not create a new schema name for every transform kind.
+      Instead, define one shared transformed-frame schema in <code>libnatkit-core</code> for
+      numeric multi-channel derived frames.
+    </p>
+    <table>
+      <tr>
+        <th>Concern</th>
+        <th>Decision</th>
+        <th>Reason</th>
+      </tr>
+      <tr>
+        <td>Output schema count</td>
+        <td>One shared transformed-frame schema: <code>NatSignalFrameDataSchemaV1</code></td>
+        <td>Keeps transform chaining and generic tooling on one stable contract</td>
+      </tr>
+      <tr>
+        <td>Transform identity</td>
+        <td>Metadata, not schema suffix</td>
+        <td>Band-pass envelope and high-pass rectify should not require separate data contracts</td>
+      </tr>
+      <tr>
+        <td>Intermediate streams</td>
+        <td>Reuse the same shared schema</td>
+        <td>Avoid multiplying one-off schemas through multi-stage pipelines</td>
+      </tr>
+      <tr>
+        <td>Future special cases</td>
+        <td>Allow transform-specific schemas later</td>
+        <td>Only when a transform truly changes the field model, not merely the values</td>
+      </tr>
+    </table>
+    <p>
+      The first pass should deliberately preserve the useful parts of the current transformed EMG
+      frame shape: device identity, producer time, per-channel labels, per-channel sample counts,
+      and flattened numeric samples. The main change is to remove EMG-specific naming from the
+      schema contract so the same record type can carry derived numeric frames from any compatible
+      source descriptor.
+    </p>
+  </section>
+
+  <section>
+    <h2>Shared Schema Name And Field Set</h2>
+    <p>
+      The shared derived-frame output record should be named
+      <code>NatSignalFrameDataSchemaV1</code>. The first-pass JSON payload version should be
+      <code>nat.signal.frame.data.v1</code>.
+    </p>
+    <table>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Role</th>
+      </tr>
+      <tr>
+        <td><code>schema_version</code></td>
+        <td>string</td>
+        <td>Wire payload version string, initially <code>nat.signal.frame.data.v1</code></td>
+      </tr>
+      <tr>
+        <td><code>device_id</code></td>
+        <td>string</td>
+        <td>Upstream producer identity carried forward for continuity with existing capture and replay flows</td>
+      </tr>
+      <tr>
+        <td><code>seq_no</code></td>
+        <td>uint64</td>
+        <td>Monotonic frame sequence number propagated from the source or derived worker frame progression</td>
+      </tr>
+      <tr>
+        <td><code>device_ts_us</code></td>
+        <td>uint64</td>
+        <td>Canonical producer-time join key for replay, stitching, and downstream alignment</td>
+      </tr>
+      <tr>
+        <td><code>n_channels</code></td>
+        <td>uint32</td>
+        <td>Declared channel count for the frame</td>
+      </tr>
+      <tr>
+        <td><code>samples_per_channel</code></td>
+        <td>uint32</td>
+        <td>Declared sample count for each channel frame slice</td>
+      </tr>
+      <tr>
+        <td><code>sample_rate_hz</code></td>
+        <td>uint32</td>
+        <td>Per-channel sample rate needed for downstream DSP and compatibility checks</td>
+      </tr>
+      <tr>
+        <td><code>channel_labels</code></td>
+        <td>string[]</td>
+        <td>Per-channel identity labels preserved across transform stages where available</td>
+      </tr>
+      <tr>
+        <td><code>payload</code></td>
+        <td>float32[][]</td>
+        <td>Per-channel numeric sample arrays encoded as channel-major frame data</td>
+      </tr>
+    </table>
+    <p>
+      The corresponding descriptor should expose the same path model already proven in the EMG
+      descriptors:
+    </p>
+    <pre>device_id
+seq_no
+device_ts_us
+sample_rate_hz
+channels.N.label
+channels.N.samples.M</pre>
+    <p>
+      That path continuity is intentional. The first generic transform worker should be able to
+      consume raw EMG frames and <code>NatSignalFrameDataSchemaV1</code> records through the same
+      normalized reader without inventing a second path vocabulary for intermediate streams.
+    </p>
+  </section>
+
+  <section>
+    <h2>Architecture Direction</h2>
+    <pre>source topic
+  -> decode typed Schema
+  -> find DataSchemaDescriptor by schema name
+  -> validate transform requirements by descriptor path
+  -> normalize into shared channel-frame view
+  -> run transform algorithm
+  -> emit shared transformed-frame schema
+  -> expose descriptor for downstream transforms and UI</pre>
+    <p>
+      The normalization layer is the key boundary. The DSP algorithm should consume a generic
+      in-memory frame model, not an EXG-specific record class.
+    </p>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <div class="status">New plan · initial direction captured on 2026-07-03</div>
+    <ul>
+      <li><strong>Phase 1 · Transform contract:</strong> define the backend transform requirement model in terms of descriptor paths, expected field types, and normalization rules.</li>
+      <li><strong>Phase 2 · Shared derived schema:</strong> add <code>NatSignalFrameDataSchemaV1</code> plus its descriptor for numeric channel-based derived streams, keeping the established <code>channels.N.label</code> and <code>channels.N.samples.M</code> access pattern.</li>
+      <li><strong>Phase 3 · Descriptor-driven reader:</strong> replace direct EMG record branching in the Stream Viewer transform worker with descriptor lookup, compatibility validation, and normalized frame extraction.</li>
+      <li><strong>Phase 4 · First generic algorithms:</strong> port band-pass envelope and high-pass rectify to run on the normalized frame model and emit the shared derived schema.</li>
+      <li><strong>Phase 4.5 · EMG transform cutover:</strong> migrate the current <code>ExgPillEmgTransformDataSchemaV1</code> path toward <code>NatSignalFrameDataSchemaV1</code> as the preferred derived output contract, with any short-lived compatibility bridge kept explicit and disposable.</li>
+      <li><strong>Phase 5 · Protocol cleanup:</strong> generalize the WebSocket actions and frontend model away from <code>create_emg_transform</code> toward generic transform requests and transform capability discovery.</li>
+      <li><strong>Phase 6 · Chaining proof:</strong> verify that a transform can consume a previously transformed stream through the same descriptor-driven path without record-class special cases.</li>
+      <li><strong>Phase 7 · Validation and tests:</strong> add coverage for missing descriptors, missing required paths, wrong field types, compatible raw input, compatible intermediate input, and incompatible stream rejection.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Which provenance fields should live on the derived data record versus companion metadata records.</li>
+      <li>Should <code>seq_no</code> on <code>NatSignalFrameDataSchemaV1</code> always preserve the upstream frame sequence when there is a one-to-one transform, or should multi-input or windowed transforms reserve the right to assign a new worker-owned sequence.</li>
+      <li>Do we want to add an optional <code>value_type</code> or equivalent descriptor metadata early, even though the first shared schema is explicitly <code>float32</code> payload output.</li>
+      <li>Whether the first compatibility layer should support only channel-array inputs or also alternate descriptor layouts through explicit mapping rules.</li>
+      <li>How much of transform capability discovery should be pushed into the frontend in the first slice versus staying backend-driven.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>What Not To Do</h2>
+    <ul>
+      <li>Do not keep growing the EMG-specific transform worker and call it generic later.</li>
+      <li>Do not encode transform compatibility as handwritten schema-name allowlists when descriptor paths can express the actual requirement.</li>
+      <li>Do not create a new output schema per transform kind unless the field model genuinely changes.</li>
+      <li>Do not let intermediate transform streams become second-class records that bypass descriptors.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This plan intentionally starts with the shared transformed-frame output strategy because that is
+  the cleanest way to make descriptor-driven transform chaining work without turning every DSP step
+  into a schema proliferation problem.
+</footer>
+</body>
+</html>

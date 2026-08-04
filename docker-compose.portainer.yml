@@ -117,6 +117,9 @@ services:
       NATKIT_ML_CONTROL_PLANE_URL: ws://natkit-v0-ml-control-plane:8786
       # Persist saved stream graphs.
       NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
+      # Experiments live alongside the graphs: an experiment owns a board and its
+      # recorded instances, so losing this store orphans history.
+      NATKIT_EXPERIMENT_STORE: /graphs/experiments.json
       # NOTE: auth is ENFORCED here (no NATKIT_AUTH_DISABLED). Bootstrap the first
       # admin on first run (see header). Default bootstrap mode = password.
     volumes:

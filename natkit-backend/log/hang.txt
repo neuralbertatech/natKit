@@ -1,0 +1,2 @@
+warning: process 838 is already traced by process 824
+ptrace: Operation not permitted.

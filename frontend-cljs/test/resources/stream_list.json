@@ -1,0 +1,502 @@
+{
+  "streams": {
+    "13793649670644": {
+      "topics": [
+        {
+          "descriptor": {
+            "descriptor_version": 1,
+            "root": {
+              "description": "Channel-major view of a natKit IMU bulk frame (per-axis sample arrays)",
+              "fields": {
+                "accel_x": {
+                  "description": "Per-sample values across the frame",
+                  "id": "accel_x",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Accel X",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "m/s^2"
+                },
+                "accel_y": {
+                  "description": "Per-sample values across the frame",
+                  "id": "accel_y",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Accel Y",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "m/s^2"
+                },
+                "accel_z": {
+                  "description": "Per-sample values across the frame",
+                  "id": "accel_z",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Accel Z",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "m/s^2"
+                },
+                "device_ts_us": {
+                  "description": "First-sample timestamp",
+                  "id": "device_ts_us",
+                  "label": "Device Timestamp",
+                  "optional": false,
+                  "type": "uint64",
+                  "unit": "us"
+                },
+                "gyro_x": {
+                  "description": "Per-sample values across the frame",
+                  "id": "gyro_x",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Gyro X",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "rad/s"
+                },
+                "gyro_y": {
+                  "description": "Per-sample values across the frame",
+                  "id": "gyro_y",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Gyro Y",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "rad/s"
+                },
+                "gyro_z": {
+                  "description": "Per-sample values across the frame",
+                  "id": "gyro_z",
+                  "items": {
+                    "description": "One float sample",
+                    "id": "sample",
+                    "label": "Sample",
+                    "optional": false,
+                    "type": "float32"
+                  },
+                  "label": "Gyro Z",
+                  "optional": false,
+                  "type": "array",
+                  "unit": "rad/s"
+                },
+                "sample_rate_hz": {
+                  "description": "Declared per-frame sample rate",
+                  "id": "sample_rate_hz",
+                  "label": "Sample Rate",
+                  "optional": false,
+                  "type": "uint32",
+                  "unit": "Hz"
+                },
+                "seq_no": {
+                  "description": "Per-device frame sequence number",
+                  "id": "seq_no",
+                  "label": "Sequence",
+                  "optional": false,
+                  "type": "uint64"
+                }
+              },
+              "id": "root",
+              "label": "IMU Frame",
+              "optional": false,
+              "type": "object"
+            },
+            "schema_name": "NatImuBulkDataSchema"
+          },
+          "schema_name": "NatImuBulkDataSchema",
+          "serialization_type": "Binary",
+          "type": "Data"
+        }
+      ]
+    },
+    "304615832870583132": {
+      "topics": []
+    },
+    "3499842756235126502": {
+      "topics": [
+        {
+          "descriptor": {
+            "descriptor_version": 1,
+            "root": {
+              "description": "Descriptor for generic numeric multi-channel signal frames",
+              "fields": {
+                "channels": {
+                  "description": "Signal channels carried in this frame",
+                  "id": "channels",
+                  "items": {
+                    "description": "One numeric signal channel",
+                    "fields": {
+                      "label": {
+                        "description": "Channel label",
+                        "id": "label",
+                        "label": "Label",
+                        "optional": true,
+                        "type": "string"
+                      },
+                      "samples": {
+                        "description": "Per-channel numeric samples",
+                        "id": "samples",
+                        "items": {
+                          "description": "One numeric derived sample",
+                          "id": "sample",
+                          "label": "Sample",
+                          "optional": false,
+                          "type": "float32"
+                        },
+                        "label": "Samples",
+                        "optional": false,
+                        "type": "array"
+                      }
+                    },
+                    "id": "channel",
+                    "label": "Channel",
+                    "optional": false,
+                    "type": "object"
+                  },
+                  "label": "Channels",
+                  "optional": false,
+                  "type": "array"
+                },
+                "device_id": {
+                  "description": "Upstream producer or source identifier",
+                  "id": "device_id",
+                  "label": "Device ID",
+                  "optional": false,
+                  "type": "string"
+                },
+                "device_ts_us": {
+                  "description": "Producer timestamp in microseconds",
+                  "id": "device_ts_us",
+                  "label": "Device Timestamp",
+                  "optional": false,
+                  "type": "uint64",
+                  "unit": "us"
+                },
+                "sample_rate_hz": {
+                  "description": "Per-channel sample rate",
+                  "id": "sample_rate_hz",
+                  "label": "Sample Rate",
+                  "optional": false,
+                  "type": "uint32",
+                  "unit": "Hz"
+                },
+                "seq_no": {
+                  "description": "Frame sequence number",
+                  "id": "seq_no",
+                  "label": "Sequence Number",
+                  "optional": false,
+                  "type": "uint64"
+                }
+              },
+              "id": "root",
+              "label": "Signal Frame",
+              "optional": false,
+              "type": "object"
+            },
+            "schema_name": "NatSignalFrameDataSchemaV1"
+          },
+          "schema_name": "NatSignalFrameDataSchemaV1",
+          "serialization_type": "Json",
+          "type": "Data"
+        }
+      ]
+    },
+    "4179070804955221536": {
+      "topics": [
+        {
+          "descriptor": {
+            "descriptor_version": 1,
+            "root": {
+              "description": "Descriptor for generic numeric multi-channel signal frames",
+              "fields": {
+                "channels": {
+                  "description": "Signal channels carried in this frame",
+                  "id": "channels",
+                  "items": {
+                    "description": "One numeric signal channel",
+                    "fields": {
+                      "label": {
+                        "description": "Channel label",
+                        "id": "label",
+                        "label": "Label",
+                        "optional": true,
+                        "type": "string"
+                      },
+                      "samples": {
+                        "description": "Per-channel numeric samples",
+                        "id": "samples",
+                        "items": {
+                          "description": "One numeric derived sample",
+                          "id": "sample",
+                          "label": "Sample",
+                          "optional": false,
+                          "type": "float32"
+                        },
+                        "label": "Samples",
+                        "optional": false,
+                        "type": "array"
+                      }
+                    },
+                    "id": "channel",
+                    "label": "Channel",
+                    "optional": false,
+                    "type": "object"
+                  },
+                  "label": "Channels",
+                  "optional": false,
+                  "type": "array"
+                },
+                "device_id": {
+                  "description": "Upstream producer or source identifier",
+                  "id": "device_id",
+                  "label": "Device ID",
+                  "optional": false,
+                  "type": "string"
+                },
+                "device_ts_us": {
+                  "description": "Producer timestamp in microseconds",
+                  "id": "device_ts_us",
+                  "label": "Device Timestamp",
+                  "optional": false,
+                  "type": "uint64",
+                  "unit": "us"
+                },
+                "sample_rate_hz": {
+                  "description": "Per-channel sample rate",
+                  "id": "sample_rate_hz",
+                  "label": "Sample Rate",
+                  "optional": false,
+                  "type": "uint32",
+                  "unit": "Hz"
+                },
+                "seq_no": {
+                  "description": "Frame sequence number",
+                  "id": "seq_no",
+                  "label": "Sequence Number",
+                  "optional": false,
+                  "type": "uint64"
+                }
+              },
+              "id": "root",
+              "label": "Signal Frame",
+              "optional": false,
+              "type": "object"
+            },
+            "schema_name": "NatSignalFrameDataSchemaV1"
+          },
+          "schema_name": "NatSignalFrameDataSchemaV1",
+          "serialization_type": "Json",
+          "type": "Data"
+        }
+      ]
+    },
+    "600493964616185583": {
+      "topics": [
+        {
+          "descriptor": {
+            "descriptor_version": 1,
+            "root": {
+              "description": "Descriptor for generic numeric multi-channel signal frames",
+              "fields": {
+                "channels": {
+                  "description": "Signal channels carried in this frame",
+                  "id": "channels",
+                  "items": {
+                    "description": "One numeric signal channel",
+                    "fields": {
+                      "label": {
+                        "description": "Channel label",
+                        "id": "label",
+                        "label": "Label",
+                        "optional": true,
+                        "type": "string"
+                      },
+                      "samples": {
+                        "description": "Per-channel numeric samples",
+                        "id": "samples",
+                        "items": {
+                          "description": "One numeric derived sample",
+                          "id": "sample",
+                          "label": "Sample",
+                          "optional": false,
+                          "type": "float32"
+                        },
+                        "label": "Samples",
+                        "optional": false,
+                        "type": "array"
+                      }
+                    },
+                    "id": "channel",
+                    "label": "Channel",
+                    "optional": false,
+                    "type": "object"
+                  },
+                  "label": "Channels",
+                  "optional": false,
+                  "type": "array"
+                },
+                "device_id": {
+                  "description": "Upstream producer or source identifier",
+                  "id": "device_id",
+                  "label": "Device ID",
+                  "optional": false,
+                  "type": "string"
+                },
+                "device_ts_us": {
+                  "description": "Producer timestamp in microseconds",
+                  "id": "device_ts_us",
+                  "label": "Device Timestamp",
+                  "optional": false,
+                  "type": "uint64",
+                  "unit": "us"
+                },
+                "sample_rate_hz": {
+                  "description": "Per-channel sample rate",
+                  "id": "sample_rate_hz",
+                  "label": "Sample Rate",
+                  "optional": false,
+                  "type": "uint32",
+                  "unit": "Hz"
+                },
+                "seq_no": {
+                  "description": "Frame sequence number",
+                  "id": "seq_no",
+                  "label": "Sequence Number",
+                  "optional": false,
+                  "type": "uint64"
+                }
+              },
+              "id": "root",
+              "label": "Signal Frame",
+              "optional": false,
+              "type": "object"
+            },
+            "schema_name": "NatSignalFrameDataSchemaV1"
+          },
+          "schema_name": "NatSignalFrameDataSchemaV1",
+          "serialization_type": "Json",
+          "type": "Data"
+        }
+      ]
+    },
+    "6035113821870735645": {
+      "topics": []
+    },
+    "8621709797460436817": {
+      "topics": [
+        {
+          "descriptor": {
+            "descriptor_version": 1,
+            "root": {
+              "description": "Descriptor for generic numeric multi-channel signal frames",
+              "fields": {
+                "channels": {
+                  "description": "Signal channels carried in this frame",
+                  "id": "channels",
+                  "items": {
+                    "description": "One numeric signal channel",
+                    "fields": {
+                      "label": {
+                        "description": "Channel label",
+                        "id": "label",
+                        "label": "Label",
+                        "optional": true,
+                        "type": "string"
+                      },
+                      "samples": {
+                        "description": "Per-channel numeric samples",
+                        "id": "samples",
+                        "items": {
+                          "description": "One numeric derived sample",
+                          "id": "sample",
+                          "label": "Sample",
+                          "optional": false,
+                          "type": "float32"
+                        },
+                        "label": "Samples",
+                        "optional": false,
+                        "type": "array"
+                      }
+                    },
+                    "id": "channel",
+                    "label": "Channel",
+                    "optional": false,
+                    "type": "object"
+                  },
+                  "label": "Channels",
+                  "optional": false,
+                  "type": "array"
+                },
+                "device_id": {
+                  "description": "Upstream producer or source identifier",
+                  "id": "device_id",
+                  "label": "Device ID",
+                  "optional": false,
+                  "type": "string"
+                },
+                "device_ts_us": {
+                  "description": "Producer timestamp in microseconds",
+                  "id": "device_ts_us",
+                  "label": "Device Timestamp",
+                  "optional": false,
+                  "type": "uint64",
+                  "unit": "us"
+                },
+                "sample_rate_hz": {
+                  "description": "Per-channel sample rate",
+                  "id": "sample_rate_hz",
+                  "label": "Sample Rate",
+                  "optional": false,
+                  "type": "uint32",
+                  "unit": "Hz"
+                },
+                "seq_no": {
+                  "description": "Frame sequence number",
+                  "id": "seq_no",
+                  "label": "Sequence Number",
+                  "optional": false,
+                  "type": "uint64"
+                }
+              },
+              "id": "root",
+              "label": "Signal Frame",
+              "optional": false,
+              "type": "object"
+            },
+            "schema_name": "NatSignalFrameDataSchemaV1"
+          },
+          "schema_name": "NatSignalFrameDataSchemaV1",
+          "serialization_type": "Json",
+          "type": "Data"
+        }
+      ]
+    }
+  },
+  "type": "stream_list"
+}

@@ -5,7 +5,6 @@
         StreamViewerWebSocket,
         type ConnectionState,
     } from "../StreamViewer/websocket";
-    import { descriptorSupportsAnyTransformCapability } from "../StreamViewer/schemaDescriptor";
     import StreamGraphEditor from "./StreamGraphEditor.svelte";
     import type {
         StreamInfo,
@@ -21,6 +20,15 @@
         ProfileListMessage,
         ProfileSavedMessage,
         ProfileDeletedMessage,
+        Experiment,
+        ExperimentListMessage,
+        ExperimentSavedMessage,
+        ExperimentDeletedMessage,
+        ExperimentInstanceMessage,
+        StreamGraphDeletedMessage,
+        StreamGraphForkedMessage,
+        ExperimentInstanceVerificationMessage,
+        InstanceReplayMessage,
         StreamGraphStatusMessage,
         StreamGraphStatusSummary,
         StreamGraphValidationMessage,
@@ -113,6 +121,24 @@
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     // Phase 4: individual profiles (person -> saved classify graph).
     let profiles = $state<Profile[]>([]);
+    // Experiments (experiment-history-snapshots-plan): first-class objects that
+    // own a board + its recorded history. The protocol lives here now, not on a
+    // node.
+    let experiments = $state<Experiment[]>([]);
+    // The instance currently being recorded (minted on Record, closed on Stop).
+    // Held here rather than in the editor because materialization finishes
+    // asynchronously and its result is BROADCAST, not returned to a caller.
+    let recordingInstanceGraphId = $state<string | null>(null);
+    // A freshly created fork the editor should open (cleared once it has).
+    let forkedGraphToOpen = $state<string | null>(null);
+    // The replay session in flight, if any (Phase 5). Held here because
+    // materialization-style progress arrives as BROADCASTS from the replay thread,
+    // not as replies.
+    let activeReplay = $state<InstanceReplayMessage | null>(null);
+    // Latest artifact-integrity check per instance graph id (Phase 4 review).
+    let instanceVerifications = $state<
+        Record<string, ExperimentInstanceVerificationMessage>
+    >({});
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
     );
@@ -369,6 +395,14 @@
         liveStreams = rest;
     }
 
+    function sortExperiments(list: Experiment[]): Experiment[] {
+        return [...list].sort(
+            (left, right) =>
+                (right.updated_at_us || 0) - (left.updated_at_us || 0) ||
+                left.label.localeCompare(right.label),
+        );
+    }
+
     function formatNumber(num: number, decimals: number = 4): string {
         return num.toFixed(decimals);
     }
@@ -434,6 +468,121 @@
             action: "delete_profile",
             request_id: `profile-delete:${Date.now()}`,
             participant_id: participantId,
+        });
+        return true;
+    }
+
+    // Experiments. save_experiment doubles as the bind action: setting
+    // `live_graph_id` makes the backend stamp `experiment_id` onto that board
+    // (and clear it from any other), so the 1:1 pair is written in one place.
+    function listExperiments() {
+        wsManager?.send({
+            action: "list_experiments",
+            request_id: `experiments:${Date.now()}`,
+        });
+    }
+
+    function saveExperiment(experiment: Experiment): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "save_experiment",
+            request_id: `experiment-save:${Date.now()}`,
+            experiment,
+        });
+        return true;
+    }
+
+    function deleteExperiment(experimentId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "delete_experiment",
+            request_id: `experiment-delete:${Date.now()}`,
+            experiment_id: experimentId,
+        });
+        return true;
+    }
+
+    // Instances (experiment-history-snapshots-plan, Phases 2 + 3). Recording mints
+    // an immutable snapshot of the board welded to the data captured in its window.
+    function startExperimentInstance(
+        experimentId: string,
+        windowStartUs: number,
+    ): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "start_experiment_instance",
+            request_id: `instance-start:${Date.now()}`,
+            experiment_id: experimentId,
+            window_start_us: windowStartUs,
+        });
+        return true;
+    }
+
+    function finishExperimentInstance(
+        graphId: string,
+        windowEndUs: number,
+        completed: boolean,
+    ): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "finish_experiment_instance",
+            request_id: `instance-finish:${Date.now()}`,
+            graph_id: graphId,
+            window_end_us: windowEndUs,
+            completed,
+        });
+        return true;
+    }
+
+    // Fork an instance into an editable copy (Phase 0's action, finally wired up).
+    // The reply carries the new graph; the editor opens it so the user lands in the
+    // copy they just asked for rather than having to find it.
+    function forkStreamGraph(sourceGraphId: string, label?: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "fork_stream_graph",
+            request_id: `graph-fork:${Date.now()}`,
+            source_graph_id: sourceGraphId,
+            ...(label ? { label } : {}),
+        });
+        return true;
+    }
+
+    function verifyExperimentInstance(graphId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "verify_experiment_instance",
+            request_id: `instance-verify:${Date.now()}`,
+            graph_id: graphId,
+        });
+        return true;
+    }
+
+    function deleteStreamGraph(graphId: string, force = false): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "delete_stream_graph",
+            request_id: `graph-delete:${Date.now()}`,
+            graph_id: graphId,
+            force,
         });
         return true;
     }
@@ -568,9 +717,10 @@
             lastError = "Visual Programming WebSocket is not connected";
             return;
         }
-        if (config.train_runs.length === 0) {
+        const trainInstances = config.train_instances ?? [];
+        if (config.train_runs.length === 0 && trainInstances.length === 0) {
             trainJobStatus =
-                "error: pick at least one training run";
+                "error: pick at least one recorded instance (or a run) to train on";
             return;
         }
         // Validation runs are optional — the model fits on the training runs
@@ -595,6 +745,13 @@
             thread_slot_id: threadSlotId,
             train_runs: config.train_runs,
             eval_runs: config.eval_runs,
+            // Instance ids go up as ids; the BACKEND swaps them for artifact paths
+            // (it owns the instance store). Training then reads the recording's
+            // Parquet off disk instead of reconstructing it from Kafka.
+            ...(trainInstances.length ? { train_instances: trainInstances } : {}),
+            ...(config.eval_instances?.length
+                ? { eval_instances: config.eval_instances }
+                : {}),
             families: config.families,
             ...(config.selected_fields.length
                 ? { selected_fields: config.selected_fields }
@@ -622,7 +779,72 @@
         return true;
     }
 
-    function startStreamGraph(graphId: string, startOffset?: number): boolean {
+    // Replay an instance: mint the scratch topics, then (once they exist) start the
+    // graph bound to them so the whole pipeline runs over the recording.
+    function startInstanceReplay(
+        graphId: string,
+        mode: "review" | "recompute",
+        speed: number,
+    ): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "start_instance_replay",
+            request_id: `replay-start:${Date.now()}`,
+            graph_id: graphId,
+            mode,
+            speed,
+        });
+        return true;
+    }
+
+    function stopInstanceReplay(replayId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "stop_instance_replay",
+            request_id: `replay-stop:${Date.now()}`,
+            replay_id: replayId,
+        });
+        return true;
+    }
+
+    // A replay's scratch topics are created moments before it reports "started",
+    // and getAllStreams() reads Kafka metadata that takes a few seconds to include
+    // them — so the stream list fetched at that instant comes back without them.
+    // Viewers resolve their renderer from the DESCRIPTOR in that list (the
+    // channel-frame renderer is descriptor-gated; a frame shape hint is not
+    // enough), so until the replayed streams are listed a viewer subscribes,
+    // receives the replayed records, and still shows "Waiting for data on this
+    // stream…". Replay progress messages are far too sparse to converge on (two in
+    // the first fifteen seconds), hence a short bounded poll that stops as soon as
+    // every replayed stream is known.
+    let replayStreamPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function awaitReplayStreams(streamIds: string[], attempt = 0): void {
+        if (replayStreamPollTimer) {
+            clearTimeout(replayStreamPollTimer);
+            replayStreamPollTimer = null;
+        }
+        const missing = streamIds.filter((id) => !(id in availableStreams));
+        if (missing.length === 0 || attempt >= 8) {
+            return;
+        }
+        wsManager?.requestStreamList();
+        replayStreamPollTimer = setTimeout(
+            () => awaitReplayStreams(streamIds, attempt + 1),
+            1200,
+        );
+    }
+
+    function startStreamGraph(
+        graphId: string,
+        startOffset?: number,
+        replayId?: string,
+    ): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
             return false;
@@ -647,6 +869,7 @@
             request_id: `stream-graph-start:${Date.now()}`,
             graph_id: graphId,
             ...(startOffset !== undefined ? { start_offset: startOffset } : {}),
+            ...(replayId ? { replay_id: replayId } : {}),
         });
         return true;
     }
@@ -716,6 +939,7 @@
                     });
                     listStreamGraphs();
                     listProfiles();
+                    listExperiments();
                     // Ask the control plane (via the proxy) for compute slots so a
                     // train submit can auto-pick one; periodic pushes keep it fresh.
                     wsManager?.sendMlAction({
@@ -772,6 +996,109 @@
                         profile.participant_id !== message.participant_id,
                 );
             },
+            onExperimentList: (message: ExperimentListMessage) => {
+                experiments = sortExperiments(message.experiments);
+            },
+            onExperimentSaved: (message: ExperimentSavedMessage) => {
+                const remaining = experiments.filter(
+                    (experiment) =>
+                        experiment.experiment_id !== message.experiment_id,
+                );
+                experiments = sortExperiments([...remaining, message.experiment]);
+                // The save also (re)bound a board, so the graph records the
+                // backend just rewrote are now stale locally.
+                listStreamGraphs();
+            },
+            onExperimentInstance: (message: ExperimentInstanceMessage) => {
+                // Upsert into the graph list: an instance IS a graph record, so the
+                // board picker's instance filter and the history both read it from
+                // there rather than from a second list that could disagree.
+                const remaining = streamGraphs.filter(
+                    (graph) => graph.graph_id !== message.graph_id,
+                );
+                streamGraphs = [...remaining, message.graph];
+                const status = message.graph.recording?.status;
+                if (status === "recording") {
+                    recordingInstanceGraphId = message.graph_id;
+                } else if (recordingInstanceGraphId === message.graph_id) {
+                    recordingInstanceGraphId = null;
+                }
+                if (status === "failed") {
+                    lastError =
+                        `Instance ${message.instance_id} failed to materialize: ` +
+                        (message.graph.recording?.message ?? "unknown reason");
+                }
+            },
+            onStreamGraphDeleted: (message: StreamGraphDeletedMessage) => {
+                streamGraphs = streamGraphs.filter(
+                    (graph) => graph.graph_id !== message.graph_id,
+                );
+                const { [message.graph_id]: _dropped, ...rest } =
+                    instanceVerifications;
+                instanceVerifications = rest;
+            },
+            onStreamGraphForked: (message: StreamGraphForkedMessage) => {
+                const remaining = streamGraphs.filter(
+                    (graph) => graph.graph_id !== message.graph.graph_id,
+                );
+                streamGraphs = [...remaining, message.graph];
+                // Hand the editor the fork to open — the point of forking is to
+                // start editing the copy.
+                forkedGraphToOpen = message.graph.graph_id;
+            },
+            onInstanceReplay: (message: InstanceReplayMessage) => {
+                if (["stopped", "finished", "failed"].includes(message.state)) {
+                    if (activeReplay?.replay_id === message.replay_id) {
+                        activeReplay = null;
+                    }
+                    if (message.state === "failed") {
+                        lastError = `Replay failed: ${message.error ?? "unknown reason"}`;
+                    }
+                    // The scratch topics are deleted when a replay ends; drop them
+                    // from the advertised list so nothing keeps offering them.
+                    wsManager?.requestStreamList();
+                    return;
+                }
+                const isNew = activeReplay?.replay_id !== message.replay_id;
+                activeReplay = message;
+                if (isNew) {
+                    awaitReplayStreams(
+                        (message.bindings ?? []).map((binding) =>
+                            String(binding.replay_stream_id),
+                        ),
+                    );
+                }
+                // The backend only answers once the first record is on the scratch
+                // topic, so by now it exists — start the graph against it. A
+                // transform resolves its source topic on the broker, so starting
+                // any earlier would fail to find it.
+                if (isNew && message.state === "started") {
+                    // Re-fetch the stream list first: get_streams is otherwise only
+                    // sent once, on connect, so a replay's scratch topics are absent
+                    // from availableStreams. Viewers resolve their renderer and
+                    // channel labels from that list's descriptor, so without this a
+                    // viewer subscribes, receives the replayed records, and still
+                    // shows "Waiting for data on this stream…" because it cannot
+                    // tell what schema they are.
+                    wsManager?.requestStreamList();
+                    startStreamGraph(message.graph_id, undefined, message.replay_id);
+                }
+            },
+            onExperimentInstanceVerification: (
+                message: ExperimentInstanceVerificationMessage,
+            ) => {
+                instanceVerifications = {
+                    ...instanceVerifications,
+                    [message.graph_id]: message,
+                };
+            },
+            onExperimentDeleted: (message: ExperimentDeletedMessage) => {
+                experiments = experiments.filter(
+                    (experiment) =>
+                        experiment.experiment_id !== message.experiment_id,
+                );
+                listStreamGraphs();
+            },
             onStreamGraphValidation: (
                 message: StreamGraphValidationMessage,
             ) => {
@@ -799,6 +1126,16 @@
                     },
                 };
                 listStreamGraphs();
+                // Starting a graph MINTS topics the frontend has never seen — every
+                // transform/combine output, and a replay's scratch topics. Viewers
+                // resolve their renderer and channel labels from the descriptor in
+                // the advertised stream list, and get_streams is otherwise only sent
+                // once on connect, so without this a viewer subscribes, receives
+                // records, and still reports "Waiting for data on this stream…"
+                // because it cannot tell what schema they are. This is the
+                // authoritative moment: the backend has just resolved these topics
+                // on the broker in order to build the workers.
+                wsManager?.requestStreamList();
             },
             onStreamGraphStopped: (message: StreamGraphStoppedMessage) => {
                 streamGraphStatuses = {
@@ -905,7 +1242,12 @@
         wsManager?.disconnect();
     });
 
-    let transformSourceStreams = $derived(
+    // Every discovered stream is selectable as a source node. This is NOT
+    // filtered to transform-compatible streams (the old behavior) — a source node
+    // just represents a stream to view/record/route, and gating it on transform
+    // capability hid non-channel-frame sensors like the IMU from the palette
+    // entirely. Transform-compatibility is enforced later, at connection time.
+    const editorStreams = $derived(
         Object.entries(availableStreams)
             .map(([streamId, info]) => ({
                 streamId,
@@ -914,23 +1256,9 @@
                         ?.schema_name ?? "Unknown",
                 descriptor:
                     info.topics.find((topic) => topic.descriptor)?.descriptor,
+                live: false,
             }))
-            .filter((stream) =>
-                descriptorSupportsAnyTransformCapability(
-                    stream.descriptor,
-                    transformCapabilities,
-                ),
-            )
             .sort((left, right) => left.streamId.localeCompare(right.streamId)),
-    );
-
-    const editorStreams = $derived(
-        transformSourceStreams.map((stream) => ({
-            streamId: stream.streamId,
-            schemaName: stream.schemaName,
-            descriptor: stream.descriptor,
-            live: false,
-        })),
     );
 
 </script>
@@ -960,6 +1288,21 @@
         {listProfiles}
         {saveProfile}
         {deleteProfile}
+        {experiments}
+        {saveExperiment}
+        {deleteExperiment}
+        {startExperimentInstance}
+        {finishExperimentInstance}
+        {deleteStreamGraph}
+        {recordingInstanceGraphId}
+        {forkStreamGraph}
+        {verifyExperimentInstance}
+        {startInstanceReplay}
+        {stopInstanceReplay}
+        {activeReplay}
+        {instanceVerifications}
+        {forkedGraphToOpen}
+        onForkOpened={() => (forkedGraphToOpen = null)}
         {restartStreamGraphNode}
         {publishSessionBundle}
         {submitTrainJob}

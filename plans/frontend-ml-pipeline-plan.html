@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Frontend ML Pipeline Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p { margin: 10px 0 0; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 840px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    margin-top: 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin-top: 12px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  pre {
+    margin: 12px 0 0;
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · frontend · libnatkit · June 26 2026</div>
+  <h1>Frontend-Driven ML Pipeline Plan</h1>
+  <p class="subtitle">
+    Add a frontend workflow for discovering Kafka-backed data streams, building
+    processing and ML graphs, training and validating models, and publishing
+    results back onto natKit stream infrastructure. Move runtime inference and
+    graph execution into natKit/libnatkit over time, with ONNX Runtime as the
+    target inference engine and the current Python tooling retained only as a
+    reference path during migration.
+  </p>
+  <div class="meta">
+    Scope: <code>frontend/</code> as the user interface, <code>libnatkit</code> as the execution substrate,
+    <code>natVR</code> Python as the current reference implementation to phase out deliberately.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Recommendation</h2>
+    <ul>
+      <li>Yes: the frontend should become the primary UI for model training, validation, and deployment workflows.</li>
+      <li>Yes: ONNX Runtime support in <code>libnatkit</code> is the correct long-term runtime direction if natKit is meant to own ML execution.</li>
+      <li>No: do not immediately scrap the existing Python scripts. Keep them as the reference implementation until the C++ graph/runtime path can reproduce reconstruction, featurization, training, and replay validation with equivalent outputs.</li>
+      <li>Build this as a staged migration: frontend orchestration first, shared pipeline model second, native execution third, Python removal last.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Direction Makes Sense</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Operator workflow</h3>
+        <ul>
+          <li>Users need stream browsing, run selection, labeling, training, and deployment in one place.</li>
+          <li>The current Python CLIs are composable, but they are not a usable end-user surface.</li>
+          <li>The existing Svelte frontend already has stream-viewer and experiment UI pieces that can anchor this work.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>System ownership</h3>
+        <ul>
+          <li>If natKit owns real-time stream processing, natKit should eventually own inference runtime too.</li>
+          <li>Keeping inference in Python forever creates two systems: the stream platform and the ML runtime.</li>
+          <li>A core runtime in <code>libnatkit</code> gives one transport, one deployment story, and one execution model.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>Training and validation logic already exist in <code>natVR</code>.</li>
+          <li>The frontend should not directly implement signal processing or training math in TypeScript.</li>
+          <li>The frontend should configure and inspect pipelines; the backend/runtime should execute them.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="warn">
+    <h2>What Should Not Happen</h2>
+    <ul>
+      <li>Do not rebuild the existing Python DSP and model selection logic ad hoc in the frontend.</li>
+      <li>Do not make the browser responsible for long-running training, Kafka consumption, or model artifact storage.</li>
+      <li>Do not jump straight to a free-form visual programming UI before the execution model is stable.</li>
+      <li>Do not remove Python before there is a compatibility harness proving the native path matches expected outputs.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <table>
+      <tr>
+        <th>Area</th>
+        <th>What exists now</th>
+        <th>Gap to close</th>
+      </tr>
+      <tr>
+        <td><code>frontend/</code></td>
+        <td>Svelte/Vite UI, stream viewer, experiment publishing flows, WebSocket interaction patterns</td>
+        <td>No model training workspace, no graph editor, no pipeline lifecycle UI</td>
+      </tr>
+      <tr>
+        <td><code>natVR</code> Python</td>
+        <td>Kafka reconstruction, featurization, calibration, training, replay evaluation, model selection</td>
+        <td>CLI-only workflow, no stable service API, logic split across scripts</td>
+      </tr>
+      <tr>
+        <td><code>libnatkit</code></td>
+        <td>Core stream and bridge direction, C++ ownership of transport/records expanding</td>
+        <td>No native ML graph runtime, no ONNX integration, no training/inference node API</td>
+      </tr>
+      <tr>
+        <td>Pipeline model</td>
+        <td>Implicit in Python scripts and file formats</td>
+        <td>No shared typed graph spec spanning UI, execution, and persistence</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Target System</h2>
+    <pre>Frontend (Svelte)
+  ├─ browse Kafka-backed stream clusters and recorded runs
+  ├─ assemble training / validation datasets
+  ├─ design pipelines as graphs
+  ├─ trigger training / validation jobs
+  ├─ inspect metrics, artifacts, confusion matrices, and lineage
+  └─ publish or deploy selected models
+
+natKit control plane
+  ├─ stores graph definitions
+  ├─ resolves stream schemas and artifact locations
+  ├─ schedules jobs
+  └─ exposes job progress and logs to the frontend
+
+libnatkit execution runtime
+  ├─ Kafka source / sink nodes
+  ├─ stream windowing and transform nodes
+  ├─ feature extraction nodes
+  ├─ ONNX inference nodes
+  ├─ post-processing / smoothing nodes
+  └─ artifact emitters and output publishers
+
+Reference / migration layer
+  └─ existing natVR Python pipeline remains callable until native parity is reached</pre>
+  </section>
+
+  <section>
+    <h2>Execution Model</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Graph definition</h3>
+        <ul>
+          <li>Represent each workflow as a typed directed graph.</li>
+          <li>Nodes define input contracts, output contracts, config schema, and runtime capability requirements.</li>
+          <li>Graphs must be serializable as JSON so they can be stored, diffed, and executed outside the UI.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Job types</h3>
+        <ul>
+          <li><code>reconstruct</code>: Kafka run to parquet/markers/artifacts</li>
+          <li><code>feature-build</code>: artifact to features/calibration</li>
+          <li><code>train</code>: dataset to model artifact</li>
+          <li><code>validate</code>: model + validation runs to report</li>
+          <li><code>stream-runtime</code>: live source to live output stream</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Runtime separation</h3>
+        <ul>
+          <li>The browser defines graphs and watches jobs.</li>
+          <li>The control plane validates graphs and dispatches work.</li>
+          <li>The runtime executes nodes and publishes logs, metrics, and artifacts.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Visual Programming Scope</h2>
+    <p>
+      The visual interface should start narrow. The first graph editor should be
+      about assembling a stream-processing pipeline from a fixed catalog of
+      nodes, not arbitrary user-authored code.
+    </p>
+    <table>
+      <tr>
+        <th>Node family</th>
+        <th>Examples</th>
+        <th>First release scope</th>
+      </tr>
+      <tr>
+        <td>Sources</td>
+        <td><code>KafkaRunSource</code>, <code>KafkaLiveSource</code>, <code>ArtifactSource</code></td>
+        <td>Required</td>
+      </tr>
+      <tr>
+        <td>Transforms</td>
+        <td><code>Window</code>, <code>Resample</code>, <code>NotchFilter</code>, <code>Highpass</code></td>
+        <td>Required</td>
+      </tr>
+      <tr>
+        <td>Features</td>
+        <td><code>HudginsFeatureExtractor</code>, later spectrogram/CNN input builders</td>
+        <td>Required</td>
+      </tr>
+      <tr>
+        <td>ML</td>
+        <td><code>TrainLDA</code>, <code>TrainLinearSVM</code>, <code>TrainRandomForest</code>, <code>ONNXInfer</code></td>
+        <td>Start with train/eval wrappers; native ONNX infer after core runtime exists</td>
+      </tr>
+      <tr>
+        <td>Post-processing</td>
+        <td><code>MajorityVote</code>, <code>ThresholdGate</code>, <code>MarkerGate</code></td>
+        <td>Required for live runtime parity</td>
+      </tr>
+      <tr>
+        <td>Sinks</td>
+        <td><code>ArtifactSink</code>, <code>KafkaPublishSink</code>, <code>ReportSink</code></td>
+        <td>Required</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Kafka Integration Model</h2>
+    <ul>
+      <li>Recorded-run discovery should reuse the session/run logic already built for <code>natvr-emg-reconstruct</code>.</li>
+      <li>The frontend should let users choose training and validation sets directly from discovered Kafka-backed runs.</li>
+      <li>The runtime should treat Kafka as both source and sink, with artifact emission separated from live stream publication.</li>
+      <li>Each job should record exact input stream topics, selected run windows, transformation graph revision, and output artifact IDs.</li>
+      <li>Lineage needs to be first-class; otherwise model reproducibility will collapse as soon as multiple users are training variants.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Native ONNX Runtime Direction</h2>
+    <ul>
+      <li>Add ONNX Runtime support to <code>libnatkit</code> for inference first, not for all training immediately.</li>
+      <li>Inference is the right first native milestone because it has the clearest runtime value for live stream processing.</li>
+      <li>Traditional training families already in Python (LDA, SVM, RF) do not naturally map to ONNX as the training authority. They can still export inference artifacts or remain training-time reference tools during migration.</li>
+      <li>If the long-term goal is user-authored ML pipelines, native execution should focus on: tensor transforms, feature builders, model inference, post-processing, and streaming sinks.</li>
+      <li>Training can remain hybrid longer than inference without harming the product direction.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Migration Strategy</h2>
+    <div class="status">Recommended: dual-track migration</div>
+    <table>
+      <tr>
+        <th>Phase</th>
+        <th>Goal</th>
+        <th>Primary implementation</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>Frontend job orchestration for existing workflows</td>
+        <td>UI + backend wrapper around current Python scripts</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Shared graph/job schema</td>
+        <td>Control-plane contracts used by both UI and Python wrappers</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Native <code>libnatkit</code> inference graph runtime</td>
+        <td>C++ nodes + ONNX Runtime + Kafka source/sink nodes</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Parity harness against Python outputs</td>
+        <td>Golden-run comparison suite for reconstruction, features, and inference</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Frontend graph editor and deployment UX</td>
+        <td>Svelte pipeline designer backed by native runtime</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Retire Python runtime paths that are fully replaced</td>
+        <td>Only after measured parity and operational confidence</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <ul>
+      <li><strong>Phase A · Control-plane first:</strong> expose existing reconstruct/train/validate operations through a backend service the frontend can call.</li>
+      <li><strong>Phase B · Dataset UI:</strong> build run browser, train/eval selectors, job submission, and report viewing in the frontend.</li>
+      <li><strong>Phase C · Graph schema:</strong> define a versioned JSON graph format and node catalog that can describe the current pipeline without visual editing yet.</li>
+      <li><strong>Phase D · Native runtime:</strong> implement <code>libnatkit</code> stream nodes and ONNX inference support for live runtime graphs.</li>
+      <li><strong>Phase E · Visual editor:</strong> add a constrained graph canvas that edits the same JSON graph model used by jobs.</li>
+      <li><strong>Phase F · Python reduction:</strong> remove or freeze Python paths only after parity tests, artifact compatibility, and operator workflows are stable.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>First Deliverables</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Deliverable 1</h3>
+        <p><strong>Training workspace UI</strong></p>
+        <ul>
+          <li>Kafka run browser</li>
+          <li>train/eval selection</li>
+          <li>job launch and status</li>
+          <li>report viewer</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Deliverable 2</h3>
+        <p><strong>Pipeline/job schema</strong></p>
+        <ul>
+          <li>graph JSON spec</li>
+          <li>node catalog metadata</li>
+          <li>artifact lineage model</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Deliverable 3</h3>
+        <p><strong>Native runtime spike</strong></p>
+        <ul>
+          <li>Kafka source node</li>
+          <li>window/feature node</li>
+          <li>ONNX inference node</li>
+          <li>Kafka publish sink</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Where should the control plane live: a new natKit backend service, existing bridge process, or a dedicated job service?</li>
+      <li>Should graph definitions live in Kafka metadata streams, filesystem artifacts, or a persistent database?</li>
+      <li>What is the minimal node catalog that makes the first graph editor useful without turning it into a generic IDE?</li>
+      <li>What artifact format should native inference expect for non-ONNX classical models during migration?</li>
+      <li>Which parts of training truly need to move into C++, and which can remain service-side wrappers longer without hurting the architecture?</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Immediate Next Steps</h2>
+    <ul>
+      <li>Define a backend service boundary for the existing Python reconstruct/train/validate workflow.</li>
+      <li>Add a frontend page for Kafka run selection and training job submission.</li>
+      <li>Write a versioned graph JSON spec before building a canvas UI.</li>
+      <li>Prototype <code>libnatkit</code> ONNX inference integration on one narrow live-stream path.</li>
+      <li>Create a parity test harness comparing Python and native outputs on a fixed set of recorded runs.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This plan assumes the product direction is correct: frontend for workflow, natKit/libnatkit for execution. The migration risk is not in the UI; it is in replacing implicit Python pipeline behavior without a shared graph model and parity harness.
+</footer>
+</body>
+</html>

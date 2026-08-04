@@ -1,0 +1,101 @@
+[New LWP 5]
+[New LWP 62]
+[New LWP 63]
+[New LWP 64]
+[New LWP 65]
+[New LWP 66]
+[New LWP 67]
+[New LWP 68]
+[New LWP 72]
+
+warning: Unable to find libthread_db matching inferior's thread library, thread debugging will not be available.
+0x00007fa1a487412b in __pthread_attr_getstacksize (attr=<optimized out>, stacksize=<optimized out>) at ./nptl/pthread_attr_getstacksize.c:36
+36	./nptl/pthread_attr_getstacksize.c: No such file or directory.
+
+Thread 10 (LWP 72 "DrogonIoLoop"):
+#0  0x00007fa1a48bd545 in __scandir64_tail (dp=0x0, namelist=0x0, select=0x7fa198ff0ae0, cmp=0x7fa1a48bd545 <__scandir64_tail+101>) at ./scandir-tail-common.c:39
+#1  0x0000000000000000 in ?? ()
+
+Thread 9 (LWP 68 "DrogonIoLoop"):
+#0  0x00007fa1a4873f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007fa19c003270 in ?? ()
+#3  0x00007fa1997f2950 in ?? ()
+#4  0x00007fa19c003248 in ?? ()
+#5  0x00007fa19c003248 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 8 (LWP 67 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7fa180001f38, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 7 (LWP 66 "rdk:broker-1"):
+#0  0x00007fa1a4873f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007fa100000189 in ?? ()
+#2  0x00007fa19c054a00 in ?? ()
+#3  0x00007fa19a7f4660 in ?? ()
+#4  0x00007fa19c0549d8 in ?? ()
+#5  0x00007fa19c0549d8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 6 (LWP 65 "rdk:main"):
+#0  0x00007fa1a4873f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007fa19c012000 in ?? ()
+#3  0x00007fa19aff5910 in ?? ()
+#4  0x00007fa19c011fd8 in ?? ()
+#5  0x00007fa19c011fd8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 5 (LWP 64 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7fa184002588, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 4 (LWP 63 "rdk:broker-1"):
+#0  0x00007fa1a4873f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007fa100000189 in ?? ()
+#2  0x00007fa19c05e690 in ?? ()
+#3  0x00007fa19bff7660 in ?? ()
+#4  0x00007fa19c05e668 in ?? ()
+#5  0x00007fa19c05e668 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 3 (LWP 62 "rdk:main"):
+#0  0x00007fa1a4873f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007fa19c02f1f0 in ?? ()
+#3  0x00007fa1a0a7d910 in ?? ()
+#4  0x00007fa19c02f1c8 in ?? ()
+#5  0x00007fa19c02f1c8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 2 (LWP 5 "DrogonIoLoop"):
+#0  0x00007fa1a487412b in __pthread_attr_getstacksize (attr=<optimized out>, stacksize=<optimized out>) at ./nptl/pthread_attr_getstacksize.c:36
+#1  0x000000000bdce7e0 in ?? ()
+#2  0x0000000000520970 in StreamViewerWebSocket::ensureMlControlPlaneClient() ()
+#3  0x000000000057fd4f in StreamViewerWebSocket::handleMlProxyAction(std::shared_ptr<drogon::WebSocketConnection> const&, nlohmann::json_abi_v3_11_2::basic_json<std::map, std::vector, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool, long, unsigned long, double, std::allocator, nlohmann::json_abi_v3_11_2::adl_serializer, std::vector<unsigned char, std::allocator<unsigned char> > > const&) ()
+#4  0x0000000000594ef1 in StreamViewerWebSocket::handleNewMessage(std::shared_ptr<drogon::WebSocketConnection> const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&, drogon::WebSocketMessageType const&) ()
+#5  0x00000000006822ed in std::_Function_handler<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&, std::shared_ptr<drogon::WebSocketConnectionImpl> const&, drogon::WebSocketMessageType const&), drogon::WebsocketControllerBinder::handleNewConnection(std::shared_ptr<drogon::HttpRequestImpl> const&, std::shared_ptr<drogon::WebSocketConnectionImpl> const&) const::{lambda(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&, std::shared_ptr<drogon::WebSocketConnectionImpl> const&, drogon::WebSocketMessageType const&)#1}>::_M_invoke(std::_Any_data const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&, std::shared_ptr<drogon::WebSocketConnectionImpl> const&, drogon::WebSocketMessageType const&) ()
+#6  0x0000000000663fb4 in drogon::WebSocketConnectionImpl::onNewMessage(std::shared_ptr<trantor::TcpConnection> const&, trantor::MsgBuffer*) ()
+#7  0x0000000000620de9 in drogon::HttpServer::onMessage(std::shared_ptr<trantor::TcpConnection> const&, trantor::MsgBuffer*) ()
+#8  0x00000000006eb0ca in trantor::TcpConnectionImpl::readCallback() ()
+#9  0x00000000006e48fc in trantor::Channel::handleEventSafely() [clone .part.0] ()
+#10 0x00000000006e4b88 in trantor::Channel::handleEvent() ()
+#11 0x00000000006d7abc in trantor::EventLoop::loop() ()
+#12 0x00000000006d893b in trantor::EventLoopThread::loopFuncs() ()
+#13 0x00007fa1a4bc4ea4 in ?? () from /usr/local/lib64/libstdc++.so.6
+
+Thread 1 (LWP 2 "libnatkit-natki"):
+#0  0x00007fa1a487412b in __pthread_attr_getstacksize (attr=<optimized out>, stacksize=<optimized out>) at ./nptl/pthread_attr_getstacksize.c:36
+#1  0x000000000bdcde10 in ?? ()
+#2  0x00000000005207a4 in StreamViewerWebSocket::ensureMlControlPlaneClient()::{lambda(drogon::ReqResult, std::shared_ptr<drogon::HttpResponse> const&, std::shared_ptr<drogon::WebSocketClient> const&)#1}::operator()(drogon::ReqResult, std::shared_ptr<drogon::HttpResponse> const&, std::shared_ptr<drogon::WebSocketClient> const&) const [clone .isra.0] ()
+#3  0x000000000065f2f7 in std::_Function_handler<void (trantor::InetAddress const&), drogon::WebSocketClientImpl::connectToServerInLoop()::{lambda(trantor::InetAddress const&)#1}>::_M_invoke(std::_Any_data const&, trantor::InetAddress const&) ()
+#4  0x0000000000701a85 in trantor::AresResolver::resolve(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::function<void (trantor::InetAddress const&)> const&) ()
+#5  0x000000000065d58e in drogon::WebSocketClientImpl::connectToServerInLoop() ()
+#6  0x0000000000520d92 in StreamViewerWebSocket::ensureMlControlPlaneClient() ()
+#7  0x00000000006f54e6 in trantor::TimerQueue::handleRead() ()
+#8  0x00000000006e48fc in trantor::Channel::handleEventSafely() [clone .part.0] ()
+#9  0x00000000006d7abc in trantor::EventLoop::loop() ()
+#10 0x00000000005d9cf2 in drogon::HttpAppFrameworkImpl::run() ()
+#11 0x0000000000478bcb in main ()
+[Inferior 1 (process 2) detached]

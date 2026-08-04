@@ -22,11 +22,11 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 6.0.2
+    version: 5.5.3
 direct_dependencies:
 - espressif/cjson
 - espressif/mqtt
 - idf
 manifest_hash: 3be3b329c73700df361b4bbdcd7d260641dcb79481aba0213bb58a60ec8b6190
 target: esp32c3
-version: 3.0.0
+version: 2.0.0

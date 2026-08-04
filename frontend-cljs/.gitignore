@@ -1,0 +1,6 @@
+node_modules/
+out/
+.shadow-cljs/
+.cpcache/
+resources/public/js/compiled/
+*.log

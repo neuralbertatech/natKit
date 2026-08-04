@@ -1,0 +1,22 @@
+{
+  "name": "natkit-frontend-cljs",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "watch": "npx shadow-cljs watch app",
+    "release": "npx shadow-cljs release app",
+    "test": "npx shadow-cljs compile test && node out/test.js",
+    "test:watch": "npx shadow-cljs watch test",
+    "integration": "npx shadow-cljs compile integration && node out/integration.js",
+    "smoke": "node scripts/protocol_smoke.mjs"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-zoom-pan-pinch": "^3.7.0"
+  },
+  "devDependencies": {
+    "shadow-cljs": "2.28.20"
+  }
+}

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Topic-Aware Channels Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · July 14 2026</div>
+  <h1>Topic-Aware Channels</h1>
+  <p class="meta">
+    Reframe a graph "channel" from a single stream into a <em>bundle of topics</em> (data +
+    markers, and later meta). Make <strong>combine</strong> a topic-aware merger, show what a link
+    carries with a per-edge topic badge, and let a <strong>viewer</strong> sprout a dynamic markers
+    input when the incoming channel has markers &mdash; so markers and data flow, merge, and render
+    together as first-class citizens.
+  </p>
+  <span class="status">Design captured from discussion &mdash; ready to sequence</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>The mental model: a channel is a set of topics</h2>
+    <p>
+      The transport already models this: every stream is a set of topics keyed by
+      <code>StreamType</code> &mdash; <code>DATA</code>, <code>META</code>, <code>MARKER</code>
+      (see <code>BasicTopicInformation.type</code> / <code>RawStream::getTopicsByType</code>). But
+      the graph runtime and editor collapse a node's output to a <em>single</em>
+      <code>output_stream_id</code> (one topic), so markers and data can never travel down the same
+      link. This plan lifts that: a <strong>channel</strong> (a link between nodes) carries a
+      <strong>list of topics</strong>, at most one per type. A link can therefore be:
+    </p>
+    <ul>
+      <li><strong>"data"</strong> &mdash; a single DATA topic (today's default).</li>
+      <li><strong>"markers"</strong> &mdash; a single MARKER topic (an experiment's output).</li>
+      <li><strong>"stream"</strong> &mdash; both a DATA and a MARKER topic bundled together.</li>
+    </ul>
+    <p>
+      An input port <strong>detects what it's fed and relabels itself</strong> accordingly
+      (data / markers / stream). Combine, links, and viewers all become topic-aware off this one
+      model.
+    </p>
+  </section>
+
+  <section>
+    <h2>What exists (build on it)</h2>
+    <ul>
+      <li><strong>Per-type topics</strong>: <code>StreamType::{DATA,MARKER,META}</code>;
+        <code>BasicTopicInformation{type,id,schemaName}</code>; <code>RawStream::getTopicsByType</code>;
+        <code>createTopicInfo(type, key, id, schema)</code>. Topic id = <code>stableStreamId</code>
+        of the full topic string (type is part of the string, so Data/&lt;k&gt; and Marker/&lt;k&gt;
+        have <em>different</em> ids even for the same key <code>k</code>).</li>
+      <li><strong>Marker plumbing (done)</strong>: experiment nodes emit <code>MarkerEventV1</code>
+        to <code>Marker/&lt;experiment_id&gt;</code>; the backend forwards markers as
+        <code>marker</code> WS messages (<code>formatMarkerEventAsJson</code>); subscribe binds
+        MARKER/META topics via <code>findMarkerOrMetaTopicForStreamId</code> and reads them from
+        <code>OFFSET_BEGINNING</code>; the frontend has a <code>marker</code> renderer + MarkerViewer.</li>
+      <li><strong>Timestamped base (done)</strong>: <code>Schema::getTimestampUs()</code> (data &rarr;
+        device_ts_us, markers &rarr; emitted_at_us) &mdash; the shared axis for time-aligned merges + overlays.</li>
+      <li><strong>Combine worker</strong>: <code>CombineWorker</code> concatenates
+        <code>NormalizedNumericChannelFrame</code>s into one <code>NatSignalFrameDataSchemaV1</code>
+        feature vector, now timestamp-aligned by <code>device_ts_us</code> (Phase 5). Validation
+        requires ≥2 numeric-descriptor inputs.</li>
+      <li><strong>Editor</strong>: nodes carry one <code>output_stream_id</code> in runtime status;
+        edges are drawn from a source port to a target port; the viewer picks a renderer via
+        <code>chooseViewerRenderer</code>.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>The core gap this plan closes</h2>
+    <ul>
+      <li>A node output resolves to <strong>one</strong> <code>output_stream_id</code>. There is no
+        way to represent "this link carries a data topic <em>and</em> a marker topic."</li>
+      <li><code>combine</code> is numeric-only and rejects markers (a category error today).</li>
+      <li>A link shows nothing about <strong>what it carries</strong>.</li>
+      <li>A viewer has one input and can't show data with a marker overlay.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part A &mdash; Channel model: a link carries a topic set</h2>
+    <p>
+      Generalize a node's output from one id to a <strong>channel</strong>: an ordered set of topics,
+      at most one per <code>StreamType</code>. This is the enabling change everything else rides on.
+    </p>
+    <pre>Channel = {
+  topics: [
+    { type: "DATA",   stream_id, schema_name },
+    { type: "MARKER", stream_id, schema_name },
+    // (META later)
+  ]
+}
+// "kind" is derived: data-only | markers-only | stream (both)</pre>
+    <ul>
+      <li><strong>Runtime status</strong>: add <code>output_topics: [{id,type,schema}]</code> to a
+        node's status (keep <code>output_stream_id</code> = the DATA topic id, or the sole topic, for
+        backward compatibility). Sources report their real topic set; transform reports its DATA
+        output; experiment reports its MARKER output; combine reports the merged set.</li>
+      <li><strong>Edge resolution</strong>: an edge inherits the source port's channel (its topic
+        set). Downstream input resolution keys off the set, not a single id.</li>
+      <li><strong>Subscribe</strong>: subscribing to a channel binds a messenger per topic in the set
+        (the DATA-topic path stays live-tail; MARKER/META read from the beginning &mdash; already
+        implemented per topic). The frontend routes each topic's records to the right consumer
+        (data &rarr; chart buffers, markers &rarr; marker buffers).</li>
+    </ul>
+    <p><em>Backward compatible:</em> a plain data stream is a channel of one DATA topic; existing
+      single-id graphs keep working (the set has one element).</p>
+  </section>
+
+  <section>
+    <h2>Part B &mdash; Combine as a topic-aware merger</h2>
+    <p>
+      Each combine input detects its incoming channel kind and relabels itself
+      (<strong>data</strong> / <strong>markers</strong> / <strong>stream</strong>). Combine's output
+      is the <strong>per-type union</strong> of its inputs: same-type topics are merged together;
+      the output channel carries one topic per type present across all inputs.
+    </p>
+    <table>
+      <tr><th>Inputs</th><th>Output channel</th><th>How</th></tr>
+      <tr><td>data + data</td><td>one DATA topic</td><td>numeric feature-vector concat (today's behavior), timestamp-aligned</td></tr>
+      <tr><td>markers + markers</td><td>one MARKER topic</td><td>merge/interleave marker events by <code>emitted_at_us</code></td></tr>
+      <tr><td>data + markers</td><td>DATA + MARKER (a "stream")</td><td>pass data through to Data/&lt;out&gt;, markers to Marker/&lt;out&gt; &mdash; no cross-transform</td></tr>
+      <tr><td>stream + data</td><td>DATA + MARKER</td><td>merge the stream's data with the data; carry the stream's markers</td></tr>
+      <tr><td>stream + markers</td><td>DATA + MARKER</td><td>carry the stream's data; merge the stream's markers with the markers</td></tr>
+      <tr><td>stream + stream</td><td>DATA + MARKER</td><td>merge data topics together, merge marker topics together</td></tr>
+    </table>
+    <p>
+      Implementation: split <code>CombineWorker</code> into per-type mergers. The DATA merger is
+      today's numeric concat. Add a <strong>MARKER merger</strong> (interleave <code>MarkerEventV1</code>
+      by <code>emitted_at_us</code>, republished to <code>Marker/&lt;output_identifier&gt;</code>). The
+      combine node's output <code>output_identifier</code> becomes the shared <em>key</em> so
+      <code>Data/&lt;out&gt;</code> and <code>Marker/&lt;out&gt;</code> bundle into one channel. Relax
+      validation: combine accepts data and/or marker inputs; the old "numeric-only" gate becomes
+      "at least one topic per input, merged by type."
+    </p>
+    <ul>
+      <li><strong>Input relabeling</strong>: the frontend labels each connected combine input port
+        <code>data</code>/<code>markers</code>/<code>stream</code> from the resolved upstream channel
+        kind (live, from the edge's topic set).</li>
+      <li><strong>Open:</strong> can a channel hold &gt;1 topic of the same type (e.g. two distinct
+        DATA topics carried side-by-side, not concatenated)? This plan says <strong>no</strong> &mdash;
+        one-per-type, same-type inputs are merged. Revisit if a use case needs parallel same-type
+        topics.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part C &mdash; Link topic badge</h2>
+    <p>
+      Make it visible what a link carries. Render a small <strong>badge on each edge</strong> showing
+      the <strong>topic count</strong> (e.g. a "2" chip mid-link). Clicking it opens a small dropdown
+      listing the contained topics &mdash; type + schema + stream id (e.g. "DATA · NatSignalFrameDataSchemaV1",
+      "MARKER · MarkerEventV1").
+    </p>
+    <ul>
+      <li>Positioned at the edge midpoint (the editor already computes edge endpoints from port
+        anchors; the midpoint is cheap).</li>
+      <li>Reads the edge's resolved channel (Part A). For an unresolved/pre-run edge, show the
+        statically-known count (e.g. an experiment output = 1 marker; a source = 1 data).</li>
+      <li>Non-blocking, click-to-toggle; closes on outside click / Escape.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part D &mdash; Viewer dynamic markers input</h2>
+    <p>
+      A viewer stays single-input by default, but when the user connects a channel that
+      <strong>contains markers</strong>, a dynamic (initially "fake") <strong>markers input</strong>
+      appears. Clicking it <strong>enables</strong> the overlay; the incoming link then
+      <strong>splits</strong> and connects to <em>both</em> the data input and the markers input, and
+      the ChannelFrameViewer draws the markers as labeled vertical lines over the waveform (aligned by
+      timestamp).
+    </p>
+    <ul>
+      <li><strong>Detection</strong>: on connect, if the source channel's topic set includes a MARKER
+        topic, reveal the phantom <code>markers</code> input on the viewer node.</li>
+      <li><strong>Enable + split</strong>: clicking the phantom input promotes it to a real input and
+        rewires the single incoming edge into two logical bindings (data &rarr; <code>in</code>,
+        markers &rarr; <code>markers</code>) from the same source channel. Under the hood both read
+        the same channel's respective topics &mdash; no second user-drawn edge required.</li>
+      <li><strong>Overlay</strong>: <code>ChannelFrameViewer</code> gains a <code>markers</code> prop;
+        marker <code>emitted_at_us</code> maps onto the rolling trace's time axis (for live, align by
+        arrival/wall-clock; for replay, by <code>device_ts_us</code>). Cue = a colored vertical line
+        with the class label; session start/end = a region boundary.</li>
+      <li><strong>Fallback</strong>: a data-only channel never shows the phantom input; a markers-only
+        channel renders the MarkerViewer as today.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Part E &mdash; General marker support (rides along)</h2>
+    <ul>
+      <li>The timeline strip already shows experiment markers; extend it to any channel that carries a
+        MARKER topic.</li>
+      <li>A stream's own MARKER topic becomes browsable/inspectable (the transport already keys it per
+        stream).</li>
+      <li>Markers as an explicit train-node label source (a "stream" or markers channel into a train
+        node supplies labels).</li>
+      <li>Later: a dedicated <strong>gate/segment</strong> node that slices a data channel by cue
+        windows (distinct from combine's merge; it filters/labels by marker windows).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Suggested phasing</h2>
+    <ul>
+      <li><strong>Phase 1 &mdash; Channel model (Part A).</strong> Node status gains
+        <code>output_topics</code>; edge/subscribe resolve a topic set; frontend routes per-topic.
+        Backward compatible (one-topic channels behave as today). No visible feature yet &mdash; the
+        foundation.</li>
+      <li><strong>Phase 2 &mdash; Combine merger (Part B).</strong> Per-type mergers (data concat +
+        marker interleave); relaxed validation; input relabeling data/markers/stream. Now
+        data+markers combine into one "stream" channel.</li>
+      <li><strong>Phase 3 &mdash; Link topic badge (Part C).</strong> Edge midpoint chip + dropdown
+        of contained topics.</li>
+      <li><strong>Phase 4 &mdash; Viewer markers overlay (Part D).</strong> Dynamic markers input +
+        link split + ChannelFrameViewer vertical-line overlay.</li>
+      <li><strong>Phase 5 &mdash; General marker support (Part E).</strong> Timeline per-channel,
+        train label source, (later) gate/segment node.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Decisions (from discussion)</h2>
+    <ul>
+      <li><strong>Channel = topic set.</strong> A link carries a list of topics, at most one per type
+        (DATA/MARKER/META). Input ports relabel themselves data/markers/stream from what they're fed.</li>
+      <li><strong>Combine = per-type union.</strong> Same-type topics merge (data concat, markers
+        interleave); the output carries one topic per type present. data+markers &rarr; a bundled
+        "stream" with no cross-transform.</li>
+      <li><strong>Link badge.</strong> A clickable topic-count chip on each edge with a dropdown of
+        contents.</li>
+      <li><strong>Viewer phantom markers input.</strong> Appears only when the connected channel has
+        markers; enabling it splits the one link into data + markers bindings and overlays markers on
+        the waveform.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Risks &amp; open questions</h2>
+    <ul>
+      <li><span class="q">Same-type multiplicity:</span> the plan forbids &gt;1 topic of a type per
+        channel (same-type inputs merge). If a real need for parallel same-type topics appears, the
+        channel model must grow to a multiset &mdash; revisit before it calcifies.</li>
+      <li><span class="q">Output-id sharing:</span> bundling DATA + MARKER under one channel requires
+        both topics to share a <em>key</em> (<code>Data/&lt;out&gt;</code> + <code>Marker/&lt;out&gt;</code>).
+        Confirm the combine output_identifier can key both without colliding with an experiment's
+        <code>Marker/&lt;experiment_id&gt;</code>.</li>
+      <li><span class="q">Overlay alignment:</span> the ChannelFrameViewer plots a rolling window;
+        mapping absolute marker <code>emitted_at_us</code> onto it is exact for replay but approximate
+        for live (wall-clock). Decide the live alignment reference.</li>
+      <li><strong>Risk:</strong> the single-<code>output_stream_id</code> assumption is threaded
+        through the runtime, status JSON, subscribe, and the editor. Part A is a broad, careful change;
+        keep the one-topic path byte-identical so nothing regresses.</li>
+      <li><strong>Non-goal:</strong> cross-type transforms in combine (e.g. deriving data from markers).
+        Combine only unions + merges same-type topics.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Related: plans/experiments-and-time-plan.html (markers, experiment node, timeline &mdash; Phases 1–6 done),
+    plans/stream-graph-programming-plan.html, plans/visual-programming-rework-plan.html.
+    Building blocks: StreamType/BasicTopicInformation, CombineWorker, formatMarkerEventAsJson,
+    findMarkerOrMetaTopicForStreamId, Schema::getTimestampUs, chooseViewerRenderer/ChannelFrameViewer.
+  </footer>
+</main>
+</body>
+</html>

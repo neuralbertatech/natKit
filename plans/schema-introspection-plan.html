@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit EXG Pill EMG Core Schema and Descriptor Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 900px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · libnatkit-core · plan · July 2 2026</div>
+  <h1>EXG Pill EMG Core Schema and Descriptor Plan</h1>
+  <p class="subtitle">
+    Promote the EXG Pill EMG payload into <code>libnatkit-core</code> as
+    <code>ExgPillEmgDataSchemaV1</code>, register it in the normal decode path, and build the
+    first <code>DataSchemaDescriptor</code> proof on top of that core-owned schema so frontend
+    stream wiring and future visual pipelines can depend on one canonical contract.
+  </p>
+  <div class="meta">
+    Scope: <code>libnatkit-core</code>, bridge and backend decode flow, then descriptor exposure,
+    frontend adoption, and visual-pipeline follow-on.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Create a new canonical core schema class named <code>ExgPillEmgDataSchemaV1</code>.</li>
+      <li>Treat the old natVR-local EMG contract name as legacy and migrate everything onto <code>ExgPillEmgDataSchemaV1</code>.</li>
+      <li>Register the new schema in the default core <code>Registry</code> so normal topic decode works.</li>
+      <li>Move backend EMG handling from raw JSON parsing to typed schema decode.</li>
+      <li>Add a new abstract <code>DataSchemaDescriptor</code> base class in <code>libnatkit-core</code> that inherits from <code>MetaRecord</code>.</li>
+      <li>Use <code>ExgPillEmgDataSchemaV1Descriptor</code> as the first concrete descriptor proof target.</li>
+      <li>Keep descriptor instances stateless with respect to per-message values; runtime access methods must read from a passed decoded <code>Schema</code> record.</li>
+      <li>Use stable machine field ids for lookup paths and separate human labels for display text.</li>
+      <li>Expose typed path access with failure-aware APIs such as <code>Optional&lt;T&gt;</code>, not unchecked casts.</li>
+      <li>Because the platform is still under active development, prefer a clean breaking cutover over preserving backward compatibility; any temporary legacy aliasing should be optional and short-lived.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Implementation Progress</h2>
+    <ul>
+      <li><strong>2026-07-02:</strong> started Phase 1 and Phase 2 by adding the first core-owned <code>ExgPillEmgDataSchemaV1</code> C++ schema implementation in <code>libnatkit-core</code>.</li>
+      <li><strong>2026-07-02:</strong> wired the default core <code>Registry</code> to decode the promoted <code>ExgPillEmgDataSchemaV1</code> payload through the normal core schema path.</li>
+      <li><strong>2026-07-02:</strong> completed the main backend decode cleanup in the Stream Viewer by switching the viewer loop and EMG transform input path from raw JSON parsing to typed <code>ExgPillEmgDataSchemaV1</code> decode.</li>
+      <li><strong>2026-07-02:</strong> added the first descriptor base types in <code>libnatkit-core</code>: <code>FieldValueType</code>, <code>SchemaFieldDescriptor</code>, <code>SchemaPath</code>, <code>FieldValueRef</code>, <code>DataSchemaDescriptor</code>, and <code>DataSchemaDescriptorRegistry</code>.</li>
+      <li><strong>2026-07-02:</strong> implemented a first local-only concrete descriptor, <code>ExgPillEmgDataSchemaV1Descriptor</code>, with typed access to <code>device_id</code>, <code>seq_no</code>, <code>device_ts_us</code>, <code>sample_rate_hz</code>, <code>channels.N.label</code>, and <code>channels.N.samples.M</code>.</li>
+      <li><strong>2026-07-02:</strong> exposed descriptor metadata on backend stream discovery so WebSocket and HTTP topic listings can include a local descriptor JSON block when a known schema is registered.</li>
+      <li><strong>2026-07-02:</strong> completed the first frontend descriptor consumer in the Stream Viewer by adding a generic schema inspector and field picker driven by backend-provided descriptor metadata instead of handwritten EMG-only field lists.</li>
+      <li><strong>2026-07-02:</strong> started Phase 7 cutover by switching natVR topic helpers and Python EMG model wrappers to the canonical <code>ExgPillEmgDataSchemaV1</code> topic schema name.</li>
+      <li><strong>2026-07-02:</strong> completed the breaking cutover by removing the old EMG alias and legacy topic-schema fallback, and by renaming the EMG JSON payload version to <code>exg.pill.emg.data.v1</code>.</li>
+      <li><strong>2026-07-02:</strong> implemented first-pass follow-on descriptors for <code>NatImuDataSchema</code> and <code>NatMuseDataSchema</code>, and registered both in the default descriptor registry.</li>
+      <li><strong>2026-07-02:</strong> broadened frontend descriptor consumption so the Stream Viewer schema inspector can render live IMU and Muse records in addition to EMG.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>What exists now</h3>
+        <ul>
+          <li>Concrete schemas such as <code>NatImuDataSchema</code> already own serialization and decode logic in core.</li>
+          <li>The backend currently hand-translates some schemas into frontend JSON views.</li>
+          <li><code>MetaRecord</code> already exists as a typed metadata transport on <code>META</code> streams.</li>
+          <li>The EXG Pill EMG path now uses the canonical Kafka topic schema name <code>ExgPillEmgDataSchemaV1</code>.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What is missing</h3>
+        <ul>
+          <li>A core-owned EXG Pill EMG schema in <code>libnatkit-core</code>.</li>
+          <li>A schema-owned semantic field model for records such as IMU, Muse, and derived streams.</li>
+          <li>A generic path lookup mechanism like <code>accelerometer.y</code> across arbitrary schemas.</li>
+          <li>A typed contract that the frontend can use for generic inspectors and graph wiring.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>The semantics must live in core, not only in backend presentation code or TypeScript.</li>
+          <li>The wire formats should remain existing schema serializations, not be replaced by ad hoc introspection JSON.</li>
+          <li>Renaming the EMG schema changes Kafka topic suffixes, and that is acceptable at the current stage of platform development.</li>
+          <li>The visual-programming direction needs a real stream contract, not only pretty display JSON.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Migration Direction</h2>
+    <p>
+      The first proof target is the EXG Pill EMG payload. The first step is to promote
+      that payload into <code>libnatkit-core</code> under the canonical name
+      <code>ExgPillEmgDataSchemaV1</code>.
+    </p>
+    <pre>firmware / replay / producers
+  -> JSON payload
+  -> bridge maps to Data-&lt;stream-id&gt;-Json-ExgPillEmgDataSchemaV1
+  -> broker manager uses core Registry
+  -> backend receives typed ExgPillEmgDataSchemaV1
+  -> descriptor layer reads typed fields by path
+  -> frontend / pipeline tools consume one canonical contract</pre>
+    <table>
+      <tr>
+        <th>Concern</th>
+        <th>Current</th>
+        <th>Target</th>
+      </tr>
+      <tr>
+        <td>Core schema class / topic schema name</td>
+        <td>old natVR-local EMG name</td>
+        <td><code>ExgPillEmgDataSchemaV1</code></td>
+      </tr>
+      <tr>
+        <td>Legacy name handling</td>
+        <td>old natVR-local EMG name</td>
+        <td>removed during the breaking cutover</td>
+      </tr>
+      <tr>
+        <td>JSON payload version field</td>
+        <td>old EMG payload version</td>
+        <td><code>exg.pill.emg.data.v1</code></td>
+      </tr>
+    </table>
+    <p>
+      The platform is still being shaped, so this migration does not need a heavy backward-
+      compatibility posture. The preferred path is a direct cutover to the canonical schema, with
+      short-lived aliases only where they materially reduce implementation effort.
+    </p>
+  </section>
+
+  <section>
+    <h2>Descriptor Ownership</h2>
+    <p>
+      The key design choice is that the descriptor itself should own the semantic field model and
+      the runtime access methods, but it should not own per-record mutable values.
+    </p>
+    <p>
+      In other words, the descriptor is a typed metadata object that knows how to describe a data
+      schema and how to read values out of a decoded record instance of that schema.
+    </p>
+    <table>
+      <tr>
+        <th>Layer</th>
+        <th>Purpose</th>
+        <th>Initial choice</th>
+      </tr>
+      <tr>
+        <td><code>DataSchemaDescriptor</code></td>
+        <td>Abstract root for schema description and runtime access</td>
+        <td>Derives from <code>MetaRecord</code> and defines the stable descriptor contract</td>
+      </tr>
+      <tr>
+        <td><code>FooDataSchemaDescriptor</code></td>
+        <td>Concrete schema-specific implementation</td>
+        <td>Knows field layout and how to read fields from <code>FooDataSchema</code></td>
+      </tr>
+      <tr>
+        <td><code>Schema</code> record instance</td>
+        <td>Holds one decoded message payload</td>
+        <td>Passed into descriptor accessors so values stay out of descriptor state</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Proposed Core Model</h2>
+    <table>
+      <tr>
+        <th>Type</th>
+        <th>Role</th>
+        <th>Notes</th>
+      </tr>
+      <tr>
+        <td><code>FieldValueType</code></td>
+        <td>Leaf/object/array kind enum</td>
+        <td>Start with <code>bool</code>, integer widths, float widths, <code>enum</code>, <code>object</code>, <code>array</code></td>
+      </tr>
+      <tr>
+        <td><code>SchemaFieldDescriptor</code></td>
+        <td>One named field</td>
+        <td>Includes machine id, label, description, unit, optional flag, enum definition, and child fields</td>
+      </tr>
+      <tr>
+        <td><code>DataSchemaDescriptor</code></td>
+        <td>Abstract descriptor root</td>
+        <td>Defines target schema identity, descriptor version, root fields, and typed runtime accessors</td>
+      </tr>
+      <tr>
+        <td><code>SchemaPath</code></td>
+        <td>Parsed field path</td>
+        <td>Canonical lookup tokenization for paths such as <code>accelerometer.y</code></td>
+      </tr>
+      <tr>
+        <td><code>FieldValueRef</code></td>
+        <td>Typed reference to one runtime field value</td>
+        <td>Used by getters to avoid copying and to preserve type checks</td>
+      </tr>
+      <tr>
+        <td><code>DataSchemaDescriptorRegistry</code></td>
+        <td>Lookup from schema name or id to descriptor</td>
+        <td>Can reuse existing <code>MetaRecord</code> registration ideas while staying focused on descriptors</td>
+      </tr>
+    </table>
+    <pre>class DataSchemaDescriptor : public MetaRecord {
+public:
+  virtual std::string getTargetSchemaName() const = 0;
+  virtual uint16_t getDescriptorVersion() const = 0;
+  virtual const SchemaFieldDescriptor&amp; getRootField() const = 0;
+
+  virtual Optional&lt;FieldValueRef&gt; tryGetFieldValue(
+      const Schema&amp; record,
+      const std::string&amp; path) const = 0;
+};</pre>
+  </section>
+
+  <section>
+    <h2>Naming and Path Rules</h2>
+    <ul>
+      <li>Use machine ids for lookup, not display labels. Example: <code>data_present</code> instead of <code>data-present</code>.</li>
+      <li>Prefer simple path-safe ids such as <code>accelerometer.x</code>, <code>accelerometer.accuracy</code>, and <code>rotation.real</code>.</li>
+      <li>Allow frontend labels to be richer, for example “X Axis” or “Acceleration on X axis”.</li>
+      <li>Treat field ids as stable API once published; changing them is a compatibility break for pipelines.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Example Descriptor Shape</h2>
+    <p>
+      The first proofed example should be the EXG Pill EMG payload
+      <code>ExgPillEmgDataSchemaV1</code>.
+    </p>
+    <h3>Descriptor metadata</h3>
+    <pre>{
+  "schema_name": "ExgPillEmgDataSchemaV1",
+  "descriptor_version": 1,
+  "fields": {
+    "device_id": {
+      "type": "string",
+      "description": "Source EMG device identifier"
+    },
+    "seq_no": {
+      "type": "uint64",
+      "description": "Monotonic frame sequence number"
+    },
+    "device_ts_us": {
+      "type": "uint64",
+      "description": "Producer timestamp in microseconds"
+    },
+    "sample_rate_hz": {
+      "type": "uint32",
+      "description": "Per-channel sample rate"
+    },
+    "channels": {
+      "type": "array",
+      "description": "EMG channels carried in this frame",
+      "items": {
+        "type": "object",
+        "fields": {
+          "label": { "type": "string" },
+          "samples": {
+            "type": "array",
+            "items": { "type": "int16" }
+          }
+        }
+      }
+    }
+  }
+}</pre>
+    <h3>Runtime usage</h3>
+    <pre>ExgPillEmgDataSchemaV1 record = ...;
+ExgPillEmgDataSchemaV1Descriptor descriptor{};
+
+auto sampleRate = descriptor.getUint32(record, "sample_rate_hz");
+auto firstLabel = descriptor.getString(record, "channels.0.label");
+auto firstSample = descriptor.getInt16(record, "channels.0.samples.0");</pre>
+  </section>
+
+  <section>
+    <h2>Accessor Direction</h2>
+    <p>
+      The runtime accessor API should live on the descriptor and operate on a passed record. A
+      getter should fail cleanly when the path is unknown, the record is the wrong schema type, or
+      the requested type does not match.
+    </p>
+    <pre>class ExgPillEmgDataSchemaV1Descriptor : public DataSchemaDescriptor {
+public:
+  Optional&lt;std::string&gt; getString(const Schema&amp; record, const std::string&amp; path) const;
+  Optional&lt;int16_t&gt; getInt16(const Schema&amp; record, const std::string&amp; path) const;
+  Optional&lt;uint64_t&gt; getUint64(const Schema&amp; record, const std::string&amp; path) const;
+  Optional&lt;uint32_t&gt; getUint32(const Schema&amp; record, const std::string&amp; path) const;
+};
+
+auto value = descriptor.getInt16(dataRecord, "channels.0.samples.0");</pre>
+    <ul>
+      <li>Use <code>Optional&lt;T&gt;</code> so missing fields and mismatched types are explicit.</li>
+      <li>Reject wrong-schema records rather than silently interpreting them.</li>
+      <li>Keep path parsing in one shared helper so frontend, backend, and runtime use the same canonical keys.</li>
+      <li>Add array index support in path parsing because EMG channel/sample access needs it immediately.</li>
+      <li>Add a lower-level <code>tryGetFieldValue</code> for generic tooling that needs dynamic typing.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <div class="status">In progress · Phases 1 through 6 have working first-pass implementations on 2026-07-02</div>
+    <ul>
+      <li><strong>Phase 1 · Core schema class:</strong> add <code>ExgPillEmgDataSchemaV1</code> as a first-class <code>Schema</code> + <code>Decoder</code> in <code>libnatkit-core</code>, with JSON codec support and field accessors for device id, sequence, timestamp, sample rate, labels, and sample payload. <strong>Status:</strong> first pass implemented.</li>
+      <li><strong>Phase 2 · Core registry and bridge integration:</strong> register <code>ExgPillEmgDataSchemaV1</code> in the default core registry and update the bridge to emit and consume the canonical schema path. <strong>Status:</strong> implemented with canonical-only decode and canonical bridge topic translation.</li>
+      <li><strong>Phase 3 · Backend decode cleanup:</strong> remove the EMG raw-JSON special case from the Stream Viewer and replace it with typed handling of <code>ExgPillEmgDataSchemaV1</code>. <strong>Status:</strong> first pass implemented in Stream Viewer and EMG transform input handling.</li>
+      <li><strong>Phase 4 · Descriptor base:</strong> add <code>FieldValueType</code>, <code>SchemaFieldDescriptor</code>, <code>SchemaPath</code>, <code>FieldValueRef</code>, and abstract <code>DataSchemaDescriptor : MetaRecord</code> in <code>libnatkit-core</code>. <strong>Status:</strong> first pass implemented.</li>
+      <li><strong>Phase 5 · Descriptor registry and typed access:</strong> add registration and lookup for descriptor types plus generic typed accessors, including array indexing for EMG channels and samples. <strong>Status:</strong> first pass implemented with local registration and typed path lookup.</li>
+      <li><strong>Phase 6 · First concrete descriptor:</strong> implement <code>ExgPillEmgDataSchemaV1Descriptor</code> on top of the promoted core schema. <strong>Status:</strong> first pass implemented.</li>
+      <li><strong>Phase 7 · Producer and natVR migration:</strong> update firmware, replay, topic helpers, and Python-side models or wrappers so natVR tooling uses the core-owned schema contract rather than its own independent source of truth. <strong>Status:</strong> completed for the breaking cutover: natVR Python helpers, backend EMG topic creation paths, firmware payload naming, and schema metadata now use canonical names only.</li>
+      <li><strong>Phase 8 · Frontend adoption:</strong> expose descriptor metadata through the backend and build a generic stream inspector and field picker that no longer depends on handwritten EMG formatting. <strong>Status:</strong> Stream Viewer descriptor inspection now works for live EMG, IMU, and Muse records; broader field-binding and graph-editor wiring are still pending.</li>
+      <li><strong>Phase 9 · Follow-on descriptors:</strong> after the EMG proof holds up, implement <code>NatImuDataSchemaDescriptor</code> and <code>NatMuseDataSchemaDescriptor</code> on the same base. <strong>Status:</strong> first pass implemented and registered in core.</li>
+      <li><strong>Phase 10 · Visual-pipeline integration:</strong> use the same descriptor model to define stream node ports, compatibility checks, and field-selection UI in the future graph editor.</li>
+      <li><strong>Phase 11 · Cleanup and metadata-stream policy:</strong> decide where descriptor records should be published or cached on <code>META</code> streams versus loaded locally from registry state. <strong>Status:</strong> legacy EMG alias cleanup is complete; metadata-stream publication policy is still open.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Initial Deliverables</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Deliverable 1</h3>
+        <ul>
+          <li><code>ExgPillEmgDataSchemaV1</code> C++ schema in <code>libnatkit-core</code></li>
+          <li>registry decode proof through the normal topic path</li>
+          <li>backend EMG messages decoded as typed schema objects</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Deliverable 2</h3>
+        <ul>
+          <li><code>DataSchemaDescriptor : MetaRecord</code> base type in <code>libnatkit-core</code></li>
+          <li>Core field descriptor types, path parser, and typed accessor helpers</li>
+          <li><code>ExgPillEmgDataSchemaV1Descriptor</code> over the EXG Pill EMG contract</li>
+          <li>Generic access to <code>device_id</code>, <code>seq_no</code>, <code>device_ts_us</code>, <code>sample_rate_hz</code>, channel labels, and sample arrays</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Deliverable 3</h3>
+        <ul>
+          <li>Producer migration notes for firmware, natVR Python helpers, and topic naming</li>
+          <li>Frontend field browser and dynamic binding proof of concept</li>
+          <li>A documented clean-cutover path, with any temporary aliasing explicitly marked as disposable</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Should descriptor objects be static singletons per schema class or rebuilt on request. Static descriptor storage is preferred unless mutation is required.</li>
+      <li>Should <code>DataSchemaDescriptor</code> instances be carried over the wire as ordinary <code>MetaRecord</code> payloads in the first slice, or should first adoption use only local registration and backend exposure. Local registration first is preferred.</li>
+      <li>How should fixed-size numeric groups be modeled: semantic objects like <code>accelerometer.x</code> or raw arrays with semantic aliases. The semantic-object model is preferred for pipeline usability.</li>
+      <li>How should EMG channel identity be modeled when labels vary by device. The initial proof should support indexed access such as <code>channels.0.samples.0</code> and may later add sanitized label aliases where safe.</li>
+      <li>Do we want descriptor-layer versioning to remain independent of payload <code>schema_version</code> if additional EMG wire-format revisions appear later.</li>
+      <li>Do we need explicit schema-version negotiation on the descriptor layer beyond the existing schema class name. A version field should be added early even if initial implementations use <code>1</code>.</li>
+      <li>Should field availability gates such as <code>data_present</code> live as sibling fields or as descriptor metadata. Start as explicit sibling fields because they are actual runtime data.</li>
+      <li>How far should the first frontend slice go. The recommendation is generic inspection and field selection first, not full graph editing yet.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>What Not To Do</h2>
+    <ul>
+      <li>Do not make this a frontend-only JSON convention.</li>
+      <li>Do not add descriptor work on top of the current natVR-local <code>ExgPillEmgDataSchemaV1</code> contract and call that finished.</li>
+      <li>Do not make <code>DataSchemaDescriptor</code> hold mutable per-record values internally.</li>
+      <li>Do not keep the backend raw-JSON EMG path once the core schema exists; that would preserve two parallel decode systems.</li>
+      <li>Do not force all schemas to serialize themselves as descriptor-plus-value objects on the <code>DATA</code> wire format.</li>
+      <li>Do not treat descriptor publication on <code>META</code> streams as a requirement for local descriptor use.</li>
+      <li>Do not let optional compatibility shims become the new long-term architecture.</li>
+      <li>Do not freeze path keys around punctuation-heavy names such as <code>x-axis</code> if we already know they will become long-term API surface.</li>
+      <li>Do not jump straight to a free-form visual programming canvas before the core field-contract model is stable.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This plan intentionally combines the EMG core-schema migration with the descriptor work because
+  the first descriptor proof target should be built on a real core-owned natKit schema, not on the
+  current natVR-local JSON contract.
+</footer>
+</body>
+</html>

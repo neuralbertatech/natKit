@@ -14,6 +14,7 @@ import {
 
 export type ViewerRendererKind =
   | "muse"
+  | "imu"
   | "channel_frame"
   | "feature_vector"
   | "classification"
@@ -24,6 +25,17 @@ export type ViewerRendererKind =
 // gets the marker renderer (Phase 2). This is intentionally schema-name driven
 // — markers are a first-class schema, not a channel-frame capability.
 export const MARKER_SCHEMA_NAME = "MarkerEventV1";
+
+// IMU streams carry a fixed accel/gyro/quaternion record rather than the generic
+// channels[].samples[] channel-frame shape, so they get a dedicated renderer
+// (scrolling accel/gyro/quat trace). Identified by schema name — same exception
+// the marker renderer already makes — because there is no channel-frame
+// capability to probe.
+export const IMU_SCHEMA_NAMES = ["NatImuBulkDataSchema", "NatImuDataSchema"];
+
+export function isImuStreamSchema(schemaName: string | undefined): boolean {
+  return schemaName !== undefined && IMU_SCHEMA_NAMES.includes(schemaName);
+}
 
 // A marker stream is identified by its schema name (from the descriptor or a
 // topic/message schema hint), not a channel-frame capability.
@@ -76,6 +88,15 @@ export function chooseViewerRenderer(
 
   if (descriptorLooksLikeMuse(descriptor)) {
     return "muse";
+  }
+
+  // IMU is schema-identified (accel/gyro/quaternion record), before the
+  // channel-frame probes — it is not a channels[].samples[] frame.
+  if (
+    isImuStreamSchema(descriptor?.schema_name) ||
+    isImuStreamSchema(schemaNameHint)
+  ) {
+    return "imu";
   }
 
   if (descriptorSupportsNumericChannelFrames(descriptor)) {

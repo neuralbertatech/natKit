@@ -1,0 +1,3265 @@
+{
+  "graphs": [
+    {
+      "created_at_us": 1784226524116000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784226524116000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          }
+        ],
+        "graph_id": "starter-1784226524116",
+        "graph_version": 1,
+        "label": "Convention EMG Quick-Start",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 40,
+              "y": 200
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "height": 103,
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 360,
+              "y": 80
+            },
+            "width": 233
+          },
+          {
+            "config": {
+              "model_path": "/models/e77bea0f-fb0a-4d88-baa8-7b43fc6062ae/emg-gesture-bundle.json"
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784226524116",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 360,
+              "y": 300
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 700,
+              "y": 300
+            }
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 2,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 3,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "id": "experiment",
+            "input_port_ids": [],
+            "kind": "experiment",
+            "label": "Foo's Session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 40,
+              "y": 520
+            }
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 360,
+              "y": 520
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [
+                "test01:1"
+              ],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [
+                "test02:1"
+              ],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [],
+            "position": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "classify",
+          "viewport": {
+            "x": 659.24,
+            "y": 250.832,
+            "zoom": 0.808
+          }
+        },
+        "updated_at_us": 1784308711764000
+      },
+      "graph_id": "starter-1784226524116",
+      "graph_version": 1,
+      "label": "Convention EMG Quick-Start",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 40,
+            "y": 200
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 360,
+            "y": 80
+          }
+        },
+        {
+          "config": {
+            "model_path": "/models/e77bea0f-fb0a-4d88-baa8-7b43fc6062ae/emg-gesture-bundle.json"
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784226524116",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "288078025633164492",
+          "position": {
+            "x": 360,
+            "y": 300
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 700,
+            "y": 300
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 2,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 3,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Foo's Session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "position": {
+            "x": 40,
+            "y": 520
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 360,
+            "y": 520
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [
+              "test01:1"
+            ],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [
+              "test02:1"
+            ],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 700,
+            "y": 520
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "classify",
+        "viewport": {
+          "x": 659.24,
+          "y": 250.832,
+          "zoom": 0.808
+        }
+      },
+      "updated_at_us": 1784308749619698
+    },
+    {
+      "created_at_us": 1784228100901000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784228100901000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          }
+        ],
+        "graph_id": "starter-1784228100901",
+        "graph_version": 1,
+        "label": "Convention EMG Quick-Start",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 40,
+              "y": 200
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 360,
+              "y": 80
+            }
+          },
+          {
+            "config": {
+              "model_path": ""
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784228100901",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 360,
+              "y": 300
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 700,
+              "y": 300
+            }
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 2,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 3,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "id": "experiment",
+            "input_port_ids": [],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 40,
+              "y": 520
+            }
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 360,
+              "y": 520
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [],
+            "position": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": null,
+          "viewport": {
+            "x": 730,
+            "y": 155,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1784228102492000
+      },
+      "graph_id": "starter-1784228100901",
+      "graph_version": 1,
+      "label": "Convention EMG Quick-Start",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 40,
+            "y": 200
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 360,
+            "y": 80
+          }
+        },
+        {
+          "config": {
+            "model_path": ""
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784228100901",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "4529980860109881804",
+          "position": {
+            "x": 360,
+            "y": 300
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 700,
+            "y": 300
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 2,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 3,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "output_stream_id": "2440535555170981345",
+          "position": {
+            "x": 40,
+            "y": 520
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 360,
+            "y": 520
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 700,
+            "y": 520
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": null,
+        "viewport": {
+          "x": 730,
+          "y": 155,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1784228106768111
+    },
+    {
+      "created_at_us": 1785250697509000,
+      "description": "",
+      "edges": [
+        {
+          "id": "edge-1785250708551",
+          "source_node_id": "source/13793649670644-1785250699870",
+          "source_port": "data",
+          "target_node_id": "viewer/1785250704391",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1785250697509000,
+        "description": "",
+        "edges": [
+          {
+            "id": "edge-1785250708551",
+            "source_node_id": "source/13793649670644-1785250699870",
+            "source_port": "data",
+            "target_node_id": "viewer/1785250704391",
+            "target_port": "input"
+          }
+        ],
+        "graph_id": "stream-graph-1785250697509",
+        "graph_version": 1,
+        "label": "Untitled graph",
+        "nodes": [
+          {
+            "id": "source/13793649670644-1785250699870",
+            "kind": "stream_source",
+            "label": "Stream 13793649670644",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 429,
+              "y": 445
+            },
+            "schema_name": "Unknown",
+            "stream_id": "13793649670644"
+          },
+          {
+            "id": "viewer/1785250704391",
+            "inline_graph": false,
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Viewer",
+            "position": {
+              "x": 742,
+              "y": 191
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "source/13793649670644-1785250699870",
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1785250708551000
+      },
+      "graph_id": "stream-graph-1785250697509",
+      "graph_version": 1,
+      "label": "Untitled graph",
+      "nodes": [
+        {
+          "id": "source/13793649670644-1785250699870",
+          "kind": "stream_source",
+          "label": "Stream 13793649670644",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 429,
+            "y": 445
+          },
+          "schema_name": "Unknown",
+          "stream_id": "13793649670644"
+        },
+        {
+          "id": "viewer/1785250704391",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Viewer",
+          "position": {
+            "x": 742,
+            "y": 191
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "source/13793649670644-1785250699870",
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1785250709618402
+    },
+    {
+      "created_at_us": 1785254654752000,
+      "description": "",
+      "edges": [
+        {
+          "id": "edge-1785254663851",
+          "source_node_id": "source/13793649670644-1785254656562",
+          "source_port": "data",
+          "target_node_id": "viewer/1785254661202",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1785254654752000,
+        "description": "",
+        "edges": [
+          {
+            "id": "edge-1785254663851",
+            "source_node_id": "source/13793649670644-1785254656562",
+            "source_port": "data",
+            "target_node_id": "viewer/1785254661202",
+            "target_port": "input"
+          }
+        ],
+        "graph_id": "stream-graph-1785254654752",
+        "graph_version": 1,
+        "label": "Untitled graph",
+        "nodes": [
+          {
+            "id": "source/13793649670644-1785254656562",
+            "kind": "stream_source",
+            "label": "Stream 13793649670644",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 408,
+              "y": 213
+            },
+            "schema_name": "NatImuBulkDataSchema",
+            "stream_id": "13793649670644"
+          },
+          {
+            "id": "viewer/1785254661202",
+            "inline_graph": false,
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Viewer",
+            "position": {
+              "x": 741,
+              "y": 134
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "source/13793649670644-1785254656562",
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1785254663851000
+      },
+      "graph_id": "stream-graph-1785254654752",
+      "graph_version": 1,
+      "label": "Untitled graph",
+      "nodes": [
+        {
+          "id": "source/13793649670644-1785254656562",
+          "kind": "stream_source",
+          "label": "Stream 13793649670644",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 408,
+            "y": 213
+          },
+          "schema_name": "NatImuBulkDataSchema",
+          "stream_id": "13793649670644"
+        },
+        {
+          "id": "viewer/1785254661202",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Viewer",
+          "position": {
+            "x": 741,
+            "y": 134
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "source/13793649670644-1785254656562",
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1785254665518153
+    },
+    {
+      "created_at_us": 1784321331933000,
+      "description": "",
+      "edges": [],
+      "editor_metadata": {
+        "created_at_us": 1784321331933000,
+        "description": "",
+        "edges": [],
+        "graph_id": "stream-graph-1784321331933",
+        "graph_version": 1,
+        "label": "K-Days",
+        "nodes": [],
+        "notes": [],
+        "ui": {
+          "selected_node_id": null,
+          "viewport": {
+            "x": 0,
+            "y": 0,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1784321338800000
+      },
+      "graph_id": "stream-graph-1784321331933",
+      "graph_version": 1,
+      "label": "K-Days",
+      "nodes": [],
+      "notes": [],
+      "ui": {
+        "selected_node_id": null,
+        "viewport": {
+          "x": 0,
+          "y": 0,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1784321340447980
+    },
+    {
+      "created_at_us": 1784321361002000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784321361002000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-source-experiment",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "experiment",
+            "target_port": "prov_source"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-experiment-train",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "train",
+            "target_port": "prov_experiment"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-train-classify",
+            "source_node_id": "train",
+            "source_port": "prov_models",
+            "target_node_id": "classify",
+            "target_port": "prov_model"
+          }
+        ],
+        "graph_id": "starter-1784321361002",
+        "graph_version": 1,
+        "label": "K-Days",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 40,
+              "y": 200
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 360,
+              "y": 80
+            }
+          },
+          {
+            "config": {
+              "model_path": ""
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input",
+              "prov_model"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784321361002",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 360,
+              "y": 300
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 700,
+              "y": 300
+            }
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 2,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 3,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "id": "experiment",
+            "input_port_ids": [
+              "prov_source"
+            ],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 40,
+              "y": 520
+            }
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 360,
+              "y": 520
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [
+              "prov_experiment"
+            ],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [
+              "prov_models"
+            ],
+            "position": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": null,
+          "viewport": {
+            "x": 725,
+            "y": 87,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1784321373897000
+      },
+      "graph_id": "starter-1784321361002",
+      "graph_version": 1,
+      "label": "K-Days",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 40,
+            "y": 200
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 360,
+            "y": 80
+          }
+        },
+        {
+          "config": {
+            "model_path": ""
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784321361002",
+          "output_port_ids": [
+            "output"
+          ],
+          "position": {
+            "x": 360,
+            "y": 300
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 700,
+            "y": 300
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 2,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 3,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "position": {
+            "x": 40,
+            "y": 520
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 360,
+            "y": 520
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 700,
+            "y": 520
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": null,
+        "viewport": {
+          "x": 725,
+          "y": 87,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1784321375382351
+    },
+    {
+      "created_at_us": 1784322078096000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784322078096000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-source-experiment",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "experiment",
+            "target_port": "prov_source"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-experiment-train",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "train",
+            "target_port": "prov_experiment"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-train-classify",
+            "source_node_id": "train",
+            "source_port": "prov_models",
+            "target_node_id": "classify",
+            "target_port": "prov_model"
+          }
+        ],
+        "graph_id": "starter-1784322078096",
+        "graph_version": 1,
+        "label": "K-Days",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": -272,
+              "y": 204
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "height": 277,
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 13,
+              "y": -79
+            },
+            "width": 475
+          },
+          {
+            "config": {
+              "model_path": ""
+            },
+            "height": 118,
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input",
+              "prov_model"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784322078096",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 735,
+              "y": 203
+            },
+            "transform_kind": "emg_gesture_classify",
+            "width": 325
+          },
+          {
+            "height": 293,
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 1182,
+              "y": 202
+            },
+            "width": 495
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 2,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 3,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "height": 92,
+            "id": "experiment",
+            "input_port_ids": [
+              "prov_source"
+            ],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 4,
+              "y": 314
+            },
+            "width": 291
+          },
+          {
+            "height": 297,
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 346,
+              "y": 487
+            },
+            "width": 519
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "height": 101,
+            "id": "train",
+            "input_port_ids": [
+              "prov_experiment"
+            ],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [
+              "prov_models"
+            ],
+            "position": {
+              "x": 356,
+              "y": 312
+            },
+            "width": 315
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "raw-viewer",
+          "viewport": {
+            "x": 685,
+            "y": 206,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1784323967769000
+      },
+      "graph_id": "starter-1784322078096",
+      "graph_version": 1,
+      "label": "K-Days",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": -272,
+            "y": 204
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 13,
+            "y": -79
+          }
+        },
+        {
+          "config": {
+            "model_path": ""
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784322078096",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "8325329809256967182",
+          "position": {
+            "x": 735,
+            "y": 203
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 1182,
+            "y": 202
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 2,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 3,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "output_stream_id": "2440535555170981345",
+          "position": {
+            "x": 4,
+            "y": 314
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 346,
+            "y": 487
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 356,
+            "y": 312
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "raw-viewer",
+        "viewport": {
+          "x": 685,
+          "y": 206,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1784323969540229
+    },
+    {
+      "created_at_us": 1784321382619000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784321382619000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Press Record on the experiment to run the gesture cues. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-source-experiment",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "experiment",
+            "target_port": "prov_source"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-experiment-train",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "train",
+            "target_port": "prov_experiment"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-train-classify",
+            "source_node_id": "train",
+            "source_port": "prov_models",
+            "target_node_id": "classify",
+            "target_port": "prov_model"
+          }
+        ],
+        "graph_id": "starter-1784321382619",
+        "graph_version": 1,
+        "label": "Convention EMG Quick-Start",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": -331,
+              "y": 288
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 34,
+              "y": 121
+            }
+          },
+          {
+            "config": {
+              "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json"
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input",
+              "prov_model"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784321382619",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 951,
+              "y": 283
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 1245,
+              "y": 283
+            }
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 2,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 3,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "id": "experiment",
+            "input_port_ids": [
+              "prov_source"
+            ],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 40,
+              "y": 520
+            }
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 355,
+              "y": 717
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [
+              "prov_experiment"
+            ],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [
+              "prov_models"
+            ],
+            "position": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "experiment",
+          "viewport": {
+            "x": 1065.944,
+            "y": 155.08799999999997,
+            "zoom": 0.7120000000000001
+          }
+        },
+        "updated_at_us": 1784819877163000
+      },
+      "graph_id": "starter-1784321382619",
+      "graph_version": 1,
+      "label": "Convention EMG Quick-Start",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": -331,
+            "y": 288
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 34,
+            "y": 121
+          }
+        },
+        {
+          "config": {
+            "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json"
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784321382619",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "4309880101226334408",
+          "position": {
+            "x": 951,
+            "y": 283
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 1245,
+            "y": 283
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 2,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 3,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "position": {
+            "x": 40,
+            "y": 520
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 355,
+            "y": 717
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 700,
+            "y": 520
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "experiment",
+        "viewport": {
+          "x": 1065.944,
+          "y": 155.08799999999997,
+          "zoom": 0.7120000000000001
+        }
+      },
+      "updated_at_us": 1784819877896540
+    },
+    {
+      "created_at_us": 1784905343165000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Double-click the experiment (or press Record) to run the gesture cues — follow the prompts, ~2 min. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784905343165000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Double-click the experiment (or press Record) to run the gesture cues — follow the prompts, ~2 min. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-source-experiment",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "experiment",
+            "target_port": "prov_source"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-experiment-train",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "train",
+            "target_port": "prov_experiment"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-train-classify",
+            "source_node_id": "train",
+            "source_port": "prov_models",
+            "target_node_id": "classify",
+            "target_port": "prov_model"
+          }
+        ],
+        "graph_id": "starter-1784905343165",
+        "graph_version": 1,
+        "label": "Convention EMG Quick-Start",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 40,
+              "y": 200
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "id": "raw-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 360,
+              "y": 80
+            }
+          },
+          {
+            "config": {
+              "model_path": ""
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input",
+              "prov_model"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784905343165",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 360,
+              "y": 300
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "id": "classify-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 700,
+              "y": 300
+            }
+          },
+          {
+            "config": {
+              "experiment_id": "convention-emg-session",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 3,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 8,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "id": "experiment",
+            "input_port_ids": [
+              "prov_source"
+            ],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 40,
+              "y": 520
+            }
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 360,
+              "y": 520
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [
+              "prov_experiment"
+            ],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [
+              "prov_models"
+            ],
+            "position": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": null,
+          "viewport": {
+            "x": 612,
+            "y": 169,
+            "zoom": 1
+          }
+        },
+        "updated_at_us": 1784905345144000
+      },
+      "graph_id": "starter-1784905343165",
+      "graph_version": 1,
+      "label": "Convention EMG Quick-Start",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 40,
+            "y": 200
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 360,
+            "y": 80
+          }
+        },
+        {
+          "config": {
+            "model_path": ""
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784905343165",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "6662481557599153603",
+          "position": {
+            "x": 360,
+            "y": 300
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 700,
+            "y": 300
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "convention-emg-session",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 3,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 8,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "output_stream_id": "2440535555170981345",
+          "position": {
+            "x": 40,
+            "y": 520
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 360,
+            "y": 520
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 700,
+            "y": 520
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": null,
+        "viewport": {
+          "x": 612,
+          "y": 169,
+          "zoom": 1
+        }
+      },
+      "updated_at_us": 1784905346922510
+    },
+    {
+      "created_at_us": 1784569198910000,
+      "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Double-click the experiment (or press Record) to run the gesture cues — follow the prompts, ~2 min. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+      "edges": [
+        {
+          "id": "edge-source-raw-viewer",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "raw-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-source-classify",
+          "source_node_id": "source",
+          "source_port": "data",
+          "target_node_id": "classify",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-classify-classify-viewer",
+          "source_node_id": "classify",
+          "source_port": "output",
+          "target_node_id": "classify-viewer",
+          "target_port": "input"
+        },
+        {
+          "id": "edge-experiment-markers-viewer",
+          "source_node_id": "experiment",
+          "source_port": "markers",
+          "target_node_id": "markers-viewer",
+          "target_port": "input"
+        }
+      ],
+      "editor_metadata": {
+        "created_at_us": 1784569198910000,
+        "description": "1) Check the live signal + electrode placement in the raw viewer. 2) Double-click the experiment (or press Record) to run the gesture cues — follow the prompts, ~2 min. 3) In the timeline's Experiments library, pick the just-recorded run for the Train node, then Submit. 4) The trained bundle auto-fills the classifier — press Start to classify live.",
+        "edges": [
+          {
+            "id": "edge-source-raw-viewer",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "raw-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-source-classify",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "classify",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-classify-classify-viewer",
+            "source_node_id": "classify",
+            "source_port": "output",
+            "target_node_id": "classify-viewer",
+            "target_port": "input"
+          },
+          {
+            "id": "edge-experiment-markers-viewer",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "markers-viewer",
+            "target_port": "input"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-source-experiment",
+            "source_node_id": "source",
+            "source_port": "data",
+            "target_node_id": "experiment",
+            "target_port": "prov_source"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-experiment-train",
+            "source_node_id": "experiment",
+            "source_port": "markers",
+            "target_node_id": "train",
+            "target_port": "prov_experiment"
+          },
+          {
+            "edge_kind": "provenance",
+            "id": "prov-train-classify",
+            "source_node_id": "train",
+            "source_port": "prov_models",
+            "target_node_id": "classify",
+            "target_port": "prov_model"
+          }
+        ],
+        "graph_id": "starter-1784569198910",
+        "graph_version": 1,
+        "label": "Convention EMG Quick-Start",
+        "nodes": [
+          {
+            "id": "source",
+            "kind": "stream_source",
+            "label": "Stream source",
+            "output_port_ids": [
+              "data"
+            ],
+            "position": {
+              "x": 92,
+              "y": 122
+            },
+            "stream_id": "1112596048936639351"
+          },
+          {
+            "height": 498,
+            "id": "raw-viewer",
+            "inline_graph": true,
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Raw EMG",
+            "position": {
+              "x": 380,
+              "y": -370
+            },
+            "width": 814
+          },
+          {
+            "config": {
+              "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json"
+            },
+            "id": "classify",
+            "input_mapping_id": "canonical_channel_frame",
+            "input_port_ids": [
+              "input",
+              "prov_model"
+            ],
+            "kind": "transform",
+            "label": "EMG Gesture Classify",
+            "output_identifier": "starter-clf-1784569198910",
+            "output_port_ids": [
+              "output"
+            ],
+            "position": {
+              "x": 1333,
+              "y": 113
+            },
+            "transform_kind": "emg_gesture_classify"
+          },
+          {
+            "height": 417,
+            "id": "classify-viewer",
+            "inline_graph": true,
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Prediction",
+            "position": {
+              "x": 1580,
+              "y": -337
+            },
+            "width": 890
+          },
+          {
+            "config": {
+              "experiment_id": "soldered01",
+              "notes": "",
+              "participant_id": "",
+              "protocol": {
+                "classes": [
+                  "fist",
+                  "open_hand",
+                  "point"
+                ],
+                "hold_s": 3,
+                "label": "Convention EMG",
+                "lead_in_s": 3,
+                "protocol_id": "convention-emg-v1",
+                "repetitions": 8,
+                "rest_class": "rest",
+                "rest_s": 2,
+                "seed": 1,
+                "tail_rest_s": 2
+              }
+            },
+            "height": 410,
+            "id": "experiment",
+            "inline_experiment": true,
+            "input_port_ids": [
+              "prov_source"
+            ],
+            "kind": "experiment",
+            "label": "Gesture session",
+            "output_port_ids": [
+              "markers"
+            ],
+            "position": {
+              "x": 283,
+              "y": 417
+            },
+            "width": 752
+          },
+          {
+            "id": "markers-viewer",
+            "input_port_ids": [
+              "input"
+            ],
+            "kind": "viewer",
+            "label": "Cues",
+            "position": {
+              "x": 1415,
+              "y": 807
+            }
+          },
+          {
+            "config": {
+              "active_gesture": "fist",
+              "confidence_threshold": 0,
+              "eval_runs": [
+                "soldered00:1"
+              ],
+              "families": [
+                "lda"
+              ],
+              "hop_ms": 50,
+              "min_hold_windows": 1,
+              "models": [
+                {
+                  "accuracy": 0.5940752602081665,
+                  "bundle_path": "/models/e85adf01-8636-42ab-b530-25f4e7f6e194/emg-gesture-bundle.json",
+                  "completed_at_us": 1784570741065000,
+                  "family": "lda",
+                  "job_id": "e85adf01-8636-42ab-b530-25f4e7f6e194",
+                  "model_path": "/models/e85adf01-8636-42ab-b530-25f4e7f6e194/lda-model.json"
+                },
+                {
+                  "accuracy": 0.1933546837469976,
+                  "bundle_path": "/models/f0072b78-6408-4f6d-b4e4-810431c1c8ec/emg-gesture-bundle.json",
+                  "completed_at_us": 1784575002167000,
+                  "family": "lda",
+                  "job_id": "f0072b78-6408-4f6d-b4e4-810431c1c8ec",
+                  "model_path": "/models/f0072b78-6408-4f6d-b4e4-810431c1c8ec/lda-model.json"
+                },
+                {
+                  "accuracy": 0.6257005604483586,
+                  "bundle_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json",
+                  "completed_at_us": 1784582579258000,
+                  "family": "lda",
+                  "job_id": "be71d6a1-890d-45f1-8b55-3029c5ba4c5b",
+                  "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/lda-model.json"
+                }
+              ],
+              "rest_gesture": "rest",
+              "selected_fields": [],
+              "train_runs": [
+                "soldered01:1"
+              ],
+              "vote_windows": 1,
+              "window_ms": 200
+            },
+            "id": "train",
+            "input_port_ids": [
+              "prov_experiment"
+            ],
+            "kind": "train",
+            "label": "Train",
+            "output_port_ids": [
+              "prov_models"
+            ],
+            "position": {
+              "x": 1074,
+              "y": 224
+            }
+          }
+        ],
+        "notes": [],
+        "ui": {
+          "selected_node_id": "source",
+          "viewport": {
+            "x": 534.8319999999999,
+            "y": 412.808,
+            "zoom": 0.6160000000000001
+          }
+        },
+        "updated_at_us": 1784903640749000
+      },
+      "graph_id": "starter-1784569198910",
+      "graph_version": 1,
+      "label": "Convention EMG Quick-Start",
+      "nodes": [
+        {
+          "id": "source",
+          "kind": "stream_source",
+          "label": "Stream source",
+          "output_port_ids": [
+            "data"
+          ],
+          "position": {
+            "x": 92,
+            "y": 122
+          },
+          "stream_id": "1112596048936639351"
+        },
+        {
+          "id": "raw-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Raw EMG",
+          "position": {
+            "x": 380,
+            "y": -370
+          }
+        },
+        {
+          "config": {
+            "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json"
+          },
+          "id": "classify",
+          "input_mapping_id": "canonical_channel_frame",
+          "input_port_ids": [
+            "input",
+            "prov_model"
+          ],
+          "kind": "transform",
+          "label": "EMG Gesture Classify",
+          "output_identifier": "starter-clf-1784569198910",
+          "output_port_ids": [
+            "output"
+          ],
+          "output_stream_id": "1442277946200711491",
+          "position": {
+            "x": 1333,
+            "y": 113
+          },
+          "transform_kind": "emg_gesture_classify"
+        },
+        {
+          "id": "classify-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Prediction",
+          "position": {
+            "x": 1580,
+            "y": -337
+          }
+        },
+        {
+          "config": {
+            "experiment_id": "soldered01",
+            "notes": "",
+            "participant_id": "",
+            "protocol": {
+              "classes": [
+                "fist",
+                "open_hand",
+                "point"
+              ],
+              "hold_s": 3,
+              "label": "Convention EMG",
+              "lead_in_s": 3,
+              "protocol_id": "convention-emg-v1",
+              "repetitions": 8,
+              "rest_class": "rest",
+              "rest_s": 2,
+              "seed": 1,
+              "tail_rest_s": 2
+            }
+          },
+          "id": "experiment",
+          "input_port_ids": [
+            "prov_source"
+          ],
+          "kind": "experiment",
+          "label": "Gesture session",
+          "output_port_ids": [
+            "markers"
+          ],
+          "output_stream_id": "8339463821748766562",
+          "position": {
+            "x": 283,
+            "y": 417
+          }
+        },
+        {
+          "id": "markers-viewer",
+          "input_port_ids": [
+            "input"
+          ],
+          "kind": "viewer",
+          "label": "Cues",
+          "position": {
+            "x": 1415,
+            "y": 807
+          }
+        },
+        {
+          "config": {
+            "active_gesture": "fist",
+            "confidence_threshold": 0,
+            "eval_runs": [
+              "soldered00:1"
+            ],
+            "families": [
+              "lda"
+            ],
+            "hop_ms": 50,
+            "min_hold_windows": 1,
+            "models": [
+              {
+                "accuracy": 0.5940752602081665,
+                "bundle_path": "/models/e85adf01-8636-42ab-b530-25f4e7f6e194/emg-gesture-bundle.json",
+                "completed_at_us": 1784570741065000,
+                "family": "lda",
+                "job_id": "e85adf01-8636-42ab-b530-25f4e7f6e194",
+                "model_path": "/models/e85adf01-8636-42ab-b530-25f4e7f6e194/lda-model.json"
+              },
+              {
+                "accuracy": 0.1933546837469976,
+                "bundle_path": "/models/f0072b78-6408-4f6d-b4e4-810431c1c8ec/emg-gesture-bundle.json",
+                "completed_at_us": 1784575002167000,
+                "family": "lda",
+                "job_id": "f0072b78-6408-4f6d-b4e4-810431c1c8ec",
+                "model_path": "/models/f0072b78-6408-4f6d-b4e4-810431c1c8ec/lda-model.json"
+              },
+              {
+                "accuracy": 0.6257005604483586,
+                "bundle_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/emg-gesture-bundle.json",
+                "completed_at_us": 1784582579258000,
+                "family": "lda",
+                "job_id": "be71d6a1-890d-45f1-8b55-3029c5ba4c5b",
+                "model_path": "/models/be71d6a1-890d-45f1-8b55-3029c5ba4c5b/lda-model.json"
+              }
+            ],
+            "rest_gesture": "rest",
+            "selected_fields": [],
+            "train_runs": [
+              "soldered01:1"
+            ],
+            "vote_windows": 1,
+            "window_ms": 200
+          },
+          "id": "train",
+          "input_port_ids": [
+            "prov_experiment"
+          ],
+          "kind": "train",
+          "label": "Train",
+          "output_port_ids": [
+            "prov_models"
+          ],
+          "position": {
+            "x": 1074,
+            "y": 224
+          }
+        }
+      ],
+      "notes": [],
+      "ui": {
+        "selected_node_id": "source",
+        "viewport": {
+          "x": 534.8319999999999,
+          "y": 412.808,
+          "zoom": 0.6160000000000001
+        }
+      },
+      "updated_at_us": 1784903646600142
+    }
+  ],
+  "request_id": "smoke:stream-graphs",
+  "statuses": {
+    "starter-1784226524116": {
+      "active_run_id": null,
+      "graph_id": "starter-1784226524116",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "288078025633164492",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784228100901": {
+      "active_run_id": null,
+      "graph_id": "starter-1784228100901",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "4529980860109881804",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784321361002": {
+      "active_run_id": null,
+      "graph_id": "starter-1784321361002",
+      "node_statuses": {
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784321382619": {
+      "active_run_id": null,
+      "graph_id": "starter-1784321382619",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "4309880101226334408",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784322078096": {
+      "active_run_id": null,
+      "graph_id": "starter-1784322078096",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "8325329809256967182",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784569198910": {
+      "active_run_id": null,
+      "graph_id": "starter-1784569198910",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "1442277946200711491",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "starter-1784905343165": {
+      "active_run_id": null,
+      "graph_id": "starter-1784905343165",
+      "node_statuses": {
+        "classify": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Last known derived stream from a previous graph run.",
+          "output_stream_id": "6662481557599153603",
+          "state": "stopped"
+        },
+        "source": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "1112596048936639351",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "stream-graph-1784321331933": {
+      "active_run_id": null,
+      "graph_id": "stream-graph-1784321331933",
+      "node_statuses": {},
+      "run_state": "stopped"
+    },
+    "stream-graph-1785250697509": {
+      "active_run_id": null,
+      "graph_id": "stream-graph-1785250697509",
+      "node_statuses": {
+        "source/13793649670644-1785250699870": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "13793649670644",
+          "state": "stopped"
+        }
+      },
+      "run_state": "stopped"
+    },
+    "stream-graph-1785254654752": {
+      "active_run_id": "stream-graph-1785254654752:1785254665521872",
+      "graph_id": "stream-graph-1785254654752",
+      "node_statuses": {
+        "source/13793649670644-1785254656562": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Source stream is available to downstream nodes.",
+          "output_stream_id": "13793649670644",
+          "output_topics": [
+            {
+              "id": "13793649670644",
+              "schema": "",
+              "type": "Data"
+            }
+          ],
+          "state": "running",
+          "transport": "kafka"
+        },
+        "viewer/1785254661202": {
+          "frames_processed": 0,
+          "last_frame_at_us": 0,
+          "message": "Viewer node is ready to inspect the upstream stream.",
+          "output_stream_id": "13793649670644",
+          "state": "running",
+          "transport": "kafka"
+        }
+      },
+      "run_state": "running"
+    }
+  },
+  "type": "stream_graph_list"
+}

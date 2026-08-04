@@ -20,15 +20,16 @@ export interface GraphStreamOption {
 // They are identified purely by an id prefix so the editor can classify an edge
 // as provenance from its endpoints (a provenance-typed port on either end makes
 // the edge a provenance edge), render them distinctly, and validate connect
-// rules. Dedicated stubs (per the plan's lean): experiment/train/classify each
-// expose one; the source end taps its normal data-output port.
+// rules.
+//
+// Only the train → classify pair remains. `prov_source` (source → experiment)
+// and `prov_experiment` (experiment → train) were RETIRED
+// (experiment-history-snapshots-plan): the experiment owns the whole board now,
+// so every source in it is a recorded source and the trainer's runs are scoped by
+// the board's binding — that lineage is implicit, and drawing it was busywork.
+// A model artifact, by contrast, IS a real handoff between two nodes that nothing
+// else expresses.
 export const PROVENANCE_PORT_PREFIX = "prov_";
-// The experiment node's inbound lineage port (source → experiment): "records
-// against this stream".
-export const PROVENANCE_PORT_SOURCE = "prov_source";
-// The train node's inbound lineage port (experiment → train): "train on this
-// experiment's sessions".
-export const PROVENANCE_PORT_EXPERIMENT = "prov_experiment";
 // The train node's outbound lineage port (train → classify): "the models this
 // trainer produced".
 export const PROVENANCE_PORT_MODELS = "prov_models";

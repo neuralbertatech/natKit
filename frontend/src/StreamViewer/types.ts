@@ -507,8 +507,18 @@ export interface TrainedModel {
 
 export interface TrainNodeConfig {
   families: string[];
+  // Run selectors ("<session_id>:<run_index>") — the Kafka-reconstruction dataset.
+  // Kept because a session still inside retention can be trained on directly.
   train_runs: string[];
   eval_runs: string[];
+  // Instance references (instance GRAPH ids) — the durable dataset
+  // (experiment-history-snapshots-plan, Phase 6). Strictly better inputs: a fixed
+  // window, materialized + checksummed files, a recorded label histogram, and
+  // provenance back to the exact graph that produced them. The backend swaps these
+  // for artifact paths when the job is submitted, so training never touches the
+  // broker and works long after retention would have dropped the records.
+  train_instances?: string[];
+  eval_instances?: string[];
   selected_fields: string[];
   window_ms: number;
   hop_ms: number;
@@ -528,8 +538,13 @@ export type StreamGraphNodeKind =
   | "viewer"
   | "sink"
   | "combine"
+  | "markers"
+  // Retired in favour of "markers" + a stored Experiment
+  // (experiment-history-snapshots-plan). Still in the union because old boards
+  // are still parsed and rendered; nothing creates one any more.
   | "experiment"
-  | "train";
+  | "train"
+  | "export";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -614,11 +629,58 @@ export interface StreamGraphExperimentNode extends StreamGraphBaseNode<"experime
 export type SessionNodeConfig = ExperimentNodeConfig;
 export type StreamGraphSessionNode = StreamGraphExperimentNode;
 
+// The config-less marker source that replaced the experiment node
+// (experiment-history-snapshots-plan, Phase 1). Markers are wired data — the
+// viewer overlay, combine's marker lane and export's label join all consume
+// them — so the wiring survives the experiment leaving the canvas. It resolves
+// Marker/<experiment_id> from the GRAPH's bound experiment, so there is nothing
+// to author on it and nothing to get wrong.
+export interface StreamGraphMarkersNode extends StreamGraphBaseNode<"markers"> {
+  kind: "markers";
+  // Editor-only: render the participant-facing run panel for the board's bound
+  // experiment directly on the node card (like a viewer's inline_graph). Persists
+  // via editor_metadata; the backend ignores it.
+  inline_experiment?: boolean;
+}
+
 // Submits a control-plane train_validate job (client-driven via the ML proxy);
 // its output is a durable model artifact, not a stream. (Phase 5.)
 export interface StreamGraphTrainNode extends StreamGraphBaseNode<"train"> {
   kind: "train";
   config: TrainNodeConfig;
+}
+
+// Writes its inputs to a durable dataset file via a control-plane export job
+// (client-driven via the ML proxy, like train). Terminal: its artifact is a
+// file, not a stream.
+export interface ExportNodeConfig {
+  // Only "parquet" ships in v1; kept as a field so a second writer (csv, hdf5)
+  // is a config change rather than a new node kind.
+  format: "parquet";
+  // Column name for the cue class joined onto each frame.
+  label_field: string;
+  // Restrict to one run inside a multi-run session (1-based); null = whole session.
+  run_index?: number | null;
+}
+
+export interface StreamGraphExportNode extends StreamGraphBaseNode<"export"> {
+  kind: "export";
+  config: ExportNodeConfig;
+}
+
+// Outcome of a parquet download, surfaced on the export node's inspector. The
+// counts come back as X-Natkit-* response headers alongside the file itself.
+export interface ExportDownloadResult {
+  status: "downloading" | "downloaded" | "failed";
+  message: string;
+  fileName?: string;
+  sessionId?: string;
+  frameCount?: number | null;
+  labelledFrameCount?: number | null;
+  markerCount?: number | null;
+  // The drain stopped on the backend's time budget, so the file is a prefix of
+  // the stream rather than all of it.
+  truncated?: boolean;
 }
 
 export type StreamGraphNode =
@@ -627,8 +689,10 @@ export type StreamGraphNode =
   | StreamGraphViewerNode
   | StreamGraphSinkNode
   | StreamGraphCombineNode
+  | StreamGraphMarkersNode
   | StreamGraphExperimentNode
-  | StreamGraphTrainNode;
+  | StreamGraphTrainNode
+  | StreamGraphExportNode;
 
 export interface StreamGraphEdge {
   id: string;
@@ -669,6 +733,173 @@ export interface StreamGraphDefinition {
   // a composite graph reloads from the backend alone; typed `unknown` here to
   // avoid a dependency cycle with the editor's composite types.
   editor_metadata?: unknown;
+
+  // --- Experiment history (experiment-history-snapshots-plan) ---------------
+  // A graph is one of three things:
+  //   live board : experiment_id set (or not), instance_id absent  — editable
+  //   recording  : instance_id set, immutable, origin "recording"
+  //   fork       : instance_id set, editable, origin "fork", forked_from set
+  // All of these are BACKEND-OWNED: handleSaveStreamGraph re-pins them from the
+  // stored record, so a save can't launder a fork into a recording or re-parent
+  // it. Read them; never author them.
+  experiment_id?: string;
+  instance_id?: string;
+  immutable?: boolean;
+  origin?: "recording" | "fork";
+  forked_from?: string;
+  recording?: InstanceRecording;
+}
+
+// The captured session behind an instance. A fork inherits this verbatim from
+// its ancestor recording, so it points at the same materialized files — forking
+// changes the pipeline, never the data. Written by the backend from Phase 2/3;
+// read-only here.
+export interface InstanceRecording {
+  session_id: string;
+  window_start_us?: number;
+  window_end_us?: number | null;
+  streams?: {
+    stream_id: string;
+    schema_name?: string;
+    role?: string;
+    node_id?: string;
+  }[];
+  artifacts?: {
+    directory?: string;
+    markers?: string;
+    markers_sha256?: string;
+    total_rows?: number;
+    data?: {
+      stream_id: string;
+      schema_name?: string;
+      path: string;
+      rows?: number;
+      labelled_rows?: number;
+      // Rows per cue class; "(unlabelled)" collects rows inside the window but
+      // between cues. This is what tells you a run is unusable because one class
+      // never fired, which a row count alone cannot.
+      label_counts?: Record<string, number>;
+      sha256?: string;
+      checksum_error?: string;
+      // The drain stopped on its budget, so the file is a prefix of the stream.
+      truncated?: boolean;
+    }[];
+  };
+  // recording -> materializing -> complete | failed. Only `complete` is sealed
+  // (immutable); a failed instance stays editable so it can be retried or deleted,
+  // because sealing an empty snapshot is the failure mode this guards against.
+  status?: "recording" | "materializing" | "complete" | "failed";
+  message?: string;
+}
+
+// An experiment: the first-class object that owns a board and its recorded
+// history (experiment-history-snapshots-plan). This is where the protocol,
+// participant and notes moved when the experiment stopped being a node — the
+// canvas keeps only a config-less `markers` source.
+//
+// The binding to a board is 1:1 and lives on both sides (`live_graph_id` here,
+// `experiment_id` on the graph). save_experiment is the sole writer of the pair,
+// so setting `live_graph_id` IS the bind action.
+export interface Experiment {
+  experiment_id: string;
+  label: string;
+  protocol: SessionProtocol | null;
+  participant_id: string;
+  notes: string;
+  live_graph_id: string;
+  created_at_us: number;
+  updated_at_us: number;
+}
+
+export interface ExperimentListMessage {
+  type: "experiment_list";
+  request_id: string;
+  experiments: Experiment[];
+}
+
+export interface ExperimentSavedMessage {
+  type: "experiment_saved";
+  request_id: string;
+  experiment_id: string;
+  experiment: Experiment;
+}
+
+export interface ExperimentDeletedMessage {
+  type: "experiment_deleted";
+  request_id: string;
+  experiment_id: string;
+}
+
+// An instance's state, sent in reply to start/finish and BROADCAST when
+// materialization finishes (which can be long after the request that started it).
+export interface ExperimentInstanceMessage {
+  type: "experiment_instance";
+  request_id: string;
+  graph_id: string;
+  instance_id: string;
+  graph: StreamGraphDefinition;
+}
+
+export interface StreamGraphDeletedMessage {
+  type: "stream_graph_deleted";
+  request_id: string;
+  graph_id: string;
+}
+
+// A fork: an instance that happens to be editable. It INHERITS the ancestor's
+// `recording`, so it points at the same materialized files — forking changes the
+// pipeline, never the data.
+export interface StreamGraphForkedMessage {
+  type: "stream_graph_forked";
+  request_id: string;
+  graph: StreamGraphDefinition;
+}
+
+// A replay session: an instance's Parquet streamed back onto SCRATCH Kafka topics.
+// Sent in reply to start/stop and broadcast as progress lands (the replay runs on
+// its own thread and finishes long after the request).
+export interface InstanceReplayMessage {
+  type: "instance_replay";
+  request_id: string;
+  replay_id: string;
+  graph_id: string;
+  state: "started" | "running" | "stopping" | "stopped" | "finished" | "failed";
+  // Maps each recorded source's ORIGINAL stream id to the scratch topic replaying
+  // it. start_stream_graph does the same rebinding server-side from `replay_id`.
+  bindings: {
+    original_stream_id: string;
+    replay_stream_id: string;
+    topic: string;
+    frame_count: number;
+    channel_labels: string[];
+  }[];
+  marker_stream_id: string;
+  marker_count: number;
+  total_frames: number;
+  // The ORIGINAL device timestamps — replay never restamps them.
+  first_ts_us: number;
+  last_ts_us: number;
+  frames_published: number;
+  markers_published: number;
+  last_published_ts_us: number;
+  error?: string;
+}
+
+// Re-check of an instance's artifacts against their recorded checksums.
+export interface ExperimentInstanceVerificationMessage {
+  type: "experiment_instance_verification";
+  request_id: string;
+  graph_id: string;
+  instance_id: string;
+  ok: boolean;
+  artifacts: {
+    path: string;
+    ok: boolean;
+    size?: number;
+    expected_sha256?: string;
+    actual_sha256?: string;
+    problem?: string;
+  }[];
 }
 
 export interface StreamGraphDiagnostic {
@@ -862,7 +1093,15 @@ export type WebSocketMessage =
   | StreamGraphStoppedMessage
   | ProfileListMessage
   | ProfileSavedMessage
-  | ProfileDeletedMessage;
+  | ProfileDeletedMessage
+  | ExperimentListMessage
+  | ExperimentSavedMessage
+  | ExperimentDeletedMessage
+  | ExperimentInstanceMessage
+  | StreamGraphDeletedMessage
+  | StreamGraphForkedMessage
+  | ExperimentInstanceVerificationMessage
+  | InstanceReplayMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
@@ -976,10 +1215,15 @@ export interface StartStreamGraphAction {
   action: "start_stream_graph";
   request_id: string;
   graph_id: string;
-  // Optional replay start (Phase 5): -1 live (default), -2 beginning, >=0 a
-  // concrete offset (from a query_stream_time offset_for_timestamp). Only the
-  // graph's root sources seek to it; the re-run chain feeds downstream live.
+  // Optional historical start: -1 live (default), -2 beginning, >=0 a concrete
+  // offset (from a query_stream_time offset_for_timestamp). Only the graph's root
+  // sources seek to it; the re-run chain feeds downstream live.
   start_offset?: number;
+  // Run this graph against a REPLAY instead of live topics: every stream_source
+  // whose recorded stream the replay covers is rebound to that replay's scratch
+  // topic for this run. The stored graph keeps its recorded ids — that is
+  // provenance, not configuration.
+  replay_id?: string;
 }
 
 export interface StopStreamGraphAction {
@@ -1014,6 +1258,86 @@ export interface DeleteProfileAction {
   participant_id: string;
 }
 
+export interface ListExperimentsAction {
+  action: "list_experiments";
+  request_id: string;
+}
+
+// Also the bind action: `live_graph_id` is the board this experiment records
+// with, and the backend stamps `experiment_id` onto that graph (clearing it from
+// any other live board) so the 1:1 pair can't drift.
+export interface SaveExperimentAction {
+  action: "save_experiment";
+  request_id: string;
+  experiment: Experiment;
+}
+
+export interface DeleteExperimentAction {
+  action: "delete_experiment";
+  request_id: string;
+  experiment_id: string;
+}
+
+// Mint an instance: snapshot the experiment's live board and open the recording
+// window. The reply carries the instance graph, whose graph_id the client hands
+// back to finish_experiment_instance when the run ends.
+export interface StartExperimentInstanceAction {
+  action: "start_experiment_instance";
+  request_id: string;
+  experiment_id: string;
+  window_start_us?: number;
+}
+
+// Close the window and materialize. `completed: false` records that the operator
+// stopped early, so the window is a partial run.
+export interface FinishExperimentInstanceAction {
+  action: "finish_experiment_instance";
+  request_id: string;
+  graph_id: string;
+  window_end_us?: number;
+  completed?: boolean;
+}
+
+// Delete a board or a fork. A sealed instance needs force: true — deleting one
+// destroys recorded history along with its artifacts.
+// Fork an instance into an editable copy nested under the same experiment.
+export interface ForkStreamGraphAction {
+  action: "fork_stream_graph";
+  request_id: string;
+  source_graph_id: string;
+  label?: string;
+}
+
+// Review = paced from the original device_ts_us deltas (watch it back like a
+// video). Recompute = unpaced, for re-running a fork's pipeline or training, where
+// nobody is watching frames go by.
+export interface StartInstanceReplayAction {
+  action: "start_instance_replay";
+  request_id: string;
+  graph_id: string;
+  mode: "review" | "recompute";
+  speed?: number;
+}
+
+export interface StopInstanceReplayAction {
+  action: "stop_instance_replay";
+  request_id: string;
+  replay_id: string;
+}
+
+export interface VerifyExperimentInstanceAction {
+  action: "verify_experiment_instance";
+  request_id: string;
+  graph_id: string;
+}
+
+export interface DeleteStreamGraphAction {
+  action: "delete_stream_graph";
+  request_id: string;
+  graph_id: string;
+  force?: boolean;
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -1037,6 +1361,16 @@ export type ClientAction =
   | StartStreamGraphAction
   | StopStreamGraphAction
   | RestartStreamGraphNodeAction
+  | ListExperimentsAction
+  | SaveExperimentAction
+  | DeleteExperimentAction
+  | StartExperimentInstanceAction
+  | FinishExperimentInstanceAction
+  | ForkStreamGraphAction
+  | StartInstanceReplayAction
+  | StopInstanceReplayAction
+  | VerifyExperimentInstanceAction
+  | DeleteStreamGraphAction
   | ListProfilesAction
   | SaveProfileAction
   | DeleteProfileAction;

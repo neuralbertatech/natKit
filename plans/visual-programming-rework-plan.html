@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Visual Programming Rework Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1120px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, ol, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 940px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-family: var(--mono);
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .pill.have { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-soft); }
+  .pill.gap { background: var(--risk-soft); color: var(--risk); border-color: var(--risk-soft); }
+  .pill.partial { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-soft); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  .card h3 { margin-bottom: 4px; }
+  ul, ol {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    background: #132019;
+    color: #d7eee2;
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .phase {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-top: 14px;
+    background: #fcfdfc;
+  }
+  .phase h3 { display: flex; align-items: center; gap: 10px; }
+  .phase .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-family: var(--mono);
+    flex: none;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit - visual programming rework - plan - July 8 2026</div>
+  <h1>Visual Programming Rework: a Sensor-Agnostic Reactive Canvas</h1>
+  <p class="subtitle">
+    Turn the current EMG-centric stream-graph editor into an RVBBIT-style reactive canvas where a
+    non-programmer can drop <em>any</em> sensor stream onto a board, process it, visualize it, and
+    train/run ML classifiers on it — all without touching code, and without the system being wired to
+    the EXG&nbsp;Pill. The graph engine, composites, descriptor system, transform workers, and an ML
+    control plane already exist; this plan collapses the hard-coded EMG paths onto those generic
+    seams and closes the missing pieces (data-driven node catalog, descriptor-driven viewers,
+    first-class sessions, ML-as-nodes, script nodes, reactive execution).
+  </p>
+  <div class="meta">
+    Supersedes/extends: <code>stream-graph-programming-plan.html</code>,
+    <code>worker-node-processing-plan.html</code>, <code>frontend-ml-pipeline-plan.html</code>,
+    <code>descriptor-transform-plan.html</code>. Touches <code>frontend/</code>,
+    <code>libnatkit/</code> (backend + core submodules), and <code>natVR/</code>.
+  </div>
+</header>
+
+<main>
+
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li><strong>Do not rebuild — generalize.</strong> The node graph, composites, the self-describing
+        <code>DataSchemaDescriptor</code>, the canonical <code>NatSignalFrameDataSchemaV1</code> channel frame,
+        transform-capability negotiation, and the Python train/validate control plane all exist. The clunkiness
+        is EMG hard-coding layered on top of generic machinery. We remove the hard-coded layer.</li>
+      <li><strong>One canvas, everything is a node.</strong> Merge the three fragmented surfaces
+        (<code>StreamViewer</code>, <code>VisualProgramming</code>, <code>MlPipeline</code>) into a single reactive
+        board. Sources, transforms, viewers, sessions, trainers, and classifiers are all node kinds.</li>
+      <li><strong>The descriptor is the only sensor contract.</strong> A sensor is data: a schema + descriptor +
+        optional input mapping, registered at runtime. Kill the closed <code>"imu"|"muse"|"emg"</code> enum and the
+        <code>dynamic_cast</code> dispatch chain.</li>
+      <li><strong>The node catalog is data, not code.</strong> The backend advertises every node type (config schema +
+        typed ports) and the frontend renders purely from that catalog. Adding a node type must not require editing a
+        TypeScript union.</li>
+      <li><strong>Script/worker nodes are the extensibility escape hatch.</strong> Hot-path DSP stays compiled C++;
+        arbitrary user processing runs as Python worker nodes on the existing control-plane/worker infrastructure.</li>
+      <li><strong>Structured training sessions become first-class.</strong> Generalize the EMG gesture experiment into a
+        configurable protocol (cues, labels, runs) that produces labeled datasets for any classification task, and a
+        train node + classify node that live on the canvas.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Current state</h3>
+        <ul>
+          <li>Three separate pages, three WebSocket connections, three mental models: live viewing
+            (<code>/ws/stream_viewer</code>), graph editing (same WS, different actions), and ML jobs (a direct WS to the
+            control plane on <code>:8786</code>).</li>
+          <li>Everything assumes multi-channel EMG from the EXG&nbsp;Pill: viewer selection, feature families,
+            experiment cues, field selection, config/action naming.</li>
+          <li>Adding a transform means editing a 6,600-line C++ file <em>and</em> a TypeScript union; adding a sensor
+            means a new schema class, a <code>dynamic_cast</code> branch, a bespoke JSON formatter, and a new wire message
+            type.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Target state</h3>
+        <ul>
+          <li>A non-programmer opens one board, drags a stream (any sensor) onto it, and builds a pipeline from a
+            searchable node palette.</li>
+          <li>Viewers, transforms, and ML nodes are chosen and rendered from a runtime catalog + the stream's own
+            descriptor — nothing is hard-coded to a sensor.</li>
+          <li>Recording a structured session, training a model, and running live classification are all nodes on the
+            same board, sharing lineage and provenance.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraints (unchanged natKit rules)</h3>
+        <ul>
+          <li>Derived data becomes new immutable Kafka channels with descriptors + provenance
+            (<code>TransformProvenanceRecord</code>).</li>
+          <li>The hot path stays in C++ / the transform worker; reactivity and catalog logic must not move DSP into JS.</li>
+          <li>Saved graphs (<code>data/stream_graphs.json</code>) must keep loading; migrations are additive.</li>
+          <li>Auth stays on the shared auth store (backend + control plane already share it).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Honest Inventory — What Already Exists (do not rebuild)</h2>
+    <p>The rework leans hard on machinery that is already in the tree. Naming what we <em>keep</em> keeps scope honest.</p>
+    <table>
+      <tr><th>Capability</th><th>Where</th><th>Status</th></tr>
+      <tr>
+        <td>Node-graph model + editor (nodes, edges, ports, pan/zoom, drag-connect, command palette)</td>
+        <td><code>frontend/src/VisualProgramming/StreamGraphEditor.svelte</code>, <code>StreamGraphNode.svelte</code>, <code>streamGraph.ts</code></td>
+        <td><span class="pill have">keep</span></td>
+      </tr>
+      <tr>
+        <td>Composite / sub-graph macros (frontend-only; <code>flattenGraph</code> inlines before save/run)</td>
+        <td><code>composites.ts</code>, <code>compositeLibrary.ts</code>, <code>defaultComposites.ts</code></td>
+        <td><span class="pill partial">keep, teach backend</span></td>
+      </tr>
+      <tr>
+        <td>Self-describing schema tree (typed, recursive, units/descriptions) + backend registry</td>
+        <td><code>StreamViewer/types.ts</code> (<code>DataSchemaDescriptor</code>), <code>schemaDescriptor.ts</code>, <code>SchemaDescriptorInspector.svelte</code>, <code>nat::core::DataSchemaDescriptorRegistry</code></td>
+        <td><span class="pill have">keep — this is the spine</span></td>
+      </tr>
+      <tr>
+        <td>Canonical numeric channel frame (generic multi-channel time series w/ labels)</td>
+        <td><code>NatSignalFrameDataSchemaV1</code>; <code>formatSignalFrameAsJson()</code>; <code>descriptorSupportsNumericChannelFrames()</code></td>
+        <td><span class="pill have">keep — universal data type</span></td>
+      </tr>
+      <tr>
+        <td>Transform-capability negotiation (backend advertises typed config fields + input mappings)</td>
+        <td><code>buildTransformCapabilitiesJson()</code> in <code>StreamViewerWebSocket.cpp</code>; <code>TransformCapability</code> in <code>types.ts</code>; rendered by <code>EmgTransforms.svelte</code></td>
+        <td><span class="pill partial">generalize to all node kinds</span></td>
+      </tr>
+      <tr>
+        <td>Backend graph runtime (validate / start / stop, per-node run state, worker threads)</td>
+        <td><code>StreamGraphDefinition/Node/Edge/RuntimeState</code> + <code>start/stop_stream_graph</code> in <code>StreamViewerWebSocket.cpp</code></td>
+        <td><span class="pill partial">keep, make reactive</span></td>
+      </tr>
+      <tr>
+        <td>ML control plane: job scheduler, workers, thread slots, SQLite state</td>
+        <td><code>libnatkit/scripts/natkit_ml_control_plane.py</code>, <code>natkit_ml_worker.py</code></td>
+        <td><span class="pill have">keep</span></td>
+      </tr>
+      <tr>
+        <td>Train/validate pipeline (sklearn families, windowing, run discovery)</td>
+        <td><code>natVR/src/natvr/kafka_train_validate.py</code>, <code>select_model.py</code>, <code>features.py</code></td>
+        <td><span class="pill partial">generalize features/labels</span></td>
+      </tr>
+      <tr>
+        <td>Live in-graph classification</td>
+        <td><code>lda_classify</code> transform (loads <code>model_path</code>) + <code>combine</code> node</td>
+        <td><span class="pill have">keep, make model a canvas object</span></td>
+      </tr>
+      <tr>
+        <td>Worker-node processing design (Python nodes off the local worker)</td>
+        <td><code>plans/worker-node-processing-plan.html</code></td>
+        <td><span class="pill gap">design exists, unbuilt</span></td>
+      </tr>
+    </table>
+    <p class="meta">Legend: <span class="pill have">keep</span> reuse as-is &nbsp;
+      <span class="pill partial">generalize</span> exists but EMG-coupled or partial &nbsp;
+      <span class="pill gap">build</span> new work.</p>
+  </section>
+
+  <section>
+    <h2>Design Principles (RVBBIT, adapted)</h2>
+    <table>
+      <tr><th>RVBBIT idea</th><th>natKit adaptation</th></tr>
+      <tr><td>One infinite canvas; everything is a block</td>
+        <td>One board holds sources, transforms, viewers, sessions, trainers, classifiers, and param/input nodes. No separate "viewer page" vs "graph page" vs "ML page".</td></tr>
+      <tr><td>Reactive dataflow — change an upstream value, downstream recomputes</td>
+        <td>Editing a node's config live-restarts only the affected subgraph; run-state and live values are visible <em>on the node</em>, not on a separate screen.</td></tr>
+      <tr><td>Everything is a self-describing value</td>
+        <td>Every port carries a <code>DataSchemaDescriptor</code>. Type compatibility, viewer choice, and field pickers all derive from the descriptor — never from a sensor name.</td></tr>
+      <tr><td>Multiple runners (SQL / Clojure / Python / shell)</td>
+        <td>Runner kinds: compiled C++ DSP (hot path), Python worker/script node (custom code), and ML control-plane jobs. A node declares its runner; the canvas doesn't care.</td></tr>
+      <tr><td>Inspectable generated logic</td>
+        <td>Any node exposes its resolved config, output stream id, descriptor, and provenance. Composites can be opened read-only (already built).</td></tr>
+      <tr><td>Screens / dashboards composed from blocks</td>
+        <td>Viewer nodes are the dashboard: pin them, arrange them, and a board doubles as a live monitoring view.</td></tr>
+      <tr><td>Solvers / parameters as first-class reactive inputs</td>
+        <td>Param/input nodes (sliders, dropdowns, thresholds) feed transform configs so a user can tune a pipeline live without opening inspectors.</td></tr>
+    </table>
+    <p class="meta">Reference: <a href="https://github.com/ryrobes/rvbbit">https://github.com/ryrobes/rvbbit</a></p>
+  </section>
+
+  <section>
+    <h2>Target Architecture</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>1 · Unified reactive canvas</h3>
+        <p>Fold <code>StreamViewer</code> and <code>MlPipeline</code> into the <code>VisualProgramming</code> board. Live
+          viewing becomes viewer nodes rendering on the canvas; ML becomes trainer/classifier nodes. A single
+          <code>StreamViewerWebSocket</code> connection carries stream data, graph control, and (proxied or co-located) ML
+          job control, so there is one connection model instead of three.</p>
+      </div>
+      <div class="card">
+        <h3>2 · Universal node model</h3>
+        <p>Replace the closed <code>NodeKind</code> union with an open, catalog-driven <code>node_type</code> string. A node is
+          <code>{ node_type, config, input_ports[], output_ports[] }</code>; each port is typed by a descriptor. The frontend
+          holds <em>zero</em> hard-coded node knowledge — it renders from the catalog.</p>
+      </div>
+      <div class="card">
+        <h3>3 · Node Catalog service</h3>
+        <p>Generalize <code>buildTransformCapabilitiesJson()</code> into a full node catalog: for every node type, advertise
+          label, category, runner, typed config fields (already supported), and input/output port descriptors. Sources,
+          viewers, sinks, and ML nodes all appear here. The palette is built from it.</p>
+      </div>
+      <div class="card">
+        <h3>4 · Descriptor-driven viewers</h3>
+        <p>A viewer registry maps <em>descriptor capabilities</em> → renderer: numeric channel frame → waveform
+          (<code>EmgViewer</code>, renamed <code>ChannelFrameViewer</code>); feature vector (<code>samples≤1 &amp;&amp; channels&gt;1</code>) →
+          bars/heatmap; scalar+label → classification readout; fallback → the generic
+          <code>SchemaDescriptorInspector</code>. Delete <code>inferStreamType()</code> and the sensor-name ladder.</p>
+      </div>
+      <div class="card">
+        <h3>5 · Sensor onboarding = data</h3>
+        <p>Replace the <code>dynamic_cast</code> dispatch chain with a descriptor-driven formatter: any record whose
+          descriptor matches the channel-frame contract emits one generic <code>frame</code> message; anything else is emitted
+          generically from its descriptor. A new sensor = register schema + descriptor (+ optional input mapping made
+          data-driven, not a static C++ list). No per-sensor branches.</p>
+      </div>
+      <div class="card">
+        <h3>6 · First-class Sessions</h3>
+        <p>A <code>session</code>/<code>experiment</code> node captures a structured protocol (ordered cues, per-cue labels,
+          run count, participant/protocol metadata) and emits markers + a labeled-dataset handle. Generalizes
+          <code>EmgExperiment</code>/<code>experiment.ts</code> so any classification task (not just gestures) can be recorded.</p>
+      </div>
+      <div class="card">
+        <h3>7 · ML nodes</h3>
+        <p><code>train</code> node wraps a control-plane <code>train_validate</code> job (families/features/label source all generic,
+          fed by field selection over the descriptor). Its output is a <em>model artifact</em> — a first-class canvas
+          object. <code>classify</code> node consumes a model artifact + a live frame and emits predictions, backed by the
+          existing <code>lda_classify</code> path generalized beyond LDA.</p>
+      </div>
+      <div class="card">
+        <h3>8 · Script / worker nodes</h3>
+        <p>A <code>script</code> node runs user Python on frames via the worker (per <code>worker-node-processing-plan</code>). Input
+          and output are channel frames or descriptor-typed records, so a custom node is a first-class citizen. This is
+          how users add "all sorts of processing" without a C++ recompile.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:16px;">Data flow (target)</h3>
+    <pre>Any sensor (EMG / IMU / Muse / EEG / new) --MQTT--> bridge --> Kafka (self-describing schemas + descriptors)
+        |
+        v
+  Drogon C++ backend  (/ws/stream_viewer : the ONE connection)
+    - Node Catalog service  (sources | transforms | viewers | sinks | session | train | classify | script)
+    - Reactive graph runtime (validate / incremental restart / per-node live state + values)
+    - Descriptor-driven frame formatter (no dynamic_cast chain, no sensor enum)
+    - Hot-path C++ DSP  +  proxied ML control-plane jobs  +  worker/script node dispatch
+        |                                   |
+        v                                   v
+  Frontend: ONE reactive canvas      ML control plane (Python, :8786)
+    - palette from catalog             - generic train_validate jobs (families, features, labels)
+    - viewer nodes render live         - workers / thread slots / SQLite
+    - session / train / classify        - emits model artifact (consumed by classify node)
+      as nodes on the board</pre>
+  </section>
+
+  <section>
+    <h2>Phased Roadmap</h2>
+    <p>Ordered so that each phase ships independently and de-risks the next. Phases 0–3 remove the EMG hard-coding and
+      unify the surface (the bulk of the "clunky" complaint); 4–6 add the new capabilities; 7–8 are polish and UX.</p>
+
+    <div class="phase">
+      <h3><span class="num">0</span> De-EMG the seams <span class="pill partial">low risk, high leverage</span></h3>
+      <p><strong>Goal:</strong> remove sensor-name coupling without changing behavior, so later phases have generic seams to build on.</p>
+      <ul>
+        <li>Rename the EMG-specific identifiers to generic ones behind aliases already in place:
+          <code>create_emg_transform</code>→<code>create_transform</code> (aliases exist), <code>EmgTransformConfig</code>→<code>TransformConfig</code>,
+          <code>EmgViewer</code>→<code>ChannelFrameViewer</code>, <code>NATKIT_EMG_TRANSFORM_THREADS</code>→<code>NATKIT_TRANSFORM_THREADS</code>.</li>
+        <li>Replace <code>inferStreamType()</code>'s <code>"imu"|"muse"|"emg"</code> enum + schema-name matching with a
+          capability probe over the descriptor (Phase 2 consumes this).</li>
+        <li>Make <code>MlPipeline/fieldSelection.ts</code> descriptor-generic (walk any <code>channels[].samples</code>, not
+          <code>EmgDataMessage</code>).</li>
+      </ul>
+      <p><strong>Files:</strong> <code>StreamViewer/types.ts</code>, <code>page.svelte</code>, <code>StreamViewerWebSocket.cpp</code> (config struct/env), <code>MlPipeline/fieldSelection.ts</code>.</p>
+      <p><strong>Acceptance:</strong> <code>npm run check</code> + <code>ctest</code> green; existing graphs still load and run; grep shows no <code>"emg"</code>-keyed control flow outside genuinely EMG-only viewers.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">1</span> Node Catalog service + data-driven node rendering</h3>
+      <p><strong>Goal:</strong> the frontend renders any node type from a backend catalog; adding a node type never touches a TS union.</p>
+      <ul>
+        <li>Extend <code>buildTransformCapabilitiesJson()</code> into a <code>list_node_catalog</code> action returning every node
+          type: <code>category</code>, <code>runner</code>, typed <code>config_fields</code> (reuse existing typed-field machinery), and
+          input/output port descriptor templates.</li>
+        <li>Change <code>NodeKind</code> from a closed union to an open <code>node_type: string</code>; keep the coarse
+          structural kinds (<code>source/transform/viewer/sink</code>) only where the runtime genuinely needs them.</li>
+        <li>Build the palette and node inspector generically from the catalog (the config-field renderer in
+          <code>EmgTransforms.svelte</code> already does this — lift it into a shared component).</li>
+      </ul>
+      <p><strong>Acceptance:</strong> add a new transform in C++ only (no TS edit) and it appears in the palette with a working config form; smoke script still passes.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">2</span> Descriptor-driven viewers, on-canvas</h3>
+      <p><strong>Goal:</strong> viewers are nodes chosen by descriptor capability, rendering live data on the board.</p>
+      <ul>
+        <li>Build a viewer registry: <code>capability(descriptor) → renderer</code>. Ship channel-frame waveform,
+          feature-vector (bars + heatmap), classification readout, and the generic inspector fallback.</li>
+        <li>Make viewers node kinds that subscribe to their upstream node's output stream and render inline (a compact
+          preview on the node, an expandable full view).</li>
+        <li>Retire the <code>page.svelte</code> viewer ladder and the per-sensor inline IMU markup;
+          <code>MuseViewer</code>/<code>FeatureVectorViewer</code> stay as <em>capability-matched</em> renderers, not sensor-matched.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> an IMU stream and an EMG stream each auto-pick a sensible viewer with no sensor-name branch; the old StreamViewer page is reproducible as a board of viewer nodes.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">3</span> Sensor onboarding pipeline</h3>
+      <p><strong>Goal:</strong> a new sensor is registered as data, not code.</p>
+      <ul>
+        <li>Replace the backend <code>dynamic_cast</code> dispatch (<code>~cpp:5887</code>) with a descriptor-driven formatter:
+          channel-frame-shaped records → one generic <code>frame</code> message; everything else → generic
+          descriptor-projected JSON. Collapse the per-sensor <code>*_data</code> wire messages to one generic
+          <code>frame</code>/<code>record</code> message (keep old types as compatibility aliases for one release).</li>
+        <li>Make alternate input mappings (<code>getAlternateTransformInputMappings()</code>) data-driven/registrable rather
+          than a static C++ list, so mapping a new sensor's fields onto the channel-frame contract is config.</li>
+        <li>Document a "sensor onboarding" checklist: publish schema + register descriptor (+ optional mapping) → it
+          appears as a source, gets a viewer, and is transform-compatible automatically.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> onboard a synthetic new sensor (e.g. a 3-axis force plate) end-to-end with no C++ dispatch/formatter edits; it plots and can be band-passed.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">4</span> First-class Sessions / Experiments</h3>
+      <p><strong>Goal:</strong> record structured, labeled data for any classification task, not just EMG gestures —
+        including <strong>multiple sensors synchronized under one protocol</strong> (decision #5, in scope).</p>
+      <ul>
+        <li>Define a generic <code>SessionProtocol</code> (ordered cues, per-cue label, hold/rest durations, run count,
+          participant/protocol metadata) — generalize <code>experiment.ts</code> + <code>cues.py</code>.</li>
+        <li><strong>Multi-sensor sessions:</strong> a session node subscribes to <em>N</em> source nodes and records all of
+          them under one marker timeline (e.g. EMG + IMU together). The labeled dataset references every recorded
+          stream keyed by the shared <code>session_id</code>/<code>run_index</code>, with one label column from the cue timeline —
+          so a <code>train</code> node can later select fields across sensors. Timestamp alignment rides the existing
+          <code>ntp</code>/device-timestamp machinery; markers are the single synchronization spine.</li>
+        <li>Add a <code>session</code> node: runs a protocol, emits markers to Kafka, and produces a labeled-dataset handle
+          (a named set of recorded runs across its subscribed streams, with a label column) that a <code>train</code> node
+          can consume.</li>
+        <li>Make "training session" a first-class stored object (not just marker-delimited runs discovered post hoc),
+          keyed by protocol + participant, discoverable in the palette.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> author a 3-class protocol in the UI, record runs capturing <em>two</em> sensors at once
+        (e.g. EMG + IMU), and see a single labeled dataset spanning both, ready to train.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">5</span> ML nodes on the canvas</h3>
+      <p><strong>Goal:</strong> train and classify are nodes; models are canvas objects; <code>MlPipeline</code> page dissolves into the board.</p>
+      <ul>
+        <li><code>train</code> node: config = labeled dataset + families (<code>MODEL_FAMILIES</code>, generic) + feature set +
+          windowing + field selection (descriptor-driven). Submits a control-plane <code>train_validate</code> job; shows
+          live job state on the node; output = a model artifact object.</li>
+        <li>Generalize the feature layer: expose <code>features.py</code> as a selectable feature set (Hudgins today) and
+          allow a script-node feature extractor later; make the label source generic (from the session dataset), not
+          gesture-specific.</li>
+        <li>Support <strong>cross-sensor field selection</strong> so a model can train on features from a multi-sensor
+          session dataset (Phase 4), not a single stream.</li>
+        <li><code>classify</code> node: consumes a model artifact + a live/derived frame, emits predictions +
+          confidence; backed by generalizing <code>lda_classify</code> to a model-family-aware inference transform.</li>
+        <li><strong>Full unification (decision #3):</strong> proxy the control-plane protocol through the single backend
+          <code>/ws/stream_viewer</code> connection so the frontend speaks to exactly one endpoint. The
+          <code>MlControlPlaneWebSocket</code> on <code>:8786</code> is dropped from the browser; the backend becomes the sole client
+          of the control plane. This is the firm target, not the two-connection fallback.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> record → train → drop the resulting model into a classify node → see live predictions, entirely on one board; works for a non-gesture task.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">6</span> Script / worker nodes <span class="pill gap">deferred (decision #2)</span></h3>
+      <p><strong>Goal:</strong> users add arbitrary processing without a C++ recompile. <strong>Deferred until later</strong> — the
+        sandbox is out of scope for now, so this phase is sequenced <em>after</em> Phases 7–8 and gated on a separate
+        security review. Everything before it stands on its own without it.</p>
+      <ul>
+        <li>Implement the <code>worker-node-processing-plan</code>: a <code>script</code> node whose Python body transforms an input
+          channel frame / descriptor record into an output frame, executed on a worker thread slot.</li>
+        <li>Declare input/output descriptors so script nodes compose with everything else and get viewers for free.</li>
+        <li>Sandboxing + resource limits + auth scoping are a hard requirement and the reason this is deferred — treat as a
+          security-reviewed sub-project when picked up. Until then, extensibility for v1 is <strong>data-driven config over
+          the compiled C++ transform catalog</strong> (decision #5).</li>
+      </ul>
+      <p><strong>Acceptance (when eventually built):</strong> a user writes a 10-line Python node computing a custom feature and wires it into a pipeline that then trains a classifier.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">7</span> Reactive execution + composite round-trip</h3>
+      <p><strong>Goal:</strong> the board feels live, and composites survive a backend save.</p>
+      <ul>
+        <li><strong>Incremental reactivity (decision #1):</strong> a config change restarts only the affected downstream
+          subgraph; per-node live state + a sampled live value render on the node. Debounce edits, and keep an explicit
+          "run" gate for expensive ML nodes. (Not full spreadsheet-style recompute-on-every-keystroke.)</li>
+        <li><strong>Composite round-trip (decision #4, chosen: minimal backend awareness):</strong> the backend stores the
+          composite tree as opaque metadata alongside the flattened graph, so a saved graph round-trips from the backend
+          alone without the frontend-only <code>flattenGraph</code> being the sole source of truth. The backend still executes
+          the flattened primitives — it does not need to understand composite semantics, only to persist and return the
+          tree.</li>
+        <li>Add param/input nodes (slider/dropdown/threshold) that feed transform configs reactively.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> dragging a cutoff-frequency slider visibly changes a downstream plot without a manual stop/start; reloading a saved composite graph from the backend alone reproduces it.</p>
+    </div>
+
+    <div class="phase">
+      <h3><span class="num">8</span> Beginner UX &amp; libraries</h3>
+      <p><strong>Goal:</strong> a non-programmer succeeds without a manual.</p>
+      <ul>
+        <li>Ship a starter template library (composites already support this): "view a stream", "filter + envelope",
+          "record a session", "train a 2-class model", "run live classification".</li>
+        <li>Guided flows / recommended next nodes derived from the current node's output descriptor
+          (the <code>stream-graph-programming-plan</code>'s "recommended next transforms" idea).</li>
+        <li>Inline docs from catalog metadata (config field descriptions, units) and clear invalid-connection feedback
+          typed by descriptor compatibility.</li>
+      </ul>
+      <p><strong>Acceptance:</strong> a first-time user follows a template to a live classifier without reading code or docs.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>EMG Hard-Coding → Generic (the concrete hit list)</h2>
+    <table>
+      <tr><th>Hard-coded today</th><th>Location</th><th>Becomes</th></tr>
+      <tr><td>Closed stream-type enum <code>"imu"|"muse"|"emg"</code> + <code>inferStreamType()</code></td>
+        <td><code>StreamViewer/page.svelte:83,385</code></td><td>Descriptor capability probe (Phase 2)</td></tr>
+      <tr><td><code>dynamic_cast</code> dispatch over concrete schema classes → per-sensor formatters</td>
+        <td><code>StreamViewerWebSocket.cpp:~5887</code></td><td>Descriptor-driven generic formatter (Phase 3)</td></tr>
+      <tr><td>Per-sensor wire messages (<code>imu_data</code>, <code>muse_data</code>, <code>emg_data</code>…)</td>
+        <td><code>types.ts</code>, <code>websocket.ts</code></td><td>Generic <code>frame</code>/<code>record</code> message (Phase 3)</td></tr>
+      <tr><td>Closed <code>TransformKind</code> union + <code>NodeKind</code> union</td>
+        <td><code>StreamViewer/types.ts:81,355</code></td><td>Open catalog-driven <code>node_type</code> (Phase 1)</td></tr>
+      <tr><td>Static C++ input-mapping list (EMG + Muse only)</td>
+        <td><code>getAlternateTransformInputMappings()</code></td><td>Data-driven mapping registry (Phase 3)</td></tr>
+      <tr><td>EMG-named config struct / actions / env var</td>
+        <td><code>EmgTransformConfig</code>, <code>create_emg_transform</code>, <code>NATKIT_EMG_TRANSFORM_THREADS</code></td><td>Generic names, old kept as aliases (Phase 0)</td></tr>
+      <tr><td>Viewer ladder + hard-coded IMU markup + gesture feature families</td>
+        <td><code>page.svelte:892+</code>, <code>FeatureVectorViewer.svelte</code></td><td>Capability-matched viewer registry (Phase 2)</td></tr>
+      <tr><td>Gesture-only experiment + EMG field selection</td>
+        <td><code>EmgExperiment.svelte</code>, <code>experiment.ts</code>, <code>MlPipeline/fieldSelection.ts</code></td><td>Generic <code>SessionProtocol</code> + descriptor field selection (Phase 0/4)</td></tr>
+      <tr><td>Fixed model families / Hudgins features / gesture labels</td>
+        <td><code>select_model.py</code>, <code>features.py</code>, <code>cues.py</code></td><td>Selectable feature sets + generic label source (Phase 5)</td></tr>
+    </table>
+  </section>
+
+  <section class="warn">
+    <h2>Cross-Cutting Concerns</h2>
+    <ul>
+      <li><strong>Backward compatibility.</strong> <code>data/stream_graphs.json</code> and saved composites must keep loading.
+        The <code>NodeKind</code>→<code>node_type</code> change and message-type collapse need a migration + a compatibility window
+        where old aliases still resolve.</li>
+      <li><strong>Performance.</strong> Reactivity and catalog logic live in JS/orchestration; DSP stays in the C++ worker.
+        Incremental restart must not thrash the hot path — debounce config edits.</li>
+      <li><strong>Security (script nodes).</strong> Arbitrary Python execution is the highest-risk item; it needs sandboxing,
+        resource limits, and auth scoping before it ships. Gate behind the shared auth store and admin-owned compute
+        pools (<code>ADR-004</code>).</li>
+      <li><strong>Three→one connection.</strong> Proxying control-plane traffic through the backend WS is a real refactor,
+        and it is the committed target (decision #3) — no two-connection fallback. Landed in Phase 5; the backend gains a
+        control-plane client and re-broadcasts job state over <code>/ws/stream_viewer</code>.</li>
+      <li><strong>Testing.</strong> Keep the parity guarantees: vitest for frontend pure helpers (<code>composites.test.ts</code>
+        pattern), <code>ctest</code> for core, natVR pytest for ML, and extend
+        <code>libnatkit/scripts/natkit_stream_graph_smoke.py</code> to cover new node kinds end-to-end.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Resolved Decisions <span class="meta">(confirmed July 8 2026)</span></h2>
+    <ol>
+      <li><strong>Reactivity: incremental.</strong> Config change restarts only the affected downstream subgraph, with an
+        explicit run gate for expensive ML nodes. Not full recompute-on-every-edit. → drives Phase 7.</li>
+      <li><strong>Script-node sandbox: deferred.</strong> Script/worker nodes (Phase 6) move to the end, gated on a
+        separate security review. v1 extensibility is data-driven config over the compiled C++ transform catalog.</li>
+      <li><strong>Unification: full.</strong> Collapse to one board <em>and</em> one WebSocket — proxy the control-plane
+        protocol through the backend <code>/ws/stream_viewer</code>; drop the browser's direct <code>:8786</code> connection. → firms
+        Phase 5.</li>
+      <li><strong>Composites: minimal backend awareness.</strong> Store the composite tree as opaque metadata alongside the
+        flattened graph so it round-trips from the backend alone; the backend still executes only the flattened
+        primitives. → drives Phase 7.</li>
+      <li><strong>Catalog ceiling: config-driven for v1.</strong> C++ transform impls stay; adding a transform is data
+        (catalog + config). A compiled-transform plugin ABI is deferred alongside script nodes.</li>
+      <li><strong>Sessions: multi-sensor in scope.</strong> A session records N synchronized sensors under one protocol and
+        marker timeline, producing one cross-sensor labeled dataset. → expands Phase 4 and Phase 5 field selection.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Suggested Sequencing &amp; First Slice</h2>
+    <p>Phases 0–2 deliver most of the felt improvement (de-EMG'd, one canvas, viewers that work for any sensor) and are
+      low-risk because they ride existing machinery. A concrete <strong>first slice</strong> to validate the whole
+      direction:</p>
+    <ol>
+      <li>Phase 0 renames + kill <code>inferStreamType</code> (behavior-preserving).</li>
+      <li>Phase 1 <code>list_node_catalog</code> + generic palette/inspector.</li>
+      <li>Phase 2 viewer registry with two renderers (channel-frame + inspector fallback), rendered on-canvas.</li>
+      <li>Demo: drop an IMU stream <em>and</em> an EMG stream on one board; both plot; both accept a band-pass transform;
+        nothing in the path names a sensor.</li>
+    </ol>
+    <p class="meta">That slice proves the descriptor spine carries the whole system, after which Sessions → ML nodes →
+      script nodes are additive.</p>
+  </section>
+
+</main>
+
+<footer>
+  <p>natKit — Visual Programming Rework Plan · drafted July 8 2026. Builds on the existing stream-graph, worker-node,
+    frontend-ml-pipeline, and descriptor-transform plans. Store significant decisions from this plan in graphiti-memory;
+    track active progress in <code>.claude/state.md</code>.</p>
+</footer>
+</body>
+</html>

@@ -1,0 +1,180 @@
+[New LWP 124]
+[New LWP 360]
+[New LWP 12351]
+[New LWP 12358]
+[New LWP 12371]
+[New LWP 12372]
+[New LWP 12373]
+[New LWP 12374]
+[New LWP 12375]
+[New LWP 12376]
+[New LWP 12377]
+[New LWP 12381]
+[New LWP 12382]
+[New LWP 12383]
+[New LWP 12384]
+[New LWP 12385]
+[New LWP 12386]
+[New LWP 12387]
+
+warning: File "/usr/lib/x86_64-linux-gnu/libthread_db.so.1" auto-loading has been declined by your `auto-load safe-path' set to "$debugdir:$datadir/auto-load".
+To enable execution of this file add
+	add-auto-load-safe-path /usr/lib/x86_64-linux-gnu/libthread_db.so.1
+line to your configuration file "/root/.config/gdb/gdbinit".
+To completely disable this security protection add
+	set auto-load safe-path /
+line to your configuration file "/root/.config/gdb/gdbinit".
+For more information about this security protection see the
+"Auto-loading safe path" section in the GDB manual.  E.g., run from the shell:
+	info "(gdb)Auto-loading safe path"
+
+warning: Unable to find libthread_db matching inferior's thread library, thread debugging will not be available.
+0x00007f09d5bccee6 in __GI___compat_nfsservctl () at ../sysdeps/unix/syscall-template.S:120
+120	../sysdeps/unix/syscall-template.S: No such file or directory.
+warning: File "/usr/local/lib64/libstdc++.so.6.0.33-gdb.py" auto-loading has been declined by your `auto-load safe-path' set to "$debugdir:$datadir/auto-load".
+
+Thread 19 (LWP 12387 "DrogonIoLoop"):
+#0  0x00007f09d5b93545 in __scandir64_tail (dp=0x0, namelist=0x0, select=0x7f09acff1b10, cmp=0x7f09d5b93545 <__scandir64_tail+101>) at ./scandir-tail-common.c:39
+#1  0x00007f09d5b4d1f5 in __pthread_create_2_1 (newthread=<optimized out>, attr=<optimized out>, start_routine=<optimized out>, arg=<optimized out>) at ./nptl/pthread_create.c:846
+#2  0x0000000000000000 in ?? ()
+
+Thread 18 (LWP 12386 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7f09a40012c8, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 17 (LWP 12385 "rdk:broker-1"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007f0900000189 in ?? ()
+#2  0x00007f09b400fcd0 in ?? ()
+#3  0x00007f09adff3660 in ?? ()
+#4  0x00007f09b400fca8 in ?? ()
+#5  0x00007f09b400fca8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 16 (LWP 12384 "rdk:main"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007f09b400bc50 in ?? ()
+#3  0x00007f09ae7f4910 in ?? ()
+#4  0x00007f09b400bc28 in ?? ()
+#5  0x00007f09b400bc28 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 15 (LWP 12383 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7f09a0001558, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 14 (LWP 12382 "rdk:broker-1"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007f0900000189 in ?? ()
+#2  0x00007f09b40106b0 in ?? ()
+#3  0x00007f09af7f6660 in ?? ()
+#4  0x00007f09b4010688 in ?? ()
+#5  0x00007f09b4010688 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 13 (LWP 12381 "rdk:main"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007f09b400cf50 in ?? ()
+#3  0x00007f09afff7910 in ?? ()
+#4  0x00007f09b400cf28 in ?? ()
+#5  0x00007f09b400cf28 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 12 (LWP 12377 "DrogonIoLoop"):
+#0  0x00007f09d5b93545 in __scandir64_tail (dp=0x0, namelist=0x0, select=0x7f09c0ff1b10, cmp=0x7f09d5b93545 <__scandir64_tail+101>) at ./scandir-tail-common.c:39
+#1  0x00007f09d5b4d1f5 in __pthread_create_2_1 (newthread=<optimized out>, attr=<optimized out>, start_routine=<optimized out>, arg=<optimized out>) at ./nptl/pthread_create.c:846
+#2  0x0000000000000000 in ?? ()
+
+Thread 11 (LWP 12376 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7f09b00012c8, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 10 (LWP 12375 "rdk:broker-1"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007f0900000189 in ?? ()
+#2  0x00007f09b400c850 in ?? ()
+#3  0x00007f09c1ff3660 in ?? ()
+#4  0x00007f09b400c828 in ?? ()
+#5  0x00007f09b400c828 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 9 (LWP 12374 "rdk:main"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007f09b4020f40 in ?? ()
+#3  0x00007f09c2ff5910 in ?? ()
+#4  0x00007f09b4020f18 in ?? ()
+#5  0x00007f09b4020f18 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 8 (LWP 12373 "rdk:broker1"):
+#0  __GI_cfsetispeed (termios_p=0x7f099c001558, speed=2) at ../sysdeps/unix/sysv/linux/speed.c:92
+#1  0x0000000000000000 in ?? ()
+
+Thread 7 (LWP 12372 "rdk:broker-1"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007f0900000189 in ?? ()
+#2  0x00007f09b40205e0 in ?? ()
+#3  0x00007f09d1552660 in ?? ()
+#4  0x00007f09b40205b8 in ?? ()
+#5  0x00007f09b40205b8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 6 (LWP 12371 "rdk:main"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0xffffffff00000189 in ?? ()
+#2  0x00007f09b40229f0 in ?? ()
+#3  0x00007f09c27f4910 in ?? ()
+#4  0x00007f09b40229c8 in ?? ()
+#5  0x00007f09b40229c8 in ?? ()
+#6  0x0000000000000000 in ?? ()
+
+Thread 5 (LWP 12358 "DrogonIoLoop"):
+#0  0x00007f09d5b93545 in __scandir64_tail (dp=0x0, namelist=0x0, select=0x7f09c37f57d0, cmp=0x7f09d5b93545 <__scandir64_tail+101>) at ./scandir-tail-common.c:39
+#1  0x00007f09c37f56c0 in ?? ()
+#2  0x00007f09795d1570 in ?? ()
+#3  0x00007f09c37f5620 in ?? ()
+#4  0x000657b068480d48 in ?? ()
+#5  0x00007f09c37f5ac0 in ?? ()
+#6  0x00007f09cc021430 in ?? ()
+#7  0x00007972b1cf144e in ?? ()
+#8  0x417daea280000000 in ?? ()
+#9  0x0000000000000037 in ?? ()
+
+Thread 4 (LWP 12351 "DrogonIoLoop"):
+#0  0x00007f09d5b49f16 in __pthread_attr_extension (attr=0x0) at ./nptl/pthread_attr_extension.c:30
+#1  0x00007f0900000189 in ?? ()
+#2  0x00007f09c800fd14 in ?? ()
+#3  0x0000000000000000 in ?? ()
+
+Thread 3 (LWP 360 "DrogonIoLoop"):
+#0  0x00007f09d5b93545 in __scandir64_tail (dp=0x0, namelist=0x0, select=0x7f09d1d52ae0, cmp=0x7f09d5b93545 <__scandir64_tail+101>) at ./scandir-tail-common.c:39
+#1  0x00007f09cc00d230 in ?? ()
+#2  0x0000000000000000 in ?? ()
+
+Thread 2 (LWP 124 "DrogonIoLoop"):
+#0  0x00007f09d5bccee6 in __GI___compat_nfsservctl () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000000000000001 in ?? ()
+#2  0x00000006cc000ba0 in ?? ()
+#3  0x00007f09cc000c60 in ?? ()
+#4  0x0000271000000010 in ?? ()
+#5  0xffffffffffff8f28 in ?? ()
+#6  0x00000000006f3c1a in trantor::EpollPoller::poll(int, std::vector<trantor::Channel*, std::allocator<trantor::Channel*> >*) ()
+#7  0x00000000006d4b60 in trantor::EventLoop::loop() ()
+#8  0x00000000006d59fb in trantor::EventLoopThread::loopFuncs() ()
+#9  0x00007f09d5e9aea4 in ?? () from /usr/local/lib64/libstdc++.so.6
+
+Thread 1 (LWP 121 "libnatkit-natki"):
+#0  0x00007f09d5bccee6 in __GI___compat_nfsservctl () at ../sysdeps/unix/syscall-template.S:120
+#1  0x0000000000000001 in ?? ()
+#2  0x00000003007c0ea0 in ?? ()
+#3  0x00000000029aaa80 in ?? ()
+#4  0x0000271000000010 in ?? ()
+#5  0x00000000007c1300 in ?? ()
+#6  0x00000000006f3c1a in trantor::EpollPoller::poll(int, std::vector<trantor::Channel*, std::allocator<trantor::Channel*> >*) ()
+#7  0x00000000006d4b60 in trantor::EventLoop::loop() ()
+#8  0x00000000005d6db2 in drogon::HttpAppFrameworkImpl::run() ()
+#9  0x00000000004787ab in main ()
+[Inferior 1 (process 121) detached]

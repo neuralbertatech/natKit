@@ -1,0 +1,134 @@
+services:
+  natkit-v0-bridge:
+    image: natkit-bridge:dev
+    build:
+      context: ./libnatkit
+      dockerfile: Dockerfile_libnatkit_bridge
+      args:
+        NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
+    networks:
+      - natkit-v0-kafka-network
+  natkit-v0-backend:
+    image: natkit-backend:dev
+    build:
+      context: ./libnatkit
+      dockerfile: Dockerfile_natkit_backend
+      args:
+        NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
+    environment:
+      # Share one auth session DB with the ML control-plane so a natkit_session
+      # cookie issued at login validates on the control-plane's WebSocket.
+      NATKIT_AUTH_DB_PATH: /auth/auth.sqlite3
+      # Phase 5: the backend is the sole client of the ML control plane and
+      # proxies it over /ws/stream_viewer (browser no longer hits :8786 directly).
+      NATKIT_ML_CONTROL_PLANE_URL: ws://natkit-v0-ml-control-plane:8786
+      # Persist saved stream graphs on a named volume so they survive container
+      # recreate (the default ./data/stream_graphs.json lives in the ephemeral
+      # container layer and is lost on `down`/rebuild).
+      NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
+    volumes:
+      - natkit-v0-auth:/auth
+      - natkit-v0-graphs:/graphs
+      # Read trained models the control plane persists here (Phase 5, slice C)
+      # so a classify node can load model_path directly.
+      - natkit-v0-models:/models:ro
+    networks:
+      - natkit-v0-kafka-network
+  # NOTE: This Kafka service was added to satisfy the `depends_on:
+  # natkit-v0-kafka` and the NATKIT_ML_CONTROL_PLANE_BROKER default
+  # (natkit-v0-kafka:9092) referenced below, since no such service was defined.
+  # It's a single-node KRaft broker suitable for dev. If you already provide
+  # Kafka from another compose file or an external broker, delete this service
+  # and the `depends_on` entry on natkit-v0-ml-control-plane.
+  natkit-v0-kafka:
+    image: apache/kafka:3.7.0
+    restart: always
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://natkit-v0-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@natkit-v0-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    networks:
+      - natkit-v0-kafka-network
+  natkit-v0-ml-control-plane:
+    image: natkit-ml-control-plane:dev
+    build:
+      context: .
+      dockerfile: Dockerfile_natkit_ml_control_plane
+      args:
+        NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
+    restart: always
+    environment:
+      NATKIT_ML_CONTROL_PLANE_BROKER: ${NATKIT_ML_CONTROL_PLANE_BROKER:-natkit-v0-kafka:9092}
+      NATKIT_ML_CONTROL_PLANE_WORKER_THREADS: ${NATKIT_ML_CONTROL_PLANE_WORKER_THREADS:-}
+      NATKIT_ML_CONTROL_PLANE_MAX_WORKER_RESTART_ATTEMPTS: ${NATKIT_ML_CONTROL_PLANE_MAX_WORKER_RESTART_ATTEMPTS:-}
+      # Same auth DB as natkit-v0-backend (see above) so login sessions resolve here.
+      NATKIT_AUTH_DB_PATH: /auth/auth.sqlite3
+      # Persist trained models to the shared volume the backend reads (slice C).
+      NATKIT_ML_ARTIFACTS_DIR: /models
+    ports:
+      - "8786:8786"
+    volumes:
+      - ./uploads/ml-control-plane:/state:Z
+      - natkit-v0-auth:/auth
+      - natkit-v0-models:/models
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-kafka
+  natkit-v0-ml-worker-a:
+    image: natkit-ml-control-plane:dev
+    build:
+      context: .
+      dockerfile: Dockerfile_natkit_ml_control_plane
+      args:
+        NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
+    command:
+      - python
+      - /workspace/libnatkit/scripts/natkit_ml_worker.py
+      - --control-plane-url
+      - ${NATKIT_ML_WORKER_CONTROL_PLANE_URL:-ws://natkit-v0-ml-control-plane:8786}
+      - --worker-id
+      - ${NATKIT_ML_WORKER_ID_A:-worker-remote-a}
+      - --worker-threads
+      - "${NATKIT_ML_WORKER_THREADS_A:-4}"
+      - --scratch-root
+      - /state/scratch
+    restart: always
+    volumes:
+      - ./uploads/ml-worker-a:/state:Z
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-ml-control-plane
+  natkit-v0-frontend:
+    image: natkit-frontend:dev
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    restart: always
+    environment:
+      VITE_DEV_BACKEND_URL: http://natkit-v0-backend:7409
+    ports:
+      - "8080:5173"
+    volumes:
+      - ./frontend:/app:Z
+      - natkit-v0-frontend-node-modules:/app/node_modules
+    networks:
+      - natkit-v0-kafka-network
+    depends_on:
+      - natkit-v0-backend
+volumes:
+  natkit-v0-auth:
+  natkit-v0-graphs:
+  natkit-v0-frontend-node-modules:
+  natkit-v0-models:
+networks:
+  natkit-v0-kafka-network:

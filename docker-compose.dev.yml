@@ -6,6 +6,11 @@ services:
       dockerfile: Dockerfile_libnatkit_bridge
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
+    environment:
+      # Per-message wire tracing, OFF by default: it printed every frame's fully
+      # decoded payload in both directions (~100 lines per bulk IMU frame) and
+      # drowned every other service in `compose logs`. Set to 1 to debug the wire.
+      NATKIT_BRIDGE_LOG_MESSAGES: ${NATKIT_BRIDGE_LOG_MESSAGES:-}
 
   natkit-v0-backend:
     image: natkit-backend:dev
@@ -15,6 +20,9 @@ services:
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
     environment:
+      # Dev-only: bypass authentication so the panel/WebSocket need no login in
+      # the local dev stack. NEVER set this in prod (see docker-compose.portainer.yml).
+      NATKIT_AUTH_DISABLED: "true"
       # Share one auth session DB with the ML control-plane so a natkit_session
       # cookie issued at login validates on the control-plane's WebSocket.
       NATKIT_AUTH_DB_PATH: /auth/auth.sqlite3
@@ -25,9 +33,17 @@ services:
       # recreate (the default ./data/stream_graphs.json lives in the ephemeral
       # container layer and is lost on `down`/rebuild).
       NATKIT_STREAM_GRAPH_STORE: /graphs/stream_graphs.json
+      # Experiments live on the same volume: an experiment owns a board and (from
+      # Phase 2) its recorded instances, so losing this store orphans history.
+      NATKIT_EXPERIMENT_STORE: /graphs/experiments.json
+      # Materialized instance artifacts (Parquet + the markers sidecar). These ARE
+      # the permanence guarantee — the whole point is that the data has left Kafka —
+      # so they live on their own named volume, never the container layer.
+      NATKIT_INSTANCE_STORE: /instances
     volumes:
       - natkit-v0-auth:/auth
       - natkit-v0-graphs:/graphs
+      - natkit-v0-instances:/instances
       # Read trained models the control plane persists here (Phase 5, slice C)
       # so a classify node can load model_path directly.
       - natkit-v0-models:/models:ro
@@ -54,6 +70,11 @@ services:
       - ./uploads/ml-control-plane:/state:Z
       - natkit-v0-auth:/auth
       - natkit-v0-models:/models
+      # Instance artifacts, READ-ONLY: training reads a recording's Parquet straight
+      # off disk (Phase 6), and the paths come from the backend, so they have to
+      # resolve identically here. Read-only because a sealed instance is a
+      # historical fact — the trainer is a consumer of it, never a writer.
+      - natkit-v0-instances:/instances:ro
     networks:
       - natkit-v0-kafka-network
     depends_on:
@@ -84,6 +105,12 @@ services:
       NATKIT_AUTH_PASSWORD: ${NATKIT_ML_WORKER_AUTH_PASSWORD:-}
     volumes:
       - ./uploads/ml-worker-a:/state:Z
+      # Same instance artifacts, same path, read-only: a remote worker runs the very
+      # same pipeline, so an instance-backed job must resolve its Parquet here too.
+      - natkit-v0-instances:/instances:ro
+      # Trained artifacts land on the shared models volume (as the in-process path
+      # already does) so a classify node can load what a remote worker produced.
+      - natkit-v0-models:/models
     networks:
       - natkit-v0-kafka-network
     depends_on:
@@ -108,6 +135,7 @@ services:
       - natkit-v0-backend
 
 volumes:
+  natkit-v0-instances:
   natkit-v0-auth:
   natkit-v0-graphs:
   natkit-v0-frontend-node-modules:

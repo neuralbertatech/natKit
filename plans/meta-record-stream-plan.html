@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit MetaRecord Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1040px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  .subtitle { margin-top: 12px; color: var(--muted); max-width: 780px; }
+  main { padding: 8px 0 56px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code {
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; }
+  .meta { color: var(--muted); margin-top: 8px; }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    margin-top: 10px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · libnatkit-core · June 26 2026</div>
+  <h1>MetaRecord Metadata Stream Plan</h1>
+  <p class="subtitle">
+    Replace the single-purpose metadata schema path with a generic <code>MetaRecord</code>
+    transport rooted in <code>libnatkit-core</code> C++ record classes, so one
+    <code>Meta</code> stream can carry multiple metadata record types while keeping
+    serialization abstracted behind the existing schema/registry model.
+  </p>
+  <div class="meta">
+    Scope: <code>libnatkit-core</code> first, then bindings, then natVR/frontend adoption.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Keep <code>StreamType::META</code> as the stream category.</li>
+      <li>Use one generic wire schema name: <code>MetaRecord</code>.</li>
+      <li>Dispatch concrete metadata types by a stable numeric <code>record_type_id</code>.</li>
+      <li>Define concrete metadata as C++ classes such as <code>SessionMetadataRecord</code>.</li>
+      <li>Make JSON and binary two serializations of the same record contract, not two separate designs.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>What exists</h3>
+        <ul>
+          <li><code>StreamType::META</code> already exists in core.</li>
+          <li><code>Schema</code>, <code>Decoder</code>, and <code>Registry</code> already provide codec registration.</li>
+          <li><code>BasicMetaInfoSchema</code> is the current placeholder metadata type.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What is missing</h3>
+        <ul>
+          <li>Generic typed metadata dispatch within one meta stream.</li>
+          <li>Concrete session metadata record class in core.</li>
+          <li>Bindings for Python/frontend publication and decoding.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>All semantics should live in C++ first.</li>
+          <li>Bindings should expose the existing core record model.</li>
+          <li>Do not make metadata typing a Python-only convention.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Record Model</h2>
+    <table>
+      <tr>
+        <th>Layer</th>
+        <th>Purpose</th>
+        <th>Initial choice</th>
+      </tr>
+      <tr>
+        <td><code>Meta</code> stream type</td>
+        <td>Topic/category for low-volume stream-cluster metadata</td>
+        <td>Keep existing core stream type</td>
+      </tr>
+      <tr>
+        <td><code>MetaRecord</code></td>
+        <td>Generic wire schema used by the topic registry</td>
+        <td>New core decoder path</td>
+      </tr>
+      <tr>
+        <td><code>record_type_id</code></td>
+        <td>Selects the concrete metadata record class</td>
+        <td>Stable numeric registry in core</td>
+      </tr>
+      <tr>
+        <td><code>SessionMetadataRecord</code></td>
+        <td>Session-level metadata such as purpose, participant, protocol, devices, tags</td>
+        <td>First concrete record type</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <div class="status">Phase 1 complete · Phase 2 started</div>
+    <ul>
+      <li><strong>Phase 1:</strong> Add <code>MetaRecord</code> base decode path in <code>libnatkit-core</code>, keep <code>BasicMetaInfoSchema</code> for compatibility.</li>
+      <li><strong>Phase 2:</strong> Add <code>SessionMetadataRecord</code> with JSON and binary codecs and register it through the new typed metadata path.</li>
+      <li><strong>Phase 3:</strong> Add tests or compile-time validation examples for round-trip encode/decode and registry dispatch.</li>
+      <li><strong>Phase 4:</strong> Add bindings and natVR helpers that publish/consume <code>MetaRecord</code> topics.</li>
+      <li><strong>Phase 5:</strong> Update the EMG experiment frontend to create a session, publish session metadata, and publish session lifecycle markers.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Design Follow-Ups</h2>
+    <ul>
+      <li>Whether <code>ExgPillEmgDataSchemaV1</code> eventually needs <code>session_id</code> on the raw data path for overlapping sessions on one device.</li>
+      <li>Whether to migrate or deprecate <code>BasicMetaInfoSchema</code> after bindings are updated.</li>
+      <li>How to expose the metadata type registry to Python without duplicating ids outside core.</li>
+      <li>Which next concrete record type should follow session metadata: hardware metadata, experiment metadata, or marker definitions.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This plan is intentionally core-first. Higher-level language bindings should wrap the C++ records, not redefine the metadata protocol.
+</footer>
+</body>
+</html>

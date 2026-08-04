@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit VP — Parquet Export Node</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · July 28 2026</div>
+  <h1>Parquet Export Node</h1>
+  <p class="meta lede">
+    A first-class <strong>export</strong> node on the Visual Programming canvas. Wire a
+    <em>data</em> stream into it and an <em>experiment</em>&rsquo;s <code>markers</code> output
+    into it, press Download, and the <strong>C++ backend</strong> streams back one
+    <strong>labeled Parquet file</strong> for the session window. The point of linking both is
+    that the cue timeline becomes a <em>label column</em> on the exported frames &mdash; the
+    file that lands in your downloads folder is already analysis-ready.
+  </p>
+  <div class="status">Status: BUILT &amp; verified end-to-end (July 28 2026)</div>
+</header>
+
+<main>
+
+<section class="callout">
+  <h2>Why this shape</h2>
+  <p>
+    The first cut of this feature ran the export as a Python control-plane job. That was
+    <em>wrong</em>: it bought one skipped <code>apt</code> dependency at the cost of a permanent
+    language boundary, an extra service in the request path, and a file the user then had to dig
+    out of a volume. Reworked to run entirely in the C++ backend. The audit that drove the
+    rework &mdash; nearly all of it already existed:
+  </p>
+  <table>
+    <tr><th>Capability</th><th>Where it already lives</th></tr>
+    <tr><td><strong>The data&nbsp;+&nbsp;markers join</strong></td><td>the topic-aware <code>combine</code> node. It fans a data stream and an experiment&rsquo;s <code>markers</code> into ONE channel: <code>Data/&lt;id&gt;</code> and <code>Marker/&lt;id&gt;</code> share a stream id. Per the source comment: <em>&ldquo;Data/&lt;out&gt; and Marker/&lt;out&gt; collide on id by design &mdash; that IS the bundle.&rdquo;</em></td></tr>
+    <tr><td><strong>Interval stitching</strong> (which cue owns a frame)</td><td><code>nat::core::assignIntervalsToTimeline</code> (<code>StreamStitch.cpp</code>), already C++ and already exposed through the C ABI &mdash; natVR&rsquo;s <code>assign_marker_intervals</code> is a ctypes wrapper over it. Doing this in C++ <em>removes</em> a layer rather than duplicating one.</td></tr>
+    <tr><td>Historical Kafka reads</td><td><code>BrokerMessagingQueue::startConsumer(startOffset)</code> / <code>createMessenger(topic, start_offset)</code> with <code>OFFSET_BEGINNING</code>, added by the Kafka ABI work</td></tr>
+    <tr><td>HTTP surface</td><td><code>NatKitBackend.cpp</code> is already full of drogon handlers behind <code>auth_manager.authenticateRequest</code></td></tr>
+    <tr><td>Sensor-agnostic frame projection</td><td>the canonical channel-frame contract read through a <code>DataSchemaDescriptor</code> &mdash; the descriptor exposes a synthetic <code>channels.N.samples</code> view over whatever the schema actually stores</td></tr>
+  </table>
+  <p>
+    The only genuinely new thing was a <strong>Parquet encoder</strong>. Arrow is not in Debian
+    bookworm&rsquo;s default repos, so the backend image adds Apache&rsquo;s own APT source and
+    <code>libparquet-dev</code> (24.0.0).
+  </p>
+</section>
+
+<section>
+  <h2>Decisions</h2>
+  <ul>
+    <li>
+      <strong>1. Everything runs in the C++ backend.</strong> No Python in the export path, no
+      control-plane hop. The cost is one apt dependency in the backend image; that is cheap next
+      to a language boundary. <span class="phase-tag have">reworked</span>
+    </li>
+    <li>
+      <strong>2. The join is the existing <code>combine</code> node.</strong> No new node kind and
+      no new schema. Export can also be fed a data stream and an experiment as two separate
+      inputs &mdash; the endpoint takes an optional <code>marker_stream_id</code> &mdash; so a
+      combine is convenient, not mandatory.
+    </li>
+    <li>
+      <strong>3. Export is &ldquo;materialize a stream to a file&rdquo;.</strong> The endpoint is
+      generic per-channel (<code>GET /api/export/parquet?stream_id=&hellip;</code>), not
+      experiment-specific. A plain data stream exports too; it just has no label values.
+    </li>
+    <li>
+      <strong>4. Browser download, not a server-side artifact.</strong> The file is written to a
+      temp path, read back, unlinked, and returned as an attachment. No <code>/exports</code>
+      volume, no bind mount, no <code>podman cp</code>.
+    </li>
+    <li>
+      <strong>5. The cue label is joined onto the frames</strong> as a configurable column
+      (default <code>label</code>), plus <code>&lt;label&gt;_cue_id</code> and
+      <code>&lt;label&gt;_phase</code>. Frames between cues are null &mdash; inside the session but
+      not inside a cue. Channel labels, session id and window travel as Parquet key-value
+      metadata (requires <code>ArrowWriterProperties::store_schema()</code>, which is easy to miss:
+      without it Arrow silently drops the table metadata on write).
+    </li>
+    <li>
+      <strong>6. Parquet support is optional at build time.</strong> <code>find_package(Parquet)</code>
+      gates a <code>NATKIT_HAVE_PARQUET</code> define; without libparquet-dev the backend still
+      builds and the endpoint answers <code>501</code> with a clear message rather than failing
+      the build.
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>What shipped</h2>
+  <table>
+    <tr><th>Piece</th><th>Where</th></tr>
+    <tr><td><code>export</code> node kind (allow-list, validation, port normalization, catalog entry, start dispatch)</td><td><code>StreamViewerWebSocket.cpp</code></td></tr>
+    <tr><td>Drain &rarr; normalize &rarr; label-join &rarr; write</td><td><code>ParquetExport.{hpp,cpp}</code></td></tr>
+    <tr><td><code>GET /api/export/parquet</code> (auth-gated, attachment + <code>X-Natkit-*</code> counters)</td><td><code>NatKitBackend.cpp</code></td></tr>
+    <tr><td>Arrow APT source + <code>libparquet-dev</code>; optional CMake link</td><td><code>Dockerfile_natkit_backend</code>, <code>tools/src/CMakeLists.txt</code></td></tr>
+    <tr><td>Export node card, inspector, download-with-progress</td><td><code>StreamGraphEditor.svelte</code>, <code>StreamGraphNode.svelte</code>, <code>types.ts</code></td></tr>
+  </table>
+  <p>Query parameters:</p>
+  <pre>stream_id                 (required) the channel supplying the rows
+marker_stream_id          markers from a different channel (direct experiment wiring)
+label_field               label column name (default "label")
+run_index                 1-based run inside a multi-run session
+start_us / end_us         explicit window override
+first_record_timeout_ms   wait for the first record (default 15000)
+idle_timeout_ms           idle window after data starts (default 2000)</pre>
+  <p>Response headers: <code>X-Natkit-Frame-Count</code>,
+  <code>X-Natkit-Labelled-Frame-Count</code>, <code>X-Natkit-Marker-Count</code>,
+  <code>X-Natkit-Session-Id</code>, <code>X-Natkit-Truncated</code>.</p>
+</section>
+
+<section class="warn">
+  <h2>Known limits</h2>
+  <ul>
+    <li>
+      <span class="q">Draining a live stream is time-bounded, not offset-bounded.</span> Records
+      keep arriving, so the idle window never fires. A hard <code>maxDurationMs</code> (30s)
+      bounds it; the response sets <code>X-Natkit-Truncated: true</code> and the UI says so
+      explicitly. The correct fix is to stop at the high watermark as of request time, which the
+      messenger API does not currently expose.
+    </li>
+    <li>
+      <span class="q">Only canonical numeric channel frames export.</span> Verified against the
+      live IMU stream: 197,181 <code>NatImuBulkDataSchema</code> records read, none matched the
+      contract, and the endpoint said exactly that. A classification or feature-vector stream is
+      likewise not exportable.
+    </li>
+    <li>
+      <span class="q">Broker retention bounds everything.</span> Export reads Kafka, so a session
+      older than retention is partly or wholly gone.
+    </li>
+    <li>
+      <span class="q">Label granularity is per frame</span>, not per sample: a cue boundary
+      falling mid-frame attributes the whole frame to one label.
+    </li>
+    <li>
+      <span class="q">The whole file is buffered in memory</span> on the way out (written to temp,
+      read back, returned). Fine for session-sized exports; a very large one should stream.
+    </li>
+    <li>
+      <span class="q">The label lives in the file, not the stream.</span> Putting it in the stream
+      needs a new schema &mdash; <code>NatSignalFrameDataSchemaV1</code> is numeric channels with
+      nowhere to put a string class. Deferred; would make the label visible live and shareable
+      with the classify path for train/serve parity.
+    </li>
+  </ul>
+</section>
+
+</main>
+<footer>
+  natKit &middot; plan authored July 28 2026 &middot; companion to
+  <code>vp-provenance-edges-plan.html</code> and <code>experiments-and-time-plan.html</code>.
+</footer>
+</body>
+</html>

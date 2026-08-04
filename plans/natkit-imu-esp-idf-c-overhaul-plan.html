@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit-IMU — Restore Flow, Clean Up, Arduino→ESP-IDF, then C++→C</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+  ol { margin: 10px 0 0 20px; padding: 0; }
+  ol li { margin: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit-IMU · firmware · plan · July 24 2026</div>
+  <h1>Restore Flow, Clean Up, Arduino→ESP-IDF, then C++→C</h1>
+  <p class="meta lede">
+    A staged overhaul of the <code>natKit-IMU/embeded</code> firmware. The device recently
+    streamed real BNO08x IMU data but now <strong>boot-loops</strong> on sensor init, so nothing
+    reaches the frontend. The goal is to <strong>get real data flowing again first</strong>, then
+    give the code the attention it needs: clean it up, migrate the build from the
+    <strong>Arduino framework to ESP-IDF</strong> (matching natVR), and <strong>begin shifting
+    C++ → C</strong> to reclaim flash headroom for future features. The binding constraint the
+    whole way: <strong>every step keeps data flowing.</strong>
+  </p>
+  <span class="status">Design captured — awaiting go. DO NOT implement yet.</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Why now</h2>
+    <p>
+      Two things just landed and one thing just broke:
+    </p>
+    <ul>
+      <li><strong>Landed:</strong> the IMU bulk stream now carries a real <em>frame</em> — a 24-byte
+        binary envelope (<code>schemaVersion | sampleCount | sampleRateHz | seqNo | deviceTsUs</code>)
+        on <code>NatImuBulkDataSchema</code>, plus a ~1&nbsp;Hz <code>device.firmware.status.v1</code>
+        heartbeat. Validated end-to-end in simulator mode: broker shows <code>len=5024</code> data
+        frames + <code>len=262</code> heartbeats, the bridge decodes them, Kafka has the topics. The
+        <code>cpp-only</code> libnatkit-core change is pushed.</li>
+      <li><strong>Broke:</strong> in real-sensor mode the device panics
+        (<code>Guru Meditation / StoreProhibited</code>, null write) inside <code>bno08x.begin_SPI()</code>,
+        right after "Starting the BNO08X", and reboots forever. It never reaches WiFi/MQTT — hence no
+        data. This is the IMU bring-up path; the framing/heartbeat work is not implicated.</li>
+      <li><strong>Pressure:</strong> release flash sits ~86.7% (1.31&nbsp;MB part). We are fine today,
+        but future features will crowd the ceiling — so we tackle flash structurally (leaner ESP-IDF +
+        C) rather than with a one-off diet.</li>
+    </ul>
+    <p>
+      It <em>recently worked</em>, so the crash is most likely a <strong>regression</strong>, not a
+      bring-up mistake. Leading suspects: <strong>unpinned sensor libraries</strong>
+      (<code>Adafruit_BNO08x</code> / <code>Adafruit_SensorLab</code> are bare git URLs — a rebuild can
+      pull a newer/incompatible sh2 HAL) and the recent <code>71e3be8 "Cleaned up the repo a bit"</code>
+      commit, which touched the sensor files.
+    </p>
+  </section>
+
+  <section class="prov">
+    <h2>Guiding principle — never break the data path</h2>
+    <p>
+      This is an incremental migration, not a rewrite. Every step ends with the same
+      <strong>smoke test</strong>, and a step that fails it does not land:
+    </p>
+    <ul>
+      <li><strong>Pipeline test (sim):</strong> build with <code>NAT_SIMULATE_BNO08X</code>, confirm
+        <code>Data-&lt;id&gt;-Binary-NatImuBulkDataSchema</code> (len&nbsp;5024) + heartbeat on the broker
+        and bridge decode.</li>
+      <li><strong>Real-sensor check:</strong> confirm frames carry physically-varying values (not sim
+        randoms) with populated accuracies; move the board, values change.</li>
+      <li><strong>Frontend:</strong> stream renders in the StreamViewer/VP for stream id
+        <code>13793649670644</code> (<code>ESP32-&lt;board&gt;</code>).</li>
+    </ul>
+    <p>Steps stay small and individually committable/revertible. Sim mode is retained as a first-class
+      build so this smoke test survives the whole migration.</p>
+  </section>
+
+  <section>
+    <h2>Phase 0 — Restore data flow <span class="phase-tag gap">first &amp; most important</span></h2>
+    <p>Get the real BNO08x streaming again and establish the working baseline everything else must preserve.</p>
+    <ol>
+      <li><strong>Exact fault location.</strong> Flash the <code>debug_verbose</code> env (exception
+        decoder + far less inlining than release <code>-O3</code>) in real mode; capture the decoded
+        backtrace to pinpoint the null-deref (expected inside the Adafruit/sh2 SPI HAL).</li>
+      <li><strong>Find what changed.</strong> Identify the last-known-good commit/build; diff the sensor
+        path against it, focusing on <code>71e3be8</code>. Check <code>dependencies.lock</code> for an
+        Adafruit/sh2 version bump between "worked" and "now".</li>
+      <li><strong>Pin dependencies.</strong> Pin <em>all</em> <code>lib_deps</code> to known-good
+        versions/commits (<code>Adafruit_BNO08x</code>, <code>Adafruit_SensorLab</code>, AsyncTCP, etc.)
+        and commit the lock. Bare-git-HEAD deps must go regardless of root cause — they make builds
+        non-reproducible and are the prime regression vector.</li>
+      <li><strong>Verify.</strong> Run the full smoke test with the real sensor. <strong>This is the
+        baseline.</strong></li>
+    </ol>
+    <div class="meta">Retracted from the earlier draft: the "INT=32 is wrong" theory. If it recently
+      worked, the pins were right for this board; the schematic almost certainly uses symbol-relative pin
+      labels, not raw ESP32 GPIO numbers.</div>
+  </section>
+
+  <section>
+    <h2>Phase 1 — Cleanup <span class="phase-tag partial">behavior-preserving</span></h2>
+    <p>Make the code legible and safe without changing what it does. Verify data still flows after each change.</p>
+    <ul>
+      <li>Delete the large dead commented-out blocks (Kafka-REST/HTTP, old JSON paths, sample scaffolds).</li>
+      <li>Fix real bugs surfaced during diagnosis: the <code>printf("...%s", std::string)</code> UB at
+        <code>ImuReader.hpp:809</code>; the misleading <code>USE_SERIAL</code> comment ("disables" vs
+        actually enables).</li>
+      <li>Centralize configuration into one header — pins (documented against schematic nets), broker
+        host <em>and</em> <strong>port (kill the hardcoded <code>1883</code>)</strong>, sample rate,
+        device id.</li>
+      <li>Unify the time base on <strong>microseconds</strong> end-to-end (removes the ms/µs split the
+        frame work exposed — per-sample time is currently ms while the header is µs).</li>
+      <li>Keep <code>NAT_SIMULATE_BNO08X</code> as a documented, supported test build.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 2 — Arduino → ESP-IDF <span class="phase-tag partial">incremental</span></h2>
+    <p>
+      The structural move, and where the leaner runtime buys flash. The trick to staying-working is
+      <strong>Arduino-as-an-ESP-IDF-component</strong> first, then peeling Arduino away one subsystem at
+      a time toward natVR's native stack.
+    </p>
+    <h3>2a — Switch the build system, keep the APIs</h3>
+    <p>Move to <code>framework = arduino, espidf</code> (PlatformIO supports this — it's already a
+      commented line in <code>platformio.ini</code>). Same Arduino APIs, ESP-IDF build underneath.
+      Verify identical behavior.</p>
+    <h3>2b — Replace subsystems natively, one at a time</h3>
+    <table>
+      <tr><th>Subsystem</th><th>From (Arduino)</th><th>To (ESP-IDF / natVR-aligned)</th><th>Risk</th></tr>
+      <tr><td>MQTT</td><td>PubSubClient</td><td><code>esp-mqtt</code></td><td>low</td></tr>
+      <tr><td>WiFi</td><td><code>WiFi.h</code></td><td><code>esp_wifi</code> / <code>esp_netif</code></td><td>low</td></tr>
+      <tr><td>NTP</td><td>ESPNtpClient</td><td><code>esp_sntp</code></td><td>low</td></tr>
+      <tr><td>Logging</td><td><code>Serial</code></td><td><code>esp_log</code></td><td>low</td></tr>
+      <tr><td>Sensor SPI</td><td>Adafruit_BNO08x</td><td>native <code>spi_master</code> + CEVA <code>sh2</code> driver</td><td class="q">high — do last</td></tr>
+    </table>
+    <h3>2c — Drop the Arduino component</h3>
+    <p>Move to <code>framework = espidf</code> only. This removes the Arduino framework entirely —
+      the <strong>largest single flash reclaim</strong> of the whole effort.</p>
+    <h3>2d — (optional, later)</h3>
+    <p>Leave PlatformIO for raw <code>idf.py</code> to fully match natVR's toolchain, if desired.</p>
+  </section>
+
+  <section>
+    <h2>Phase 3 — Begin C++ → C <span class="phase-tag partial">long-term, flash-driven</span></h2>
+    <p>
+      Started here (not finished) — a direction, taken incrementally on the now C-first ESP-IDF base.
+      Each conversion is measured for flash and verified for data flow.
+    </p>
+    <ul>
+      <li><strong>Encoding.</strong> Replace the C++ libnatkit-core <code>Schema</code> classes with the
+        <strong>C ABI</strong> (<code>libnatkit-core-abi.h</code>) or a small hand-rolled C frame encoder.
+        The frame is trivial in C (24-byte header + fixed-size samples); natVR precedent is hand-built
+        frames with cJSON and no C++ library.</li>
+      <li><strong>Drop heavy C++.</strong> Remove <code>std::string</code> / <code>unordered_map</code> /
+        <code>std::function</code> usage; remove exceptions and RTTI. These, plus the STL, are the bulk of
+        the C++ flash cost.</li>
+      <li>Convert modules (sensor, buffer, framing, transport, config) to C one at a time, keeping the
+        smoke test green throughout.</li>
+    </ul>
+    <div class="meta">Note: the earlier standalone "quick flash relief" phase (<code>-O3</code>→<code>-Os</code>,
+      LTO, <code>--gc-sections</code>) was dropped by request — we're fine on flash today, and Phases 2c
+      and 3 address the ceiling structurally for future work. Those compiler-flag levers remain available
+      as a cheap fallback if headroom gets tight mid-migration.</div>
+  </section>
+
+  <section class="risk">
+    <h2>Decisions &amp; risks to validate early</h2>
+    <ul>
+      <li><strong>BNO08x on ESP-IDF/C has no in-repo precedent</strong> (natVR is ADC-EMG, not BNO08x).
+        The CEVA <code>sh2</code> driver is portable C, but this is the migration's riskiest piece — keep
+        the sensor under the Arduino component the longest (Phase 2b, last).</li>
+      <li><strong>libnatkit-core C ABI coverage</strong> for the IMU frame is unconfirmed — verify
+        <code>libnatkit-core-abi.h</code> exposes an IMU-frame encoder, or plan to hand-roll one (cheap).</li>
+      <li><strong>Flash math</strong>: biggest wins are dropping Arduino (2c) and the C shift (3); confirm
+        each with a before/after size measurement so the effort is evidence-driven.</li>
+      <li><strong>Nested-submodule / cpp-only divergence</strong> still applies to any libnatkit-core
+        change — the firmware fetches remote <code>cpp-only</code>, distinct from the repo submodule.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Sequencing summary</h2>
+    <table>
+      <tr><th>Phase</th><th>Outcome</th><th>Data flowing?</th></tr>
+      <tr><td>0 — Restore flow</td><td>Real BNO08x streams again; deps pinned; baseline set</td><td class="have">yes (goal)</td></tr>
+      <tr><td>1 — Cleanup</td><td>Dead code gone, config centralized, bugs fixed, µs time base</td><td class="have">yes, unchanged</td></tr>
+      <tr><td>2 — Arduino→ESP-IDF</td><td>ESP-IDF build; native WiFi/MQTT/NTP/sensor; Arduino removed</td><td class="have">yes, per sub-step</td></tr>
+      <tr><td>3 — Begin C++→C</td><td>C encoder + module-by-module C conversion; flash reclaimed</td><td class="have">yes, per conversion</td></tr>
+    </table>
+  </section>
+
+  <section class="warn">
+    <h2>Open questions</h2>
+    <ul>
+      <li><span class="q">Q1.</span> Sign off on this phase order?</li>
+      <li><span class="q">Q2.</span> For Phase 2d — do you want to end on raw <code>idf.py</code> (full
+        natVR parity) or stay on PlatformIO's ESP-IDF framework?</li>
+      <li><span class="q">Q3.</span> Should the eventual C encoder go through the libnatkit-core C ABI, or
+        a self-contained hand-rolled encoder in the firmware (fewer dependencies, matches natVR)?</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  natKit-IMU firmware overhaul · captured 2026-07-24 · status: awaiting go, not started ·
+  first action on approval = Phase 0 only, checking in before each subsequent phase.
+</footer>
+</body>
+</html>

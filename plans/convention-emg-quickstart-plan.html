@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Convention EMG Quick-Start Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · July 16 2026</div>
+  <h1>Convention EMG Quick-Start</h1>
+  <p class="meta lede">
+    Stand up natKit at a convention with three EXG Pill EMG channels, run a 1&ndash;5&nbsp;minute
+    gesture-training session entirely from the Visual Programming page, train a classifier on that
+    session, and go straight to <strong>live classifying</strong> &mdash; then save the person as a
+    <strong>profile</strong> so they can walk up later and resume in one click. Data is explorable
+    live at every pipeline stage, the training session is replayable, the ESP32 can reach us over
+    <strong>WiFi/MQTT or a serial backup</strong>, and the target is <strong>80&ndash;90% accuracy</strong>
+    after the initial session.
+  </p>
+  <span class="status">Design captured &mdash; ready to sequence</span>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>The core insight: most of this is already built</h2>
+    <p>
+      Across the prior VP-rework, experiments-and-time, and topic-aware-channels efforts, natKit
+      already has: the EXG&nbsp;Pill&nbsp;&rarr;&nbsp;MQTT&nbsp;&rarr;&nbsp;bridge&nbsp;&rarr;&nbsp;Kafka
+      ingest path, a data-driven node catalog, an <strong>experiment/record node</strong> with a
+      finger-counting protocol default, Hudgins feature transforms (<code>mav/rms/zc/ssc/wl</code>) plus
+      <code>sliding_window</code> and <code>combine</code>, a <strong>train node</strong> that runs the
+      LDA/SVM/RF pipeline with validation accuracy, an <strong>LDA live-classify transform</strong> in
+      C++, descriptor-driven per-stage viewers (live data exploration), a <strong>timeline/DVR strip</strong>
+      with backend re-run replay, and an <strong>experiment library</strong> that discovers recorded runs.
+      This plan is therefore <em>90% integration and productization</em>, not greenfield build &mdash; with
+      three genuine gaps (serial ingest, profiles, and the train/serve accuracy skew) and one guided-flow
+      layer that stitches the parts into a walk-up convention experience.
+    </p>
+    <p>
+      <strong>The one hard technical problem</strong> is accuracy in the <em>live</em> path (see the
+      Accuracy section). Everything else is wiring, persistence, and UX.
+    </p>
+  </section>
+
+  <section>
+    <h2>User story &rarr; status map</h2>
+    <p>Each clause of the story, mapped to what exists today and what this plan must add.</p>
+    <table>
+      <tr><th>Story clause</th><th>Today</th><th>This plan</th></tr>
+      <tr>
+        <td>Set up with 3 EXG Pill EMG channels on a forearm</td>
+        <td><span class="phase-tag have">have</span> Firmware defaults to 3 channels (<code>NATVR_ADC_CHANNEL_COUNT=3</code>, labels <code>flexor_a/flexor_b/extensor_a</code>), 1&nbsp;kHz, 50&nbsp;samples/frame, schema <code>ExgPillEmgDataSchemaV1</code>.</td>
+        <td>Verify end-to-end; the 3-channel stream surfaces automatically in the stream list.</td>
+      </tr>
+      <tr>
+        <td>Quick 1&ndash;5&nbsp;min training session on hand gestures, via VP</td>
+        <td><span class="phase-tag have">have</span> Experiment node records a cue timeline (finger-counting default) client-side and publishes a session bundle.</td>
+        <td><span class="phase-tag partial">tune</span> Convention Quick-Start flow + shorter/simpler default protocol.</td>
+      </tr>
+      <tr>
+        <td>Immediately train a model on that session</td>
+        <td><span class="phase-tag have">have</span> Train node &rarr; control-plane pipeline (Hudgins + LDA/SVM/RF) with validation accuracy; discovers the just-recorded run.</td>
+        <td><span class="phase-tag partial">tune</span> One-click "train on the session I just recorded"; auto-populate <code>model_path</code>.</td>
+      </tr>
+      <tr>
+        <td>Start live classifying</td>
+        <td><span class="phase-tag partial">partial</span> C++ <code>lda_classify</code> exists but needs a hand-wired feature pipeline and has train/serve skew.</td>
+        <td><span class="phase-tag gap">gap</span> Self-contained <code>emg_gesture_classify</code> node + extended model bundle (accuracy phase).</td>
+      </tr>
+      <tr>
+        <td>All via the Visual Programming interface</td>
+        <td><span class="phase-tag have">have</span> VP page hosts experiment, train, transforms, viewers, timeline.</td>
+        <td>Quick-Start template ties them together on one canvas.</td>
+      </tr>
+      <tr>
+        <td>Save profiles for individuals; resume live classifying later</td>
+        <td><span class="phase-tag partial">partial</span> <code>participant_id</code> captured on the experiment node; no person&rarr;model&rarr;graph object.</td>
+        <td><span class="phase-tag gap">gap</span> Profile store + WS actions + profile picker.</td>
+      </tr>
+      <tr>
+        <td>Explore the data live along the pipeline</td>
+        <td><span class="phase-tag have">have</span> Descriptor-driven viewers on any node output; classification viewer; per-stage graphs.</td>
+        <td>Preset the Quick-Start graph with taps for exploration.</td>
+      </tr>
+      <tr>
+        <td>ESP32 connects via WiFi/MQTT <em>or</em> a serial backup</td>
+        <td><span class="phase-tag have">have</span> WiFi&rarr;MQTT&rarr;bridge&rarr;Kafka. <span class="phase-tag gap">gap</span> No active serial path (only deprecated).</td>
+        <td><span class="phase-tag gap">gap</span> Serial&rarr;MQTT host shim (same topics, zero backend change).</td>
+      </tr>
+      <tr>
+        <td>80&ndash;90% accuracy after the initial session</td>
+        <td><span class="phase-tag partial">partial</span> Pipeline reports validation accuracy; live path has parity/normalization skew.</td>
+        <td><span class="phase-tag gap">gap</span> Fix parity (the accuracy linchpin) + instrument live confidence.</td>
+      </tr>
+      <tr>
+        <td>Replay the training session to watch the data</td>
+        <td><span class="phase-tag have">have</span> Timeline DVR + backend re-run replay + experiment library discovery.</td>
+        <td>Verify the just-recorded session is one-click replayable.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section class="risk">
+    <h2>The accuracy linchpin: train/serve parity</h2>
+    <p>
+      This is the single change that determines whether the live number matches the reported validation
+      number. The training pipeline (<code>natVR</code>) and the live path (C++) currently extract features
+      <em>differently</em>:
+    </p>
+    <ul>
+      <li><strong>Normalization skew.</strong> Training normalizes features per session via a calibration
+        profile (<code>baseline.build_dataset(normalize=True)</code>) and filters to <code>phase=="hold"</code>
+        windows before fitting. The stored <code>means/variances</code> therefore live in
+        <em>normalized</em> space. The C++ <code>transformLdaClassify</code> feeds <strong>raw</strong> window
+        features &mdash; the model is being scored against inputs in the wrong space. This alone can gut live
+        accuracy even when validation reports 90%.</li>
+      <li><strong>Feature-order skew.</strong> Training emits a fixed per-channel order
+        <code>[mav, rms, zc, ssc, wl]</code> (<code>vector_to_flat_features</code>). Live order depends on how
+        the user hand-wires the <code>combine</code> inputs; nothing enforces it. A permuted vector scores
+        garbage, and the only guard is a silent length check (wrong length &rarr; no output at all).</li>
+      <li><strong>SVM/RF not deployable.</strong> Only LDA loads live (<code>.joblib</code> models can't be read
+        by C++). For v1, classification is LDA-only; training may still <em>evaluate</em> SVM/RF for comparison.</li>
+    </ul>
+    <p>
+      <strong>The fix (Phase&nbsp;2) &mdash; DECIDED:</strong> collapse the live classification path into
+      <em>one</em> self-contained transform, <code>emg_gesture_classify</code>, that consumes raw EMG frames and
+      internally reproduces the exact training pipeline: window (<code>window_ms/hop_ms</code>) &rarr; Hudgins
+      features in the canonical order &rarr; per-feature normalization &rarr; LDA score &rarr;
+      <code>predicted_class</code>&nbsp;+&nbsp;<code>confidence.&lt;label&gt;</code>. All of it &mdash; window
+      params, feature list &amp; order, normalization stats, LDA params &mdash; is driven by a single extended
+      <strong>model bundle</strong> written by the trainer, so parity holds <em>by construction</em>. The
+      granular <code>mav/rms/&hellip;</code> transforms stay for data exploration, but they are no longer the
+      classification path.
+    </p>
+    <p>
+      <strong>Deferred by decision (not v1):</strong> the <em>non-collapsed</em> path &mdash; classification built
+      from composable granular feature transforms wired on the canvas, with parity enforced across a multi-node
+      pipeline rather than inside one node. It is a real future goal (it keeps the feature pipeline inspectable and
+      editable), but solving parity across arbitrary user wiring is the harder problem. v1 ships the collapsed node;
+      the composable version is a later effort once the collapsed path is proven.
+    </p>
+  </section>
+
+  <section>
+    <h2>Phasing</h2>
+    <p>
+      Ordered so the highest-risk correctness work (accuracy parity) lands before the productization that
+      depends on it. Phases 0&ndash;2 are the technical spine; 3&ndash;5 are the walk-up experience; 6 is
+      accuracy instrumentation and tuning.
+    </p>
+  </section>
+
+  <section>
+    <h2>Phase 0 &mdash; Verify &amp; commit the existing golden path <span class="phase-tag partial">harden</span></h2>
+    <h3>Goal</h3>
+    <p>
+      Establish a known-good, end-to-end EMG&nbsp;&rarr;&nbsp;record&nbsp;&rarr;&nbsp;train&nbsp;&rarr;&nbsp;classify
+      run against the live stack, and commit the large body of uncommitted VP work so this effort builds on a
+      clean baseline. Nothing new is built &mdash; this de-risks everything downstream.
+    </p>
+    <h3>Work</h3>
+    <ul>
+      <li>Bring up the full stack (<code>docker-compose.yml</code> + <code>docker-compose.dev.yml</code>);
+        confirm the 3-channel EMG stream appears in the stream list and plots live.</li>
+      <li>Hand-build the current best-effort live pipeline once (source &rarr; <code>sliding_window</code>
+        &rarr; <code>mav/rms/zc/ssc/wl</code> &rarr; <code>combine</code> &rarr; <code>lda_classify</code>) and
+        <em>measure the skew</em>: record a short session, train, paste the model path, observe live accuracy
+        vs. reported validation accuracy. This quantifies the Phase&nbsp;2 problem before fixing it.</li>
+      <li>Commit the outstanding VP branch work (experiments-and-time + topic-aware-channels are implemented
+        but uncommitted per <code>.claude/state.md</code>).</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>A documented baseline live-accuracy number for a hand-wired LDA pipeline, and a committed tree.</p>
+  </section>
+
+  <section>
+    <h2>Phase 1 &mdash; Serial backup ingest <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>Let an ESP32 that can't use WiFi still reach natKit over USB serial, with <em>zero</em> backend or schema change.</p>
+    <h3>Decision &mdash; serial &rarr; MQTT (not serial &rarr; Kafka)</h3>
+    <p>
+      The standard path is MQTT&nbsp;&rarr;&nbsp;bridge&nbsp;&rarr;&nbsp;Kafka. If the serial shim republishes the
+      <em>identical</em> JSON frames onto the <em>same</em> MQTT topics
+      (<code>natKit/sending/emg/raw/emg.raw.&lt;device_id&gt;</code>), then the bridge, topic naming, stream
+      discovery, and everything downstream are byte-for-byte identical to the WiFi path. Choosing Kafka directly
+      would mean re-implementing the bridge's <code>schema_version</code>&rarr;canonical-topic translation and the
+      FNV-1a stream-id hashing outside the bridge &mdash; strictly more surface, more drift risk. So: serial&nbsp;&rarr;&nbsp;MQTT.
+    </p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Firmware serial-output mode:</strong> add a build flag (e.g. <code>NATVR_TRANSPORT=serial</code>)
+        that writes the same newline-delimited <code>serialize_frame_json</code> frames to USB serial instead of
+        (or in addition to) the MQTT publish. Reuses the existing serializer at
+        <code>natVR/firmware/main/main.cpp</code> &mdash; only the sink changes.</li>
+      <li><strong>Host serial&rarr;MQTT shim:</strong> a small Python entrypoint (revive the shape of the
+        deprecated <code>exg-pill-producer.py</code>, but publishing to MQTT not Kafka): read
+        <code>pyserial</code> lines, validate each against <code>exg-pill-emg-data-v1.schema.json</code>, publish
+        verbatim to the MQTT broker on the standard topic. Package under <code>natVR</code> as
+        <code>natvr-serial-bridge</code>.</li>
+      <li><strong>Compose/dev wiring &amp; docs:</strong> document running the shim on the convention laptop; note
+        it needs the USB device and the MQTT host. Optional compose service (host-networked) for the laptop case.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>
+      An ESP32 in serial mode produces a stream indistinguishable in Kafka/stream-list from the WiFi path; a
+      viewer plots it; the Quick-Start flow works over either transport with no graph change.
+    </p>
+    <div class="callout" style="margin-top:14px;">
+      <strong>Fallback if firmware serial is out of scope for v1:</strong> the shim can instead read the existing
+      CSV/ADC serial format and construct <code>ExgPillEmgDataSchemaV1</code> JSON host-side (the deprecated
+      producer already parsed CSV) &mdash; keeps firmware untouched at the cost of the shim owning frame assembly.
+    </div>
+  </section>
+
+  <section>
+    <h2>Phase 2 &mdash; Guaranteed-parity live classifier <span class="phase-tag gap">accuracy linchpin</span></h2>
+    <h3>Goal</h3>
+    <p>Make live accuracy equal reported validation accuracy, and eliminate the hand-wired feature pipeline as a source of error.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Extended model bundle (trainer side).</strong> When the pipeline selects a model, serialize a
+        self-describing bundle alongside <code>lda-model.json</code> that includes: <code>window_ms</code>,
+        <code>hop_ms</code>, <code>sample_rate_hz</code>, the ordered feature list
+        (<code>[mav, rms, zc, ssc, wl]</code> per selected channel), the per-feature <strong>normalization stats</strong>
+        (mean/std or the calibration profile actually applied in <code>baseline.build_dataset</code>), the channel
+        selection, the class labels, and the LDA params. Written by
+        <code>natVR/src/natvr/select_model.py</code>&nbsp;/&nbsp;<code>model.py</code> and copied to
+        <code>/models/&lt;job_id&gt;/</code> by <code>persist_selected_model_artifact</code>.</li>
+      <li><strong>Self-contained C++ inference transform <code>emg_gesture_classify</code>.</strong> One transform
+        that takes raw EMG frames and internally does window &rarr; Hudgins (reusing the existing
+        <code>reduceWindow</code>, already ported from <code>features.py</code>) &rarr; normalize (new, from the
+        bundle) &rarr; LDA score (reuse <code>transformLdaClassify</code>'s math). It reads the bundle path from
+        one config field. Parity is guaranteed because the same bundle drives windowing, order, and normalization.
+        Add to <code>buildTransformCapabilitiesJson</code> / the node catalog.</li>
+      <li><strong>Kill the manual model-path paste.</strong> On a completed train job, thread the persisted
+        <code>model_path</code> from the train node directly into the downstream classify node's config
+        (auto-fill, editable). Frontend: <code>submitTrainJob</code> / <code>handleMlControlPlaneMessage</code>
+        (<code>VisualProgramming/page.svelte</code>) already receive <code>report.model_path</code>; wire it to the
+        connected classify node instead of only displaying it.</li>
+      <li><strong>Keep granular transforms for exploration.</strong> <code>mav/rms/&hellip;</code> stay in the
+        catalog as taps a user can view; they are simply not the classification path anymore.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>
+      A model trained on a recorded session, dropped into <code>emg_gesture_classify</code>, classifies the
+      <em>same</em> replayed session within a small delta of the reported validation accuracy (parity proven), and
+      a fresh live session on the trained gestures produces stable predictions.
+    </p>
+    <div class="callout" style="margin-top:14px; border:none; padding:0; background:none;">
+      <p><span class="q">RESOLVED (read the code 2026-07-16):</span> the fit-time normalization is
+      <strong>rest-calibration</strong>, not a z-score. <code>build_calibration_profile</code>
+      (<code>natVR/src/natvr/calibration.py</code>) computes, per channel, <code>rest_mean_rms</code> (avg RMS
+      during the <code>rest</code> gesture) and <code>scale_rms = active_mean_rms &minus; rest_mean_rms</code> (the
+      rest&rarr;full-contraction dynamic range), then <code>normalize_feature_vector</code> rescales the amplitude
+      features so rest&nbsp;&asymp;&nbsp;0 and full contraction&nbsp;&asymp;&nbsp;1
+      (<code>rms&rarr;(rms&minus;rest)/scale</code>, <code>mav</code> and <code>waveform_length</code> divided by
+      <code>scale</code>; <code>zero_crossings</code>/<code>slope_sign_changes</code> pass through). It also filters
+      to <code>phase=="hold"</code> (plus rest) windows before fitting. This cancels electrode placement / skin
+      impedance / per-person gain.</p>
+      <p><strong>Implication for the live path (good news):</strong> the profile is just a few numbers per channel,
+      so the bundle carries <code>rest_mean_rms</code>&nbsp;+&nbsp;<code>scale_rms</code> and the live transform
+      applies the identical math &mdash; <strong>no separate live rest-capture is needed</strong> as long as
+      placement is unchanged between training and classifying (exactly the convention flow: train, then classify
+      immediately on the same pills). If pills are re-attached, retrain (ties into the Phase&nbsp;4 recalibrate path).</p>
+      <p><span class="q">Wrinkle &mdash; RESOLVED (user, 2026-07-16):</span> <code>build_calibration_profile</code>
+      needs an <code>active_gesture</code> to compute <code>scale_rms</code> and defaults to <code>"fist"</code>.
+      Decision: <strong>keep <code>fist</code></strong> &mdash; the convention default protocol includes a
+      <code>fist</code> gesture, so <code>active_gesture="fist"</code> works with no special-casing. Fist doubles as
+      a good calibration anchor (a strong full-forearm contraction &rarr; broad dynamic range across all channels)
+      <em>and</em> is classified like any other gesture &mdash; no need for a calibration-only class or an alternate
+      scale derivation.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Phase 3 &mdash; Convention Quick-Start flow <span class="phase-tag partial">productization</span></h2>
+    <h3>Goal</h3>
+    <p>Turn the walk-up scenario into a single guided flow on the VP page &mdash; no hand-wiring for the operator.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Quick-Start starter template</strong> (extend <code>starterTemplates.ts</code>): a preset graph with
+        the live EMG source auto-bound, an experiment node with a convention-tuned protocol, per-stage viewers for
+        exploration, and an <code>emg_gesture_classify</code> node pre-placed (empty model until trained).</li>
+      <li><strong>Guided steps</strong> layered on the existing pieces: (1) confirm the 3-channel stream &amp;
+        electrode placement (live viewer), (2) optional short rest capture if Phase&nbsp;2 needs calibration,
+        (3) record the gesture session (existing experiment runner UI, big cue prompt), (4) one-click "Train on this
+        session" (the just-recorded run is pre-selected as train/eval via the experiment library discovery), (5) auto
+        model-path &rarr; classifier goes live.</li>
+      <li><strong>Convention-tuned default protocol:</strong> a short protocol (fewer gestures &rarr; higher accuracy;
+        e.g. 3&ndash;4 well-separated gestures + rest, 3 reps, 2&nbsp;s hold) sized to land inside the 1&ndash;5&nbsp;min
+        budget. Editable, but the default is chosen for walk-up accuracy.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>An operator loads one template and, following on-screen steps, goes from bare canvas to live classifying in a few minutes without manually adding or wiring a single node.</p>
+  </section>
+
+  <section>
+    <h2>Phase 4 &mdash; Individual profiles <span class="phase-tag gap">new</span></h2>
+    <h3>Goal</h3>
+    <p>Persist a person as a first-class object so they can walk up later and resume live classifying in one click.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Profile object &amp; store (backend).</strong> A <code>Profile</code> = {<code>participant_id</code>,
+        <code>display_name</code>, <code>model_path</code>, <code>graph_id</code> (the classify graph),
+        <code>protocol_id</code>, channel binding / device_id, session_ids, best validation accuracy, timestamps}.
+        Persist in a JSON store mirroring the existing stream-graph store
+        (<code>NATKIT_STREAM_GRAPH_STORE</code> pattern &rarr; a new <code>NATKIT_PROFILE_STORE</code>), with the same
+        atomic-write + load-on-startup mechanics.</li>
+      <li><strong>WS actions:</strong> <code>list_profiles</code> / <code>save_profile</code> / <code>delete_profile</code>
+        on the StreamViewer WebSocket, mirroring the graph-store actions. Frontend types + <code>websocket.ts</code>
+        dispatch.</li>
+      <li><strong>Profile picker (VP page):</strong> a profile list; "New profile" launches the Phase&nbsp;3 flow and
+        saves the result; selecting an existing profile loads its classify graph with <code>model_path</code>
+        pre-filled and binds the current live channels &rarr; classifying immediately (no retrain). Reuses the
+        composite/editor-metadata round-trip so a profile's graph reloads from the backend alone.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>
+      Record + train for "Alice" &rarr; save profile. Reload the page, pick "Alice", and live classification starts on
+      her saved model against the live stream with no re-recording or re-training.
+    </p>
+    <div class="warn" style="margin-top:14px; border:none; padding:0; background:none;">
+      <p><span class="q">Note:</span> a saved model reflects that person's electrode placement. If pills are re-attached
+      differently, accuracy drops &mdash; the profile flow should offer a fast "recalibrate/retrain" path (re-run
+      Phase&nbsp;3 keeping the profile). Placement guidance belongs in the Quick-Start step 1.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Phase 5 &mdash; Live exploration &amp; session replay <span class="phase-tag have">verify/polish</span></h2>
+    <h3>Goal</h3>
+    <p>Confirm the two "watch the data" clauses work on the Quick-Start graph and are one click away.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Live exploration:</strong> the Quick-Start template pre-places viewers on the raw stream and on key
+        pipeline stages (windowed, feature vector, classification) so the operator can eyeball signal quality and the
+        feature space during a session. Uses the existing descriptor-driven viewer registry &mdash; no new renderers.</li>
+      <li><strong>Training-session replay:</strong> verify the just-recorded session appears in the experiment library
+        and that "Reprocess"/DVR replays it through the live graph (backend re-run from the session's historical
+        offset). The mechanics exist (timeline strip + <code>start_stream_graph.start_offset</code> + experiment
+        library); this phase confirms the just-recorded run is immediately selectable and scrubs cleanly.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>During and after a session, viewers show data at each stage; the operator can scrub/replay the training session on the timeline and watch it re-run through the pipeline.</p>
+  </section>
+
+  <section>
+    <h2>Phase 6 &mdash; Accuracy instrumentation &amp; tuning <span class="phase-tag partial">tune</span></h2>
+    <h3>Goal</h3>
+    <p>Surface accuracy where the operator can act on it, and give the levers to reach 80&ndash;90%.</p>
+    <h3>Work</h3>
+    <ul>
+      <li><strong>Surface validation accuracy in VP.</strong> The train node currently shows only status + model path;
+        surface <code>selected_mean_accuracy</code> / mean coverage / per-class confusion (already in the report,
+        rendered in MlPipeline) on the VP train node so the operator sees the number before going live.</li>
+      <li><strong>Live confidence readout.</strong> The classification viewer already shows
+        <code>confidence.&lt;label&gt;</code>; add a simple rolling live-accuracy / stability indicator during a
+        known-gesture check so the operator can validate placement empirically.</li>
+      <li><strong>Accuracy levers &amp; guidance:</strong> fewer/well-separated gestures, good electrode placement,
+        longer holds, more reps, per-session calibration (Phase&nbsp;2). Optionally let training try LDA+SVM+RF and
+        report the best, even though only LDA deploys live &mdash; a low SVM/RF-vs-LDA gap is a signal that LDA is
+        adequate for this person.</li>
+    </ul>
+    <h3>Acceptance</h3>
+    <p>A typical convention participant reaches 80%+ validation accuracy that holds up live (within the Phase&nbsp;2 parity delta), with the number visible in the UI.</p>
+  </section>
+
+  <section class="risk">
+    <h2>Risks &amp; open questions</h2>
+    <ul>
+      <li><span class="q">Normalization semantics (Phase 2):</span> the exact fit-time normalization
+        (<code>baseline.py</code>) must be pinned down before the bundle is designed. If it needs a per-session rest
+        capture, the live flow inherits a calibration step.</li>
+      <li><span class="q">LDA-only live ceiling:</span> if LDA can't reach 80&ndash;90% for some people while SVM/RF can,
+        a C++ SVM/RF inference path (or an ONNX export) becomes necessary &mdash; a larger effort deferred out of v1 but
+        flagged here.</li>
+      <li><span class="q">Model artifact reachability &mdash; DECIDED (add the mount + plumbing):</span> remote ML
+        workers can't currently deliver a live-loadable model, and <strong>mounting <code>/models</code> alone is
+        necessary but NOT sufficient</strong> (verified in code 2026-07-16). <code>persist_selected_model_artifact</code>
+        is only called on the in-process path (<code>_run_job_in_slot</code>, ~L3059); the remote-worker completion
+        handler <code>_handle_report_worker_job_state</code> (~L2937) calls <code>sanitize_pipeline_report(report)</code>
+        with <em>no</em> <code>model_path</code>, so it returns <code>model_path=None</code> /
+        <code>artifact_storage="ephemeral_scratch"</code> and persists nothing; the worker's
+        <code>selected_model_path</code> points at its own ephemeral (and backend-unreachable) workspace. <strong>Fix =
+        (1)</strong> mount <code>natkit-v0-models</code> rw on <code>ml-worker-a</code> in
+        <code>docker-compose.dev.yml</code>, <strong>+ (2)</strong> have the remote worker persist into that mounted
+        <code>/models/&lt;job_id&gt;/</code> before its workspace is cleaned and report the durable path, and have
+        <code>_handle_report_worker_job_state</code> pass it through <code>sanitize_pipeline_report(report, model_path)</code>.
+        <strong>Zero-code fallback for v1:</strong> pin training to the in-process control-plane worker (already persists
+        correctly) &mdash; fine for a serialized one-person-at-a-time booth; costs the remote worker's parallel slots.</li>
+      <li><span class="q">Placement drift:</span> a saved profile's accuracy is tied to electrode placement; re-attach =
+        likely retrain. Set expectations in the UI; make retrain fast.</li>
+      <li><span class="q">Serial throughput:</span> 3ch &times; 1&nbsp;kHz &times; int16 as JSON over USB serial &mdash;
+        confirm the baud rate and frame batching keep up (the 50-samples/frame batching already helps). Binary framing
+        is a fallback if JSON-over-serial is too heavy.</li>
+      <li><strong>Non-goal (v1):</strong> mixing live + historical inputs in one run (already deferred upstream);
+        cross-person model transfer; automatic electrode-placement detection.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Suggested sequencing</h2>
+    <p>
+      <strong>0 &rarr; 2 first</strong> (verify baseline, then the accuracy fix) because the whole story hinges on live
+      classification actually working. <strong>1 (serial)</strong> is independent and can run in parallel &mdash; it
+      touches firmware + a host shim, not the graph. <strong>3&ndash;5</strong> (Quick-Start, profiles, exploration/replay)
+      layer productization onto the working spine. <strong>6</strong> is continuous but formally closes the accuracy
+      target. Phases&nbsp;1, 3, 4 are the only ones with meaningful <em>new</em> surface; the rest is verification and
+      focused correctness work on top of what's already shipped.
+    </p>
+  </section>
+
+  <footer>
+    Related: plans/experiments-and-time-plan.html (experiment node, markers, timeline/replay),
+    plans/topic-aware-channels-plan.html (channels), plans/visual-programming-rework-plan.html (node catalog,
+    descriptor-driven viewers, train/classify nodes), plans/frontend-ml-pipeline-plan.html.
+    Building blocks: ExgPillEmgDataSchemaV1 + KafkaMosquittoBridge (ingest), experiment node + publish_session_bundle,
+    reconstruct_session run discovery, kafka_train_validate pipeline (Hudgins + LDA/SVM/RF + validation accuracy),
+    reduceWindow / transformLdaClassify (C++ inference), starterTemplates.ts, TimelineStrip + start_stream_graph
+    start_offset (replay), NATKIT_STREAM_GRAPH_STORE (store pattern for profiles).
+  </footer>
+</main>
+</body>
+</html>

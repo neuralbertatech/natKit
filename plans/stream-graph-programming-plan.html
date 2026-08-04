@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Stream Graph Programming Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1120px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, ol, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 940px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul, ol {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    background: #132019;
+    color: #d7eee2;
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit - stream graphs - plan - July 3 2026</div>
+  <h1>Stream Graph Programming Plan</h1>
+  <p class="subtitle">
+    Add a node-based graphical programming surface for live and replayable natKit streams. The
+    first usable slice lets an operator place existing streams on a canvas, add transform nodes,
+    connect streams into transforms and transforms into downstream transforms, then materialize
+    those graph edges as derived Kafka channels using the existing descriptor-driven transform
+    worker path.
+  </p>
+  <div class="meta">
+    Scope: Stream Viewer graph tab, graph definition model, backend WebSocket actions, transform
+    orchestration, provenance, and follow-on worker-control-plane migration.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Create a new Stream Viewer graph surface instead of stretching the current form-based <code>Transforms</code> tab.</li>
+      <li>Model streams and transforms as typed graph nodes with descriptor-aware input and output ports.</li>
+      <li>Persist graph definitions as inspectable metadata before trying to build a full visual language runtime.</li>
+      <li>Compile the first graph execution plan into existing <code>create_transform</code>, <code>list_transforms</code>, and <code>stop_transform</code> operations.</li>
+      <li>Keep every transform output as a normal derived channel, with timestamp semantics, schema descriptors, and provenance records intact.</li>
+      <li>Use a RVBBIT-inspired direct-manipulation canvas: right-click palette, drag streams or transform capabilities onto the board, visible lineage, reactive status, and inspectable generated configuration.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Why This Exists</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Current state</h3>
+        <ul>
+          <li>Generic transforms now exist, but composition is still form-driven and one transform at a time.</li>
+          <li>Chaining requires the user to mentally track derived stream ids and feed them back into new transform requests.</li>
+          <li>Active transform state is listable, but lineage is not presented as an editable program.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Target state</h3>
+        <ul>
+          <li>Operators compose stream processing as a visible directed graph.</li>
+          <li>Graph edges carry typed channel-frame compatibility information.</li>
+          <li>The canvas is both documentation and control surface for live processing.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Constraint</h3>
+        <ul>
+          <li>The core natKit rule remains unchanged: derived data becomes new immutable channel streams.</li>
+          <li>Graph execution must not hide transform provenance or timestamp behavior.</li>
+          <li>The first slice should reuse the local Stream Viewer transform worker before moving execution into the broader worker scheduler.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>RVBBIT-Inspired Interaction Model</h2>
+    <p>
+      RVBBIT describes a reactive canvas where users right-click the board, drag tables or fields
+      into the workspace, connect reactive parameters, inspect generated code, and extend behavior
+      through rules. natKit should adopt the parts that fit stream processing rather than copying
+      the BI-specific SQL and Clojure stack.
+    </p>
+    <table>
+      <tr>
+        <th>RVBBIT idea</th>
+        <th>natKit adaptation</th>
+      </tr>
+      <tr>
+        <td>Right-click canvas palette</td>
+        <td>Open stream, transform, marker, and future sink palettes at the cursor.</td>
+      </tr>
+      <tr>
+        <td>Drag data items onto a board</td>
+        <td>Drag existing Kafka channel streams into source nodes with live schema and liveness badges.</td>
+      </tr>
+      <tr>
+        <td>Reactive flow connections</td>
+        <td>Connect source output ports to transform input ports, then transform outputs into downstream transforms.</td>
+      </tr>
+      <tr>
+        <td>Inspectable generated logic</td>
+        <td>Show the graph JSON, transform configs, output stream ids, and provenance records for each node.</td>
+      </tr>
+      <tr>
+        <td>Extensible rules</td>
+        <td>Later add graph rewrite rules, recommended next transforms, and domain presets from descriptor capabilities.</td>
+      </tr>
+    </table>
+    <p class="meta">
+      Reference: <a href="https://github.com/ryrobes/rvbbit">https://github.com/ryrobes/rvbbit</a>
+    </p>
+  </section>
+
+  <section>
+    <h2>Conceptual Model</h2>
+    <pre>source stream node
+  output: DATA channel frame
+    -> transform node input
+      config: transform kind + descriptor mapping + parameters
+      output: derived stream id
+        -> transform node input
+          output: derived stream id
+            -> live viewer / downstream subscriber / future sink</pre>
+    <p>
+      The graph is not a separate data plane. It is a control and orchestration layer over normal
+      natKit channels. Each successful transform node produces a derived stream that can be
+      replayed, inspected, subscribed to, and used as another graph input.
+    </p>
+  </section>
+
+  <section>
+    <h2>Graph Definition V1</h2>
+    <p>
+      Store graph definitions as versioned JSON records. The first implementation should persist
+      these records in a backend-local JSON file so the feature can ship without a database
+      migration. The JSON shape must remain suitable for a later SQLite table or publication as
+      channel metadata.
+    </p>
+    <pre>{
+  "graph_version": 1,
+  "graph_id": "emg-preprocess-001",
+  "label": "EMG preprocessing",
+  "description": "High-pass, rectify, then RMS window a raw EMG stream.",
+  "created_at_us": 1783094400000000,
+  "updated_at_us": 1783094400000000,
+  "ui": {
+    "viewport": { "x": 0, "y": 0, "zoom": 1.0 },
+    "selected_node_id": null
+  },
+  "nodes": [
+    {
+      "id": "source/raw-emg",
+      "kind": "stream_source",
+      "label": "Raw EMG",
+      "position": { "x": 120, "y": 180 },
+      "stream_id": "12345",
+      "schema_name": "ExgPillEmgDataSchemaV1",
+      "output_port_ids": ["data"]
+    },
+    {
+      "id": "transform/highpass",
+      "kind": "transform",
+      "label": "High-pass",
+      "position": { "x": 420, "y": 180 },
+      "transform_kind": "highpass_iir",
+      "input_mapping_id": "canonical_channel_frame",
+      "config": { "cutoff_hz": 20 },
+      "output_identifier": "12345-hp",
+      "input_port_ids": ["input"],
+      "output_port_ids": ["output"]
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge/raw-to-highpass",
+      "source_node_id": "source/raw-emg",
+      "source_port": "data",
+      "target_node_id": "transform/highpass",
+      "target_port": "input"
+    }
+  ],
+  "notes": []
+}</pre>
+    <p>
+      Required fields for all nodes are <code>id</code>, <code>kind</code>, <code>label</code>,
+      and <code>position</code>. Node ids should be stable across edits. Do not generate ids from
+      labels, because label edits must not break saved edges or stored run state.
+    </p>
+  </section>
+
+  <section>
+    <h2>Suggested Frontend Types</h2>
+    <p>
+      Add these types beside the existing Stream Viewer WebSocket types in
+      <code>frontend/src/StreamViewer/types.ts</code>. They intentionally mirror the JSON shape so
+      the UI does not need adapter code for the first slice.
+    </p>
+    <pre>export interface StreamGraphPosition {
+  x: number;
+  y: number;
+}
+
+export interface StreamGraphViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export type StreamGraphNodeKind =
+  | "stream_source"
+  | "transform"
+  | "viewer"
+  | "sink";
+
+export interface StreamGraphBaseNode {
+  id: string;
+  kind: StreamGraphNodeKind;
+  label: string;
+  position: StreamGraphPosition;
+  input_port_ids?: string[];
+  output_port_ids?: string[];
+}
+
+export interface StreamGraphSourceNode extends StreamGraphBaseNode {
+  kind: "stream_source";
+  stream_id: string;
+  schema_name?: string;
+}
+
+export interface StreamGraphTransformNode extends StreamGraphBaseNode {
+  kind: "transform";
+  transform_kind: TransformKind;
+  input_mapping_id?: string;
+  config: Record&lt;string, number | string | boolean&gt;;
+  output_identifier?: string;
+  output_stream_id?: string;
+}
+
+export interface StreamGraphEdge {
+  id: string;
+  source_node_id: string;
+  source_port: string;
+  target_node_id: string;
+  target_port: string;
+}
+
+export interface StreamGraphDefinition {
+  graph_version: 1;
+  graph_id: string;
+  label: string;
+  description?: string;
+  created_at_us?: number;
+  updated_at_us?: number;
+  ui?: {
+    viewport?: StreamGraphViewport;
+    selected_node_id?: string | null;
+  };
+  nodes: Array&lt;StreamGraphSourceNode | StreamGraphTransformNode&gt;;
+  edges: StreamGraphEdge[];
+  notes?: string[];
+}</pre>
+  </section>
+
+  <section>
+    <h2>Backend Storage V1</h2>
+    <p>
+      Use a single JSON file for the first implementation. Suggested default:
+      <code>NATKIT_STREAM_GRAPH_STORE</code>, falling back to
+      <code>./data/stream_graphs.json</code> relative to the backend working directory. This keeps
+      the feature independent from the auth SQLite work and avoids introducing a migration before
+      the graph model settles.
+    </p>
+    <pre>{
+  "store_version": 1,
+  "graphs": [
+    { "...": "StreamGraphDefinition" }
+  ]
+}</pre>
+    <ul>
+      <li>Read the file on backend startup if it exists.</li>
+      <li>If the file is missing, start with an empty graph list.</li>
+      <li>Write updates atomically: write to a temporary file in the same directory, then rename.</li>
+      <li>Guard the in-memory graph map with the same style of mutex used for active transform workers.</li>
+      <li>Reject malformed store contents instead of silently dropping graphs; return a backend error and leave the in-memory list empty.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Node Types</h2>
+    <table>
+      <tr>
+        <th>Node kind</th>
+        <th>First behavior</th>
+        <th>Later behavior</th>
+      </tr>
+      <tr>
+        <td><code>stream_source</code></td>
+        <td>References an existing stream id and exposes one <code>data</code> output port.</td>
+        <td>Support replay windows, metadata facets, marker facets, and source presets.</td>
+      </tr>
+      <tr>
+        <td><code>transform</code></td>
+        <td>References a transform capability, validates descriptor compatibility, and materializes a derived output stream.</td>
+        <td>Support multi-input transforms, feature extraction, classifiers, and worker-scheduler placement.</td>
+      </tr>
+      <tr>
+        <td><code>viewer</code></td>
+        <td>Optional first-slice node or side panel that subscribes to a selected stream or transform output.</td>
+        <td>Become reusable visualization nodes with per-node buffering and chart configuration.</td>
+      </tr>
+      <tr>
+        <td><code>sink</code></td>
+        <td>Out of scope for the first slice.</td>
+        <td>Record to artifact, export, publish to device control, or bridge into another protocol.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Execution Semantics</h2>
+    <ol>
+      <li>The frontend edits graph JSON locally and asks the backend to validate it.</li>
+      <li>The backend resolves each stream node to current topic information and descriptors.</li>
+      <li>The backend topologically sorts transform nodes and checks each edge for descriptor compatibility.</li>
+      <li>For each runnable transform node, the backend derives or reuses an output stream id.</li>
+      <li>The backend starts transform workers using the existing <code>create_transform</code> path.</li>
+      <li>Each transform output appears in <code>list_transforms</code> and regular stream discovery.</li>
+      <li>The graph node status updates from backend execution state: draft, valid, starting, running, stalled, stopped, or error.</li>
+    </ol>
+    <p>
+      A graph run should be idempotent where possible. Re-applying the same graph should reuse
+      already-running transform outputs when the source, transform kind, input mapping, config,
+      and output identifier match.
+    </p>
+    <p>
+      V1 graph execution should start only transform nodes whose upstream dependency is already a
+      stream id. For a chain, that means the backend walks nodes in topological order and carries a
+      resolved output stream id from each transform node into its downstream transform node. If an
+      upstream transform fails to start, downstream nodes must remain <code>blocked</code> with the
+      upstream node id in their diagnostic message.
+    </p>
+  </section>
+
+  <section>
+    <h2>Backend Protocol Additions</h2>
+    <table>
+      <tr>
+        <th>Action</th>
+        <th>Purpose</th>
+      </tr>
+      <tr>
+        <td><code>list_stream_graphs</code></td>
+        <td>Return saved graph definitions and high-level run state.</td>
+      </tr>
+      <tr>
+        <td><code>save_stream_graph</code></td>
+        <td>Persist graph JSON, layout, labels, and UI state after validation.</td>
+      </tr>
+      <tr>
+        <td><code>validate_stream_graph</code></td>
+        <td>Return node-level compatibility diagnostics without starting workers.</td>
+      </tr>
+      <tr>
+        <td><code>start_stream_graph</code></td>
+        <td>Compile graph nodes into transform workers and return per-node output stream ids.</td>
+      </tr>
+      <tr>
+        <td><code>stop_stream_graph</code></td>
+        <td>Stop transform workers owned by a graph run, with an option to stop one branch or the whole graph.</td>
+      </tr>
+      <tr>
+        <td><code>get_stream_graph_status</code></td>
+        <td>Return node statuses, worker slots, frame counts, errors, and last heartbeat data.</td>
+      </tr>
+    </table>
+    <p>
+      These actions should live beside the current Stream Viewer WebSocket protocol initially.
+      Long-term execution should move to the worker control plane so graph runs can consume shared
+      or dedicated compute slots under the accepted admin-owned compute policy.
+    </p>
+  </section>
+
+  <section>
+    <h2>Protocol Payloads</h2>
+    <p>
+      The next agent should add these WebSocket message types to
+      <code>frontend/src/StreamViewer/types.ts</code>, extend <code>ClientAction</code>, extend
+      <code>StreamViewerWebSocket</code> callbacks, and add matching handlers in
+      <code>StreamViewerWebSocket.cpp</code>.
+    </p>
+    <pre>// list_stream_graphs request
+{
+  "action": "list_stream_graphs",
+  "request_id": "graph-list:1783094400000"
+}
+
+// list_stream_graphs response
+{
+  "type": "stream_graph_list",
+  "request_id": "graph-list:1783094400000",
+  "graphs": [StreamGraphDefinition],
+  "statuses": {
+    "emg-preprocess-001": {
+      "graph_id": "emg-preprocess-001",
+      "run_state": "stopped",
+      "active_run_id": null,
+      "node_statuses": {}
+    }
+  }
+}</pre>
+    <pre>// save_stream_graph request
+{
+  "action": "save_stream_graph",
+  "request_id": "graph-save:1783094400000",
+  "graph": StreamGraphDefinition
+}
+
+// save_stream_graph response
+{
+  "type": "stream_graph_saved",
+  "request_id": "graph-save:1783094400000",
+  "graph_id": "emg-preprocess-001",
+  "graph": StreamGraphDefinition
+}</pre>
+    <pre>// validate_stream_graph response
+{
+  "type": "stream_graph_validation",
+  "request_id": "graph-validate:1783094400000",
+  "graph_id": "emg-preprocess-001",
+  "valid": false,
+  "node_diagnostics": {
+    "transform/highpass": [
+      {
+        "severity": "error",
+        "code": "missing_input",
+        "message": "Transform node input is not connected."
+      }
+    ]
+  },
+  "edge_diagnostics": {}
+}</pre>
+    <pre>// start_stream_graph response
+{
+  "type": "stream_graph_started",
+  "request_id": "graph-start:1783094400000",
+  "graph_id": "emg-preprocess-001",
+  "graph_run_id": "emg-preprocess-001:1783094400000",
+  "node_statuses": {
+    "transform/highpass": {
+      "state": "running",
+      "output_stream_id": "67890",
+      "worker_id": "natkit-local-transform-worker",
+      "thread_slot_id": "natkit-local-transform-worker:slot-0",
+      "frames_processed": 0,
+      "last_frame_at_us": 0
+    }
+  }
+}</pre>
+    <p>
+      Use the existing <code>error</code> message type for hard request failures such as malformed
+      JSON, missing graph id, failed store write, or transform worker capacity exhaustion.
+    </p>
+  </section>
+
+  <section>
+    <h2>Backend Implementation Notes</h2>
+    <ol>
+      <li>Add plain structs near the Stream Viewer backend implementation for graph definitions, nodes, edges, diagnostics, and node status.</li>
+      <li>Use <code>nlohmann::json</code> conversion helpers rather than parsing fields ad hoc inside each handler.</li>
+      <li>Keep graph store state separate from <code>g_transform_workers</code>; graph status should reference active workers by output stream id.</li>
+      <li>When starting a transform node, call or extract the same logic used by <code>handleCreateTransform</code> rather than duplicating topic creation and worker startup code.</li>
+      <li>If extraction is too large for the first patch, implement a private helper such as <code>createTransformFromGraphNode(...)</code> and have both paths converge later.</li>
+      <li>Add <code>graph_id</code>, <code>graph_run_id</code>, and <code>graph_node_id</code> as optional fields in the transform provenance config or metadata path without breaking existing provenance readers.</li>
+      <li>Do not auto-subscribe browser clients to every graph output. Let the UI subscribe only to selected node outputs to avoid multiplying live traffic.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Validation Algorithm</h2>
+    <ol>
+      <li>Parse the graph and verify <code>graph_version == 1</code>.</li>
+      <li>Check unique node ids and edge ids.</li>
+      <li>Check every edge references existing source and target nodes.</li>
+      <li>Check source and target ports exist on their nodes, using default ports when omitted by older drafts.</li>
+      <li>Reject cycles with a depth-first search or Kahn topological sort.</li>
+      <li>Reject transform nodes with zero inputs or more than one input in V1.</li>
+      <li>Resolve every source stream node against the current stream list and require a <code>DATA</code> topic descriptor.</li>
+      <li>For transform nodes, resolve the active transform capability by <code>transform_kind</code>.</li>
+      <li>Use existing descriptor helper logic to find or verify <code>input_mapping_id</code>.</li>
+      <li>Validate config fields against capability metadata: required fields, numeric minimums, enum options, and defaults.</li>
+      <li>Derive downstream descriptors from the transform capability output schema so transform-to-transform edges can validate before execution.</li>
+      <li>Return all diagnostics at once; do not fail validation on the first error unless the graph JSON is structurally unreadable.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Frontend Plan</h2>
+    <ol>
+      <li>Add a fourth Stream Viewer tab named <code>Graph</code>.</li>
+      <li>Add a canvas component with pan, zoom, node drag, selection, edge creation, and context menu support.</li>
+      <li>Implement a stream palette populated from <code>get_streams</code>, including descriptor names and liveness state.</li>
+      <li>Implement a transform palette populated from <code>list_transform_capabilities</code>.</li>
+      <li>Render source nodes with schema, stream id, subscription state, and recent-frame status.</li>
+      <li>Render transform nodes with configurable fields generated from capability descriptors.</li>
+      <li>Validate connections immediately and mark incompatible ports before submission.</li>
+      <li>Add an inspector panel for selected nodes, edges, generated JSON, output stream ids, provenance, and worker state.</li>
+      <li>Use the existing live viewers as a side panel for whichever graph node output is selected.</li>
+    </ol>
+    <p>
+      The frontend dependency decision should be made during implementation. The current package
+      does not include a graph editor library. Options are a small custom SVG/canvas editor for
+      the first slice, or adding a Svelte-compatible flow editor if it reduces interaction risk.
+    </p>
+  </section>
+
+  <section>
+    <h2>Frontend Component Breakdown</h2>
+    <p>
+      Suggested files under <code>frontend/src/StreamViewer/</code>:
+    </p>
+    <table>
+      <tr>
+        <th>File</th>
+        <th>Responsibility</th>
+      </tr>
+      <tr>
+        <td><code>StreamGraph.svelte</code></td>
+        <td>Top-level Graph tab view, WebSocket action wiring, selected graph state, and save/start/stop commands.</td>
+      </tr>
+      <tr>
+        <td><code>StreamGraphCanvas.svelte</code></td>
+        <td>Pan/zoom surface, node placement, edge rendering, hit testing, drag interactions, and context menu open position.</td>
+      </tr>
+      <tr>
+        <td><code>StreamGraphNode.svelte</code></td>
+        <td>Shared node shell with ports, title, status badges, selected state, and drag handle.</td>
+      </tr>
+      <tr>
+        <td><code>StreamGraphPalette.svelte</code></td>
+        <td>Context palette for streams and transform capabilities. Provides search and click-to-insert behavior.</td>
+      </tr>
+      <tr>
+        <td><code>StreamGraphInspector.svelte</code></td>
+        <td>Selected node or edge editor, generated JSON viewer, validation diagnostics, and output/provenance details.</td>
+      </tr>
+      <tr>
+        <td><code>streamGraph.ts</code></td>
+        <td>Pure graph helpers: id generation, topological sort, local validation, port lookup, default output identifiers, and serialization.</td>
+      </tr>
+    </table>
+    <p>
+      Keep graph helper functions pure so they can be unit-tested later without a browser. The
+      initial UI can be built with positioned HTML and SVG edges; avoid adding a graph dependency
+      unless basic pan, zoom, hit testing, and edge creation become the majority of the patch.
+    </p>
+  </section>
+
+  <section>
+    <h2>UI Interaction Details</h2>
+    <ul>
+      <li>Right-click or toolbar plus button opens a palette at the cursor.</li>
+      <li>Dragging a stream from the palette creates a <code>stream_source</code> node at the drop position.</li>
+      <li>Dragging a transform creates a <code>transform</code> node with config defaults from <code>TransformCapability.config_fields</code>.</li>
+      <li>Dragging from an output port to an input port creates an edge if local validation allows the connection.</li>
+      <li>If the connection is incompatible, show an inline edge preview in an error color and do not commit it.</li>
+      <li>Selecting a transform node opens generated controls for its config fields in the inspector.</li>
+      <li>Start Graph is disabled when backend validation has errors.</li>
+      <li>Stop Graph stops only active transform nodes that belong to the current graph run.</li>
+      <li>Deleting a running node should prompt the user to stop that node's worker before removing it from the graph.</li>
+      <li>The graph tab should poll status while any node is <code>starting</code>, <code>running</code>, or <code>stalled</code>.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Validation Rules</h2>
+    <ul>
+      <li>Graphs must be directed and acyclic in V1.</li>
+      <li>Every transform input must have exactly one connected upstream data edge.</li>
+      <li>Each transform edge must resolve to a compatible <code>TransformInputMapping</code>.</li>
+      <li>Output identifiers must be deterministic, sanitized, and unique within a graph run.</li>
+      <li>Deleting a node should never delete Kafka history; it only changes the saved graph and optionally stops live workers.</li>
+      <li>Timestamp behavior remains owned by the underlying records and transform worker, not the graph editor.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Execution State Model</h2>
+    <p>
+      Use these states consistently in frontend and backend payloads:
+    </p>
+    <table>
+      <tr>
+        <th>State</th>
+        <th>Meaning</th>
+      </tr>
+      <tr>
+        <td><code>draft</code></td>
+        <td>Node exists locally and has not been validated by the backend.</td>
+      </tr>
+      <tr>
+        <td><code>valid</code></td>
+        <td>Node passed validation and is ready to start.</td>
+      </tr>
+      <tr>
+        <td><code>blocked</code></td>
+        <td>Node cannot start because an upstream node is invalid or failed to start.</td>
+      </tr>
+      <tr>
+        <td><code>starting</code></td>
+        <td>Backend accepted the graph run and is creating the transform worker.</td>
+      </tr>
+      <tr>
+        <td><code>running</code></td>
+        <td>Transform worker exists for this node and has an output stream id.</td>
+      </tr>
+      <tr>
+        <td><code>stalled</code></td>
+        <td>Worker exists but heartbeat or frame activity is stale by existing transform-list logic.</td>
+      </tr>
+      <tr>
+        <td><code>stopped</code></td>
+        <td>No active worker is attached to this node.</td>
+      </tr>
+      <tr>
+        <td><code>error</code></td>
+        <td>Validation, startup, config, worker, or storage error attached to this node.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Provenance and Lineage</h2>
+    <p>
+      Graph execution should extend, not replace, existing transform provenance. Each transform
+      node should write provenance that includes:
+    </p>
+    <ul>
+      <li><code>graph_id</code>, <code>graph_run_id</code>, and <code>graph_node_id</code>.</li>
+      <li>Source stream id and upstream node id.</li>
+      <li>Transform kind, input mapping, normalized config JSON, and output stream id.</li>
+      <li>Worker id, thread slot id, start time, and eventual stop reason.</li>
+    </ul>
+    <p>
+      This keeps historical reconstruction possible even if the visual graph is later edited.
+    </p>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <table>
+      <tr>
+        <th>Phase</th>
+        <th>Deliverable</th>
+        <th>Acceptance criteria</th>
+      </tr>
+      <tr>
+        <td>1. Static graph editor</td>
+        <td>Graph tab, canvas, stream nodes, transform nodes, local edges, inspector JSON.</td>
+        <td>User can build and save a draft graph without starting workers.</td>
+      </tr>
+      <tr>
+        <td>2. Validation</td>
+        <td>Backend <code>validate_stream_graph</code> plus frontend port diagnostics.</td>
+        <td>Invalid stream-to-transform and transform-to-transform edges are rejected with node-level errors.</td>
+      </tr>
+      <tr>
+        <td>3. Live execution</td>
+        <td><code>start_stream_graph</code> compiles graph transforms into current transform workers.</td>
+        <td>A chain such as <code>raw -> highpass_iir -> rectify -> rms_window</code> runs and exposes each derived stream.</td>
+      </tr>
+      <tr>
+        <td>4. Persistence</td>
+        <td>Saved graph definitions and graph run state survive backend restart.</td>
+        <td>Saved graphs reload in the UI with layout, config, and last known output stream ids.</td>
+      </tr>
+      <tr>
+        <td>5. Worker scheduler migration</td>
+        <td>Graph run nodes submit jobs or long-running workers through the control-plane scheduler.</td>
+        <td>Graph execution respects shared and dedicated compute slot policy instead of only local transform capacity.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Implementation Checklist</h2>
+    <ol>
+      <li>Add graph types to <code>frontend/src/StreamViewer/types.ts</code>.</li>
+      <li>Add graph WebSocket callbacks and action helpers to <code>frontend/src/StreamViewer/websocket.ts</code>.</li>
+      <li>Add <code>currentTab === "graph"</code> support in <code>frontend/src/StreamViewer/page.svelte</code>.</li>
+      <li>Create <code>StreamGraph.svelte</code>, <code>StreamGraphCanvas.svelte</code>, <code>StreamGraphPalette.svelte</code>, <code>StreamGraphInspector.svelte</code>, and <code>streamGraph.ts</code>.</li>
+      <li>Implement local graph creation, node movement, selection, edge creation, deletion, and JSON inspector before backend execution.</li>
+      <li>Add backend graph structs and JSON parsing helpers in the Stream Viewer backend area.</li>
+      <li>Add graph store load/save helpers with atomic writes.</li>
+      <li>Add WebSocket handlers for <code>list_stream_graphs</code>, <code>save_stream_graph</code>, <code>validate_stream_graph</code>, <code>start_stream_graph</code>, <code>stop_stream_graph</code>, and <code>get_stream_graph_status</code>.</li>
+      <li>Extract or wrap transform startup logic so graph execution and the current transforms tab use the same worker creation behavior.</li>
+      <li>Add graph provenance fields to transform metadata without breaking old transform clients.</li>
+      <li>Add focused backend tests or smoke scripts for graph validation and graph startup if the repository has a practical test entrypoint.</li>
+      <li>Run frontend typecheck and the backend build used by the existing transform work.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Acceptance Tests</h2>
+    <ul>
+      <li>Open Stream Viewer and switch to the Graph tab without breaking Live, Experiment, or Transforms tabs.</li>
+      <li>Create a graph with one source node and one <code>highpass_iir</code> transform node.</li>
+      <li>Save the graph, refresh the browser, and confirm layout and config reload.</li>
+      <li>Validate the graph and confirm no diagnostics for a compatible EMG-like source stream.</li>
+      <li>Create an invalid transform node with no input and confirm validation returns a node-level error.</li>
+      <li>Create a chain <code>raw -> highpass_iir -> rectify -> rms_window</code> and start it.</li>
+      <li>Confirm each transform node receives an output stream id and appears in the active transform list.</li>
+      <li>Select each transform output and confirm the existing viewer/subscription path can observe live frames when data is available.</li>
+      <li>Stop the graph and confirm all graph-owned transform workers stop while unrelated transform workers keep running.</li>
+      <li>Restart the backend and confirm saved graph definitions reload without auto-starting workers in V1.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Non-Goals For V1</h2>
+    <ul>
+      <li>No arbitrary scripting language inside graph nodes.</li>
+      <li>No multi-user collaborative editing.</li>
+      <li>No cycles, feedback loops, or stateful event routing beyond current transform workers.</li>
+      <li>No automatic worker-scheduler migration in the first implementation.</li>
+      <li>No destructive cleanup of Kafka topics when graph nodes are deleted.</li>
+      <li>No generalized multi-input transforms until there is a concrete transform family that needs them.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Should saved graph definitions live first in backend SQLite, a local JSON file, or a channel metadata stream?</li>
+      <li>Should graph runs auto-start on backend restart, or reload as stopped definitions that require explicit operator action?</li>
+      <li>Should a transform node expose only one output port in V1, or should it reserve room for multi-output transforms now?</li>
+      <li>Should graph editing be collaborative later, or is a single-operator editing model enough for the first product surface?</li>
+      <li>Should graph nodes eventually support replay windows as first-class inputs, or should replay stay in separate reconstruction tools?</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>Risks</h2>
+    <ul>
+      <li>A canvas UI can become expensive quickly; the first slice should prioritize correct graph semantics over decorative behavior.</li>
+      <li>Running graphs can leak worker capacity if stop behavior is not tied cleanly to graph ownership.</li>
+      <li>Persisting only the visual graph without provenance would make historical runs ambiguous after edits.</li>
+      <li>Moving too much runtime logic into frontend graph state would conflict with the core library and worker-node direction.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  Related context: <code>AGENTS.html</code>, <code>plans/descriptor-transform-plan.html</code>,
+  <code>plans/additional-transformations-plan.html</code>, <code>ADR/adr-001-worker-node-processing.html</code>,
+  and <code>ADR/adr-004-admin-owned-compute-pools.html</code>.
+</footer>
+</body>
+</html>

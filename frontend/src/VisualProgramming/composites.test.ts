@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type {
     StreamGraphEdge,
+    StreamGraphExportNode,
     StreamGraphNode,
 } from "../StreamViewer/types";
 import {
@@ -377,5 +378,46 @@ describe("flattenGraph provenance edges", () => {
         // The provenance edge is excluded; only the data edge is executed.
         expect(flat.edges).toHaveLength(1);
         expect(flat.edges[0].id).toBe("data");
+    });
+});
+
+describe("flattenGraph export nodes", () => {
+    it("keeps export nodes and their data edges in the executed graph", () => {
+        // Unlike param nodes, export is a real backend kind: the control-plane
+        // job is submitted client-side, but the node itself must reach the
+        // backend so it validates, starts, and reports status.
+        const exportNode: StreamGraphExportNode = {
+            id: "export/1",
+            kind: "export",
+            label: "Export",
+            position: { x: 0, y: 0 },
+            input_port_ids: ["in1", "in2"],
+            output_port_ids: [],
+            config: {
+                format: "parquet",
+                label_field: "label",
+                run_index: null,
+            },
+        };
+        const graph = baseGraph(
+            [sourceNode("src"), transformNode("tf", "tf-out"), exportNode],
+            [
+                edge("e1", "src", "data", "tf", "input"),
+                edge("e2", "tf", "output", "export/1", "in1"),
+            ],
+        );
+        const { graph: flat } = flattenGraph(graph, () => undefined);
+        expect(flat.nodes.map((n) => n.id).sort()).toEqual([
+            "export/1",
+            "src",
+            "tf",
+        ]);
+        expect(flat.edges.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+        const flatExport = flat.nodes.find((n) => n.id === "export/1");
+        expect(flatExport?.kind).toBe("export");
+        // Config round-trips verbatim (the backend stores it opaquely).
+        expect(
+            (flatExport as StreamGraphExportNode).config.label_field,
+        ).toBe("label");
     });
 });

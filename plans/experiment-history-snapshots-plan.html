@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit VP — Experiments, Instances &amp; Immutable History</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left: 4px solid var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · July 29 2026</div>
+  <h1>Experiments, Instances &amp; Immutable History</h1>
+  <p class="meta lede">
+    Stop treating an experiment as a node on the canvas. Make it a <strong>first-class
+    object that owns a graph and a history</strong>. Every recording produces an
+    <em>instance</em>: a permanent, immutable snapshot of the graph as it was, welded to
+    the data and markers captured during that run. Instances are reviewable forever, and
+    <strong>forkable</strong> into editable copies so you can re-analyse old data with a
+    different pipeline &mdash; all nested under the experiment that produced them.
+  </p>
+  <div class="status">Status: PLAN — decisions locked, Phase 0 in progress</div>
+</header>
+
+<main>
+
+<section class="callout">
+  <h2>The shape of it</h2>
+<pre>Experiment "finger-counting"          &lt;- owns protocol, participant, notes
+├── live graph  (editable, the one you record with)
+├── instance 0001   2026-07-29 08:48   [IMMUTABLE]   from: recording
+│     ├── graph snapshot (as recorded)
+│     ├── data: imu.parquet  markers: markers.jsonl     <- materialized, read-only
+│     └── instance 0001-a  "higher band-pass"  [editable]  from: fork of 0001
+│            └── instance 0001-a-1 "…and RMS"  [editable]  from: fork of 0001-a
+└── instance 0002   2026-07-29 09:31   [IMMUTABLE]   from: recording</pre>
+  <p>
+    <strong>Two object kinds, not three.</strong> A fork is not a different animal from an
+    instance — it is an instance that happens to be editable. Same record shape, same place
+    in the tree, same data. Only two things differ: <code>immutable</code>, and whether it
+    was born from a recording or from a fork. So there is an <strong>experiment</strong>, and
+    there are <strong>instances</strong>; recordings mint immutable ones, forking mints
+    editable ones, and forks nest under whatever they were forked from.
+  </p>
+  <p>
+    Consequence worth stating: a fork <strong>references its ancestor recording's data
+    rather than copying it</strong>. Same <code>session_id</code>, same window, same Parquet
+    paths. The artifacts are already immutable and read-only, so sharing them is safe, and
+    forking stays free no matter how large the recording was. A fork changes the
+    <em>pipeline</em>, never the data.
+  </p>
+</section>
+
+<section class="risk">
+  <h2>The hard part: &ldquo;permanent&rdquo; means the data must leave Kafka</h2>
+  <p>
+    Everything else here is bookkeeping. This is the part that decides whether the
+    feature is real.
+  </p>
+  <p>
+    Today a recording publishes <em>markers and metadata</em> (<code>publish_session_bundle</code>
+    &rarr; <code>Marker/&lt;session_id&gt;</code> + <code>Meta/&lt;session_id&gt;</code>) and
+    leaves the <em>data</em> wherever it already was &mdash; in Kafka, under retention. A
+    &ldquo;permanent historical snapshot&rdquo; backed by Kafka topics is not permanent; it
+    silently becomes an empty snapshot when retention rolls or the broker is recreated.
+    We have already lost topics twice this week: once to a <code>podman-compose up --build</code>
+    (Kafka's <code>KAFKA_LOG_DIRS</code> lives in the container filesystem), and the IMU
+    topic currently holds ~930k records with no durability guarantee at all.
+  </p>
+  <p>
+    So <strong>creating an instance must materialize the data</strong> — and we just built
+    exactly the right tool. <code>ParquetExport.cpp</code> already drains a session window,
+    projects any sensor through the shared channel-frame projection, joins cue labels via
+    <code>assignIntervalsToTimeline</code>, and writes Parquet. Instance materialization is
+    that worker pointed at a durable directory instead of an HTTP response.
+    <span class="phase-tag have">foundation exists</span>
+  </p>
+  <p class="meta">
+    Corollary, learned the hard way today: materialization <strong>must verify it captured
+    something</strong>. A recording ran for 65s against a bridge that had silently stopped
+    forwarding to Kafka 10 hours earlier, and produced a session with zero data frames. An
+    instance that materializes to nothing must be marked <code>failed</code> and say why —
+    never sealed as an immutable snapshot of nothing.
+  </p>
+</section>
+
+<section>
+  <h2>Data model</h2>
+  <h3>Experiment — a new stored entity</h3>
+  <p>
+    New store <code>experiments.json</code> behind <code>NATKIT_EXPERIMENT_STORE</code>,
+    mirroring the existing <code>stream_graphs.json</code> /
+    <code>profiles.json</code> pattern (<code>NATKIT_STREAM_GRAPH_STORE</code>,
+    <code>NATKIT_PROFILE_STORE</code>) so persistence is a known quantity.
+  </p>
+<pre>{
+  "experiment_id": "finger-counting-1785336502546",
+  "label": "Finger counting",
+  "protocol": { …SessionProtocol… },     // moved off the node's config
+  "participant_id": "p01",
+  "notes": "",
+  "live_graph_id": "board-7",            // the editable graph you record with
+  "created_at_us": …, "updated_at_us": …
+}</pre>
+
+  <h3>Instances and forks are just graphs, with provenance</h3>
+  <p>
+    Deliberately <em>not</em> a second graph store. An instance's snapshot and a fork are
+    both <code>StreamGraphDefinition</code>s, so they inherit save / load / validate /
+    start / <code>editor_metadata</code> round-tripping for free. They gain fields:
+  </p>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td><code>experiment_id</code></td><td>Which experiment this graph belongs to. Present on the live graph, instances, and forks — this is what makes the tree.</td></tr>
+    <tr><td><code>instance_id</code></td><td>Set on every instance, recorded or forked (<code>…/run-0001</code>, <code>…/run-0001-a</code>). Absent only on the live graph.</td></tr>
+    <tr><td><code>immutable</code></td><td><code>true</code> for recordings, <code>false</code> for forks. The <em>only</em> behavioural difference between them. Backend refuses to overwrite when true.</td></tr>
+    <tr><td><code>origin</code></td><td><code>"recording"</code> | <code>"fork"</code> — provenance, and what the tree icon shows.</td></tr>
+    <tr><td><code>forked_from</code></td><td><code>{instance_id}</code> of the parent, for fork-of-fork nesting. Null on recordings.</td></tr>
+    <tr><td><code>recording</code></td><td>The captured session: <code>session_id</code>, window, recorded stream list, artifact refs, <code>status</code>. <strong>Inherited verbatim by forks</strong> — a fork points at the same materialized files.</td></tr>
+  </table>
+  <p>
+    Because instances live in the graph store, <code>list_stream_graphs</code> would start
+    returning every snapshot. The board picker must filter to
+    <code>instance_id == null &amp;&amp; forked_from == null</code>; instances and forks are
+    reached through the experiment tree, not the board list.
+  </p>
+<pre>"recording": {
+  "session_id": "finger-counting-1785336502546",
+  "window_start_us": 1785336527253000,
+  "window_end_us":   1785336592254000,
+  "streams": [ {"stream_id": "13793649670644", "schema_name": "NatImuBulkDataSchema", "role": "source"} ],
+  "artifacts": {
+    "markers": "markers.jsonl",
+    "data": [ {"stream_id": "13793649670644", "path": "imu.parquet", "rows": 1575, "sha256": "…"} ]
+  },
+  "status": "complete"          // recording | materializing | complete | failed
+}</pre>
+</section>
+
+<section class="prov">
+  <h2>If the experiment isn't a node, where do markers come from?</h2>
+  <p>
+    This is the design question that decides how invasive the change is. Markers are
+    <em>wired data</em> today: the experiment node's <code>markers</code> output feeds the
+    marker viewer overlay, topic-aware <code>combine</code>'s marker lane, and the export
+    node's label join. Deleting the node without a replacement breaks all three.
+  </p>
+  <p>
+    <strong>Proposal: keep a lightweight <code>markers</code> source node, move the
+    <em>definition</em> off the canvas.</strong> The node has no protocol config — it
+    resolves its topic from the graph's bound <code>experiment_id</code>
+    (<code>Marker/&lt;experiment_id&gt;</code>, exactly as the experiment node's output does
+    today). Wiring stays identical; what leaves the canvas is protocol authoring,
+    participant, notes and the Record button, which move to experiment-level UI.
+  </p>
+  <p>
+    Consequence to accept explicitly: the <strong>provenance edges</strong> from
+    <code>vp-provenance-edges-plan.html</code> partially collapse. <code>prov_source</code>
+    (source&rarr;experiment) becomes meaningless — the experiment now owns the whole graph,
+    so every source in it is a recorded source. <code>prov_experiment</code>
+    (experiment&rarr;train) is replaced by something better: a train node points at
+    <em>instances</em>, which are concrete datasets with materialized files, instead of
+    at run-selector strings. That's a net simplification, but it is a reversal of a recent
+    deliberate design and should be a conscious decision, not a side effect.
+  </p>
+</section>
+
+<section>
+  <h2>Immutability: where it is enforced</h2>
+  <ul>
+    <li>
+      <strong>Backend is the authority.</strong> <code>handleSaveStreamGraph</code> currently
+      accepts any save (drafts may be invalid by design). Add: if the stored graph for this
+      id has <code>immutable: true</code>, reject with a diagnostic
+      <code>immutable_graph</code> whose message names the fork action. Enforcing in the UI
+      alone is not enough — the WS protocol is a public surface.
+    </li>
+    <li>
+      <strong>Watch the reactive auto-save.</strong> Phase 7's incremental reactivity
+      debounces a config edit into <code>saveDraftGraph</code> + <code>restart_stream_graph_node</code>.
+      On an immutable graph that would fire a save on every keystroke and spray rejections.
+      The editor must make an instance genuinely read-only (inputs disabled, drag/connect
+      suppressed), not merely warn after the fact.
+    </li>
+    <li>
+      <strong>New action <code>fork_stream_graph</code></strong>
+      <code>{source_graph_id, label?}</code> &rarr; a new editable graph with
+      <code>forked_from</code> and the same <code>experiment_id</code>, and
+      <code>immutable: false</code>. Server-side so id generation and provenance rules live
+      in one place.
+    </li>
+    <li>
+      <strong>Artifacts are immutable too.</strong> A snapshot whose Parquet can be
+      overwritten isn't a snapshot. Write artifacts once, then <code>chmod</code> read-only
+      and record a <code>sha256</code> so tampering or truncation is detectable at review
+      time.
+    </li>
+  </ul>
+</section>
+
+<section class="callout">
+  <h2>Parquet is the stored form; replay streams out of it</h2>
+  <p>
+    <strong>DECIDED.</strong> An instance's data lives as Parquet, and replaying an instance
+    means <em>streaming records back out of those files</em>. No Kafka time-travel: the
+    snapshot is self-contained, so an instance recorded a year ago replays identically to one
+    recorded a minute ago, and retention stops being part of the story.
+  </p>
+
+  <h3>Where the replayed records go</h3>
+  <p>
+    The one real constraint: the browser's subscribe path binds <em>Kafka</em> messengers
+    (<code>broker_manager_-&gt;createMessenger(topic, start_offset)</code>). The in-process
+    transport exists, and <code>createInProcessMessenger</code> is explicitly &ldquo;a drop-in
+    for <code>BrokerManager::createMessenger</code>&rdquo; — but it is used for <em>private</em>
+    colocated edges, i.e. exactly the edges nobody is watching. A viewer forces Kafka.
+  </p>
+  <p>
+    So replay publishes into a <strong>scratch Kafka topic per replay session</strong>
+    (short retention, deleted when the replay ends). Everything downstream — transform
+    workers, viewers, topic-aware combine, the marker overlay, even Parquet export of the
+    replayed result — then works with <em>zero</em> changes, because from the graph's point of
+    view it is just another live stream. Permanent data on disk, ephemeral data on the wire.
+  </p>
+  <p class="meta">
+    In-process replay stays available as a later optimization for <em>headless recompute</em>
+    (train a model over a snapshot, no viewers attached), where skipping the broker is pure
+    win. Not the default, because the common case is a human watching.
+  </p>
+
+  <h3>A pleasant side effect: replay is more compatible than live</h3>
+  <p>
+    The Parquet <em>is</em> the canonical channel-frame projection — that is what the exporter
+    writes. So replay can emit <code>NatSignalFrameDataSchemaV1</code> regardless of what the
+    original sensor published, and a fork's transforms bind to it directly. The IMU needs the
+    <code>natimu_motion_v1</code> alternate input mapping to be filterable live; replayed from
+    Parquet it needs nothing. Forks are strictly easier to wire than live boards.
+  </p>
+
+  <h3>Two replay modes</h3>
+  <table>
+    <tr><th>Mode</th><th>Pacing</th><th>For</th></tr>
+    <tr><td><strong>Review</strong></td><td>Wall-clock paced from <code>device_ts_us</code> deltas, with a speed multiplier (0.25×–8×) and scrub</td><td>Watching the recording play back through viewers, like a video.</td></tr>
+    <tr><td><strong>Recompute</strong></td><td>Unpaced — as fast as the pipeline drains</td><td>Running a fork's changed pipeline to get a result, or training. Nobody is watching frames go by.</td></tr>
+  </table>
+  <p class="meta">
+    <code>natVR/src/natvr/replay.py</code> already has the pacing shape
+    (<code>replay_intervals(frames, speed)</code>) as a reference, but the implementation
+    belongs in C++ alongside the writer — the Arrow <em>reader</em> comes free with the
+    <code>libparquet</code> we already link.
+  </p>
+
+  <h3>Non-negotiables</h3>
+  <ul>
+    <li>
+      <strong>Preserve <code>device_ts_us</code>.</strong> Never restamp to now. The cue-label
+      join is a timestamp interval join; restamping silently destroys every label, and it
+      would also desynchronise two streams replayed together.
+    </li>
+    <li>
+      <strong>Replay markers too, interleaved by timestamp</strong> from the
+      <code>.markers.jsonl</code> sidecar onto the scratch marker topic. Otherwise the marker
+      overlay is blank, combine's marker lane is empty, and a re-export of the fork's output
+      comes back unlabelled.
+    </li>
+    <li>
+      <strong>Reset stateful transforms at replay start.</strong> IIR filters, envelope
+      followers and vote windows carry state; replaying the same instance twice through the
+      same graph must give the same answer, or forks aren't comparable — which is the entire
+      point of forking.
+    </li>
+    <li>
+      <strong>Multi-stream replay shares one clock.</strong> Two sources recorded together must
+      replay together, ordered by timestamp across files, not file-by-file.
+    </li>
+  </ul>
+
+  <h3>Small gap to close first</h3>
+  <p>
+    The exporter's Parquet metadata currently records
+    <code>natkit.stream_id</code>, <code>session_id</code>, <code>channel_labels</code>,
+    <code>marker_count</code> and the window — but <strong>not the original
+    <code>schema_name</code></strong>. Replay does not strictly need it (it emits the canonical
+    frame), but provenance does: without it a snapshot can't say what sensor it came from. One
+    line in <code>ParquetExport.cpp</code>.
+  </p>
+</section>
+
+<section>
+  <h2>Phases</h2>
+  <p>Ordered so each phase leaves the system working, per the house style.</p>
+  <h3>Phase 0 — Model + immutability, no UI change <span class="phase-tag">foundation</span></h3>
+  <p>
+    Add the graph fields (<code>experiment_id</code>, <code>instance_id</code>,
+    <code>immutable</code>, <code>forked_from</code>, <code>recording</code>) as optional and
+    round-tripped. Add <code>experiments.json</code> + <code>list/save/delete_experiment</code>.
+    Add the immutable-save rejection and <code>fork_stream_graph</code>. Verifiable entirely
+    over the WS protocol with the smoke script — no frontend work yet.
+  </p>
+  <h3>Phase 1 — Experiment replaces the node</h3>
+  <p>
+    Experiment-level UI: bind an experiment to a board, author the protocol there, Record
+    from the board header. Introduce the config-less <code>markers</code> source node.
+    Retire <code>experiment</code> from the node catalog. <strong>Migration:</strong> keep
+    <em>parsing</em> <code>kind:"experiment"</code> (the <code>session</code>&rarr;<code>experiment</code>
+    alias in <code>normalizeGraphNode</code> is the precedent) and offer a one-click convert
+    that lifts the node's protocol into an experiment record and swaps the node for a
+    <code>markers</code> source.
+  </p>
+  <h3>Phase 2 — Recording creates an instance</h3>
+  <p>
+    On Record: allocate <code>instance_id</code>, snapshot the graph (flattened +
+    <code>editor_metadata</code>), publish markers as today, and write the instance with
+    <code>status: "recording"</code>. On stop, transition to <code>materializing</code>.
+  </p>
+  <h3>Phase 3 — Durable materialization</h3>
+  <p>
+    Reuse <code>exportStreamToParquet</code> per recorded stream, writing into
+    <code>NATKIT_INSTANCE_STORE</code> (a named volume, plus a host bind mount in the dev
+    compose so snapshots survive container recreation). Verify non-empty, checksum, mark
+    read-only, then <code>status: "complete"</code> — or <code>failed</code> with the
+    exporter's own diagnostic, which is already written for humans.
+  </p>
+  <h3>Phase 4 — History tree + instance review</h3>
+  <p>
+    Sidebar tree: Experiment &rarr; instances &rarr; forks. Opening an instance loads a
+    read-only board with an IMMUTABLE badge, the recorded window, label histogram and
+    artifact list, plus a <strong>Fork to edit</strong> button. Data review can start with
+    what exists: the Parquet download endpoint, and the marker/label summary already
+    computed during materialization.
+  </p>
+  <h3>Phase 5 — Replay: stream a snapshot back out of Parquet</h3>
+  <p>
+    C++ <code>ReplaySource</code>: read the instance's Parquet via Arrow, rebuild canonical
+    channel frames, interleave the markers sidecar by timestamp, publish to a scratch Kafka
+    topic, and bind the instance's source nodes to it. Review mode (paced + speed) and
+    recompute mode (unpaced). Reset stateful transforms on start. Delete the scratch topic
+    when the replay ends.
+  </p>
+  <h3>Phase 6 — Train from instances</h3>
+  <p>
+    Replace the train node's <code>"session:run"</code> selector strings with instance
+    references. Instances are strictly better training inputs: fixed windows, materialized
+    files, a recorded label histogram, and provenance back to the exact graph that produced
+    them.
+  </p>
+</section>
+
+<section class="warn">
+  <h2>Decisions &mdash; and what is still open</h2>
+  <ul>
+    <li>
+      <span class="q">Which streams get materialized?</span> <strong>DECIDED: raw sources
+      only</strong> — every <code>stream_source</code> in the graph, no transform outputs.
+      Keeps snapshots small and lets a fork legitimately recompute differently, which is the
+      whole point of forking; snapshotting derived streams would also let a fork silently
+      read stale derived data. A per-source opt-out can come later if a board pulls in a
+      high-rate stream nobody cares about.
+    </li>
+    <li>
+      <span class="q">Storage budget and retention for instances.</span> These are permanent
+      by design, so they only grow. The live IMU stream alone is ~2.3 MB per 30s of
+      Parquet. Do instances need a size cap, a prune/archive command, or an explicit delete
+      (which contradicts &ldquo;permanent&rdquo;)?
+    </li>
+    <li>
+      <span class="q">Does a fork's own run produce a new instance?</span>
+      <strong>DECIDED: no.</strong> Forking is what mints a new instance; running one just
+      executes it. A fork already <em>is</em> an instance (editable), so a run needs no new
+      object — the lineage lives in <code>forked_from</code>.
+    </li>
+    <li>
+      <span class="q">Is the live graph <em>owned</em> by one experiment, or shared?</span>
+      &ldquo;Associate an experiment with that graph&rdquo; reads as 1:1. But a board you
+      want to use for two different protocols would then need duplicating. 1:1 is simpler
+      and matches your phrasing; I'd start there.
+    </li>
+    <li>
+      <span class="q">Provenance edges.</span> <strong>DECIDED: retire them.</strong>
+      <code>prov_source</code> / <code>prov_experiment</code> existed to tie a source to an
+      experiment; experiment-owns-the-graph expresses the same lineage implicitly and more
+      cleanly. Both stubs come out of the catalog and port normalization.
+    </li>
+  </ul>
+</section>
+
+<section class="risk">
+  <h2>Risks</h2>
+  <ul>
+    <li>
+      <strong>Silently empty snapshots.</strong> Already happened once this week for
+      unrelated reasons (a wedged bridge). Materialization must fail loudly, and the
+      recording UI should surface &ldquo;frames seen&rdquo; live so a dead pipeline is
+      obvious <em>during</em> the run, not discovered afterwards.
+    </li>
+    <li>
+      <strong>Kafka is not durable here.</strong> <code>KAFKA_LOG_DIRS=/tmp/kraft-storage</code>
+      is inside the container: any <code>up --build</code> destroys every topic. Until
+      materialization exists, a &ldquo;permanent&rdquo; instance is a lie. Worth fixing the
+      volume regardless of this plan.
+    </li>
+    <li>
+      <strong>Graph-store growth.</strong> Instances and forks share
+      <code>stream_graphs.json</code>. A flat JSON file re-serialized on every save will not
+      love hundreds of snapshots; watch for a store split or an index if it bites.
+    </li>
+    <li>
+      <strong>Immutability has many back doors.</strong> Save, reactive auto-save,
+      node restart, composite flatten-on-save, starter-template load. Each is a path that
+      can mutate a graph; the read-only mode has to cover all of them, and the backend
+      rejection is the backstop.
+    </li>
+    <li>
+      <strong>Migration blast radius.</strong> The experiment node is referenced by the
+      editor inspector, <code>ExperimentRunner.svelte</code>, inline-card rendering, the
+      client recorder, topic-aware combine's marker classification, the starter templates,
+      the node catalog, and the smoke script. All must move together or the intermediate
+      states break the board.
+    </li>
+  </ul>
+</section>
+
+</main>
+<footer>
+  natKit &middot; plan authored July 29 2026 &middot; supersedes the experiment-node model in
+  <code>experiments-and-time-plan.html</code>; interacts with
+  <code>vp-provenance-edges-plan.html</code> and builds on
+  <code>parquet-export-node-plan.html</code>.
+</footer>
+</body>
+</html>

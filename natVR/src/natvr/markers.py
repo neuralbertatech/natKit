@@ -266,10 +266,22 @@ def annotate_rows_with_cue_markers(
         next_row = dict(row)
         if assignment >= 0:
             marker = cue_intervals[assignment].marker
-            next_row["cue_id"] = int(marker.attributes["cue_id"])
-            next_row["cue_phase"] = str(marker.attributes["phase"])
-            next_row["cue_gesture"] = str(marker.attributes["gesture"])
-            next_row["cue_prompt"] = str(marker.attributes["prompt"])
+            attributes = marker.attributes
+            # Tolerate markers that omit the optional display/bookkeeping fields.
+            # These used to be direct subscripts, so a timeline missing `prompt` --
+            # which nothing in training reads, it is the participant-facing string --
+            # killed featurization with a bare KeyError deep in the pipeline. Instance
+            # sidecars can come from any producer, so the label fields are the only
+            # ones worth being strict about.
+            next_row["cue_id"] = int(attributes.get("cue_id") or 0)
+            next_row["cue_phase"] = str(attributes.get("phase") or "")
+            next_row["cue_gesture"] = str(
+                attributes.get("gesture")
+                or attributes.get("label")
+                or attributes.get("class")
+                or ""
+            )
+            next_row["cue_prompt"] = str(attributes.get("prompt") or "")
             next_row["marker_session_id"] = marker.session_id
         annotated.append(next_row)
 

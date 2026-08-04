@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Worker Node Processing Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p { margin: 10px 0 0; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, code, pre, .status {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 900px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    margin-top: 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin-top: 12px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  pre {
+    margin: 12px 0 0;
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · backend · plan · June 29 2026</div>
+  <h1>Worker Node Processing Rollout Plan</h1>
+  <p class="subtitle">
+    Deliver worker-node-backed processing incrementally, starting with the ML
+    control plane and expanding toward a shared scheduler that can also own EMG
+    transforms and other backend jobs.
+  </p>
+  <div class="meta">
+    First implementation focus:
+    <code>libnatkit/scripts/natkit_ml_control_plane.py</code>,
+    <code>frontend/src/MlPipeline/</code>,
+    and project context updates in <code>AGENTS.html</code>.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Implementation Principle</h2>
+    <ul>
+      <li>Start from the existing ML control plane because it already has job orchestration, status streaming, and a frontend surface.</li>
+      <li>Introduce worker slots and queues before introducing distributed persistence.</li>
+      <li>Require slot selection in the UI once the backend can list and describe slots.</li>
+      <li>Keep the first slice compatible with current single-node local development.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 1 - In-Memory Worker Slots In The Existing ML Control Plane</h2>
+    <div class="status">In progress - partially implemented</div>
+    <ul>
+      <li><strong>Implemented:</strong> worker-node model with logical thread slots and default slot count from host thread count.</li>
+      <li><strong>Implemented:</strong> worker summary reporting with slot-capacity rollups and heartbeat timestamps on the current embedded worker.</li>
+      <li><strong>Implemented:</strong> per-slot queueing, per-job priority, queued-job cancellation, checkpointed running-job cancellation, and slot snapshots.</li>
+      <li><strong>Implemented:</strong> placeholder-principal ownership checks for queued-job reprioritization and stop requests.</li>
+      <li><strong>Implemented:</strong> control-plane actions for slot listing, job listing, job updates, and job stop.</li>
+      <li><strong>Implemented:</strong> ML frontend slot targeting plus slot utilization and assigned-job visibility.</li>
+      <li><strong>Implemented:</strong> placeholder slot assignment in the frontend before real auth exists.</li>
+      <li><strong>Implemented:</strong> placeholder principal id on slots and jobs before real auth exists.</li>
+      <li><strong>Implemented:</strong> local persistence for slot ownership and job history via the control plane, with JSON snapshots and a stronger SQLite-backed state store.</li>
+      <li><strong>Remaining:</strong> move from single-process local persistence to shared multi-process scheduler state once workers are split out.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 2 - Persist Scheduler State</h2>
+    <ul>
+      <li><strong>In progress:</strong> job, slot, and assignment state now has a SQLite-backed persistence path instead of only JSON snapshots.</li>
+      <li><strong>Implemented in the current bridge slice:</strong> the SQLite path now runs with WAL-capable settings, tracks a monotonic scheduler-state revision, lets a running control plane refresh externally written worker, slot, and job state from the shared database without a restart, now probes only the revision metadata before deciding whether a full state reload is necessary, now throttles those revision probes behind a short poll window so repeated WebSocket actions do not hit SQLite every time, now persists scheduler workers, slots, metadata, and jobs through incremental row-level upserts with key-only stale-row probes instead of rereading full table bodies before every save, and now writes back normalized recovered in-flight job state immediately after a control-plane restart so shared readers do not keep seeing stale pre-recovery payloads.</li>
+      <li><strong>Remaining:</strong> move scheduler state fully out of single-process local storage.</li>
+      <li>Choose whether the long-term mutable state store is PostgreSQL-backed, Kafka-backed plus relational projection, or hybrid.</li>
+      <li>Publish job-event streams and utilization summaries onto natKit metadata or logging streams where useful.</li>
+      <li>Ensure reconnects and control-plane restarts do not orphan visible job state.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 3 - Separate Worker Runtime From Control Plane</h2>
+    <ul>
+      <li>Split the current single process into a control-plane process and one or more worker processes.</li>
+      <li><strong>In progress:</strong> the control plane now has explicit external worker registration, heartbeat, and unregister actions, and persisted worker summaries can now include non-embedded workers even before their slot inventories are mirrored into the scheduler.</li>
+      <li><strong>Implemented for the first remote slice:</strong> external workers can now mirror logical slot inventories into scheduler state, claim/report queued jobs for those slots through the control plane, and run them through the new <code>libnatkit/scripts/natkit_ml_worker.py</code> standalone worker runtime.</li>
+      <li><strong>Implemented in that runtime slice:</strong> the standalone worker now retries control-plane connectivity with backoff, replays deferred terminal job-state reports after reconnect, reasserts surviving in-flight running jobs back to the control plane after a reconnect so recovered remote work does not remain stuck in an "awaiting external worker state" placeholder, and now treats a true worker-process restart under the same worker id as an explicit requeue-and-rerun event for that worker's in-flight jobs. Job state now persists and exposes a <code>restart_count</code>, worker/slot summaries now expose cumulative restart-attempt counts so those reruns are visible in scheduler and frontend views, automatic reruns are now bounded so exhausted restart attempts end in an explicit failed job state rather than unbounded retry churn, and active worker sessions are now enforced across heartbeat, slot-sync, claim, report, and unregister actions so stale worker processes cannot keep mutating scheduler state after a newer session has taken ownership.</li>
+      <li><strong>Implemented in the local deployment slice:</strong> the dedicated dev-stack control-plane container now accepts runtime worker-thread overrides through compose, including an external-worker-only mode with <code>NATKIT_ML_CONTROL_PLANE_WORKER_THREADS=0</code> so separate worker processes can provide the only scheduler-visible execution slots.</li>
+      <li><strong>Implemented in the deployment-hardening slice:</strong> the control plane now exposes explicit worker drain/resume control, draining external workers now stop claiming queued slot work until resumed, embedded-worker slots now also hold queued jobs instead of starting new local work while the worker remains in a draining state, worker summaries now expose whether a draining worker still has active work attached or is ready to stop cleanly, deployment tooling can now block on that transition through an explicit <code>wait_worker_drain_ready</code> action instead of polling worker summaries manually, and the new <code>libnatkit/scripts/natkit_ml_worker_operator.py</code> CLI now wraps worker inspection plus that drain/resume flow for operator scripts, including repeated-worker coordinated maintenance commands with aggregate exit behavior, a fail-fast mode for stopping on the first hard request error, file-based worker-id inputs for generated deployment inventories, structured JSON worker manifest inputs with optional group filtering, and optional structured result JSON artifacts so rollout tooling can persist the requested worker set, the actually processed subset, and per-worker maintenance outcomes directly.</li>
+      <li><strong>Remaining:</strong> harden deployment behavior, improve recovery for in-flight work across control-plane restarts, then move scheduler durability fully beyond control-plane-local state so external workers can become the default execution mode.</li>
+      <li>Replace the current embedded-worker summary with external worker registration and heartbeats from separate worker processes.</li>
+      <li>Route job claims to the worker that owns the target slot.</li>
+      <li>Retain the same slot-based frontend contract so the transport split is internal.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 4 - Migrate Other Backend Processing To Workers</h2>
+    <ul>
+      <li><strong>In progress:</strong> the Stream Viewer EMG transform path now exposes local worker-slot capacity, active-transform listing, and stop control instead of unbounded detached worker creation.</li>
+      <li><strong>Implemented in that local slice:</strong> per-transform slot identity, frames-processed counts, last-frame timestamps, live frontend polling, active-transform state updates for connected clients, and explicit worker summary fields such as available slots and worker heartbeat.</li>
+      <li><strong>Remaining:</strong> move EMG transforms fully out of the Drogon WebSocket process and onto separate worker processes.</li>
+      <li>Move other long-lived processing paths, such as calibration or replay workloads, onto the same scheduler surface.</li>
+      <li>Keep the browser backend focused on control-plane and stream access responsibilities.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Phase 5 - Real User Ownership And Quotas</h2>
+    <ul>
+      <li>Replace placeholder principal ids with authenticated user or workspace identities.</li>
+      <li><strong>In progress:</strong> explicit slot assignment and release now exist in the ML control plane, and slot reassignment is blocked while active work owned by another principal is still attached.</li>
+      <li>Extend that placeholder policy surface into authenticated slot assignment, revocation, and quota rules.</li>
+      <li><strong>Implemented in the placeholder-principal slice:</strong> a user may now submit only to slots already assigned to them; unassigned slots must be claimed first.</li>
+      <li><strong>Implemented in the frontend ownership slice:</strong> the ML Pipeline now exposes principal-scoped slot counts plus filters for all, mine, claimable, submittable, and active slots so placeholder ownership can be worked without scanning the full scheduler state manually.</li>
+      <li>Add per-user views, filters, and capacity summaries in the frontend.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Metrics To Surface Early</h2>
+    <table>
+      <tr>
+        <th>Metric</th>
+        <th>Why it matters</th>
+      </tr>
+      <tr>
+        <td><code>queue_depth</code></td>
+        <td>Shows oversubscription pressure immediately</td>
+      </tr>
+      <tr>
+        <td><code>assigned_job_count</code></td>
+        <td>Shows how much work is attached to a slot, not just what is running now</td>
+      </tr>
+      <tr>
+        <td><code>running_job_id</code></td>
+        <td>Makes current ownership and activity obvious</td>
+      </tr>
+      <tr>
+        <td><code>busy_ratio_60s</code></td>
+        <td>Gives a stable utilization signal instead of a single instant boolean</td>
+      </tr>
+      <tr>
+        <td><code>last_heartbeat</code></td>
+        <td>Necessary once workers become separate processes</td>
+      </tr>
+    </table>
+  </section>
+
+  <section class="risk">
+    <h2>Risks To Watch</h2>
+    <ul>
+      <li>Trying to generalize every backend workload before one path is production-worthy.</li>
+      <li>Letting UI concepts depend on raw thread implementation details.</li>
+      <li>Building queue semantics that become invalid when jobs are made durable later.</li>
+      <li>Deferring cancellation semantics until too many job types assume they can only fail or complete.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  This plan is intentionally staged. The immediate goal is a usable slot-based
+  scheduler surface, not a complete cluster rewrite in one pass.
+</footer>
+</body>
+</html>

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Additional Transformations Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 920px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    padding: 14px;
+    border-radius: 8px;
+    background: #132019;
+    color: #d7eee2;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · transforms · plan · July 3 2026</div>
+  <h1>Additional Transformations Plan</h1>
+  <p class="subtitle">
+    Extend the generic descriptor-driven transform surface with a composable DSP set:
+    pure band-pass filtering, notch filtering with optional harmonics, a standalone rectifier,
+    RMS windowing, low-pass envelope detection, and sliding-window framing. The goal is to keep
+    each operation explicit, chainable, and reusable across compatible numeric channel streams.
+  </p>
+  <div class="meta">
+    Scope: transform capability definitions, backend worker DSP implementations, frontend transform
+    controls, provenance, and validation for the next generic transform stages.
+  </div>
+</header>
+
+<main>
+  <section class="callout">
+    <h2>Progress Update</h2>
+    <ul>
+      <li><strong>2026-07-03:</strong> Phase 5 cleanup is implemented as a direct breaking removal of the old combined <code>bandpass_envelope</code> and <code>highpass_rectify</code> transform kinds.</li>
+      <li><strong>2026-07-03:</strong> Phase 1 is implemented on the generic transform path with standalone <code>rectify</code> and pure <code>lowpass_envelope</code>.</li>
+      <li><strong>2026-07-03:</strong> Phase 2 is implemented with descriptor-driven <code>bandpass_iir</code> and <code>notch_iir</code>, including capability discovery, worker DSP, provenance config, and Stream Viewer controls.</li>
+      <li><strong>2026-07-03:</strong> Phase 3 is implemented with <code>rms_window</code> on the same generic transform surface using explicit sample-count configuration and prefix-window startup behavior.</li>
+      <li><strong>2026-07-03:</strong> Phase 4 is implemented with <code>sliding_window</code> using <code>window_samples</code> and <code>step_samples</code>, worker-local output sequence numbering, and end-of-window timestamps while still emitting <code>NatSignalFrameDataSchemaV1</code>.</li>
+      <li><strong>Latest validation:</strong> backend rebuilds and frontend typechecks passed after the direct removal of the legacy combined transforms.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Decision</h2>
+    <ul>
+      <li>Keep these as separate transform kinds rather than bundling them into larger EMG-specific presets.</li>
+      <li>Preserve <code>NatSignalFrameDataSchemaV1</code> as the shared output contract for all transforms that keep the same channel-frame shape.</li>
+      <li>Prefer simple transform chaining such as <code>highpass_iir -> rectify -> rms_window</code> over creating one large opaque preprocessing transform.</li>
+      <li>Add sliding-window support as an explicit transform, since it changes time semantics and often acts as the bridge into feature extraction.</li>
+      <li>Leave room for later transform-specific schemas only when the output field model genuinely changes.</li>
+    </ul>
+  </section>
+
+  <section class="callout">
+    <h2>Current State</h2>
+    <ul>
+      <li><strong>Implemented:</strong> <code>highpass_iir</code>, <code>rectify</code>, <code>lowpass_envelope</code>, <code>bandpass_iir</code>, <code>notch_iir</code>, <code>rms_window</code>, and <code>sliding_window</code>.</li>
+      <li><strong>Removed:</strong> the combined legacy transforms <code>bandpass_envelope</code> and <code>highpass_rectify</code>.</li>
+      <li><strong>Remaining gap:</strong> any later schema split for windowed outputs remains an open design choice, but the planned transform set itself is now implemented.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Target Transform Set</h2>
+    <table>
+      <tr>
+        <th>Transform kind</th>
+        <th>Purpose</th>
+        <th>Notes</th>
+      </tr>
+      <tr>
+        <td><code>bandpass_iir</code></td>
+        <td>Pure band-pass filtering</td>
+        <td>No rectification or smoothing; likely shares design choices with <code>highpass_iir</code></td>
+      </tr>
+      <tr>
+        <td><code>notch_iir</code></td>
+        <td>Suppress mains or narrowband interference</td>
+        <td>Should support base frequency plus optional harmonic count</td>
+      </tr>
+      <tr>
+        <td><code>rectify</code></td>
+        <td>Absolute-value transform</td>
+        <td>Used as the explicit magnitude stage in place of the removed combined rectification path</td>
+      </tr>
+      <tr>
+        <td><code>rms_window</code></td>
+        <td>Windowed RMS magnitude estimate</td>
+        <td>Should expose window size and possibly overlap behavior</td>
+      </tr>
+      <tr>
+        <td><code>lowpass_envelope</code></td>
+        <td>Linear envelope detector</td>
+        <td>Should be a pure low-pass stage; caller can chain rectification first when desired</td>
+      </tr>
+      <tr>
+        <td><code>sliding_window</code></td>
+        <td>Explicit framing into overlapping windows</td>
+        <td>Most likely the first transform here that may need output-shape review beyond the current frame semantics</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Design Direction Per Transform</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Band-pass filter</h3>
+        <ul>
+          <li>Pure filtering only.</li>
+          <li>Config should include low cutoff, high cutoff, and method.</li>
+          <li>Reuse the same IIR design machinery as high-pass where practical.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Notch filter</h3>
+        <ul>
+          <li>Base frequency, Q, and harmonic count should be explicit config.</li>
+          <li>Harmonics should stop at Nyquist automatically.</li>
+          <li>Chain of notch sections is a clean first implementation.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Rectifier</h3>
+        <ul>
+          <li>No filter state required.</li>
+          <li>Pure absolute-value mapping over samples.</li>
+          <li>Acts as the explicit magnitude stage instead of the removed combined rectification transform.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>RMS window</h3>
+        <ul>
+          <li>Config should include window length in samples or milliseconds.</li>
+          <li>Need clear edge behavior for startup frames.</li>
+          <li>May operate sample-by-sample inside each channel stream while preserving frame shape.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Low-pass envelope</h3>
+        <ul>
+          <li>Pure low-pass stage.</li>
+          <li>Do not silently rectify inside it.</li>
+          <li>Typical usage becomes <code>rectify -> lowpass_envelope</code>.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Sliding window</h3>
+        <ul>
+          <li>Config should include window size and step size.</li>
+          <li>Needs explicit policy for cross-frame buffering and timestamps.</li>
+          <li>This is the transform most likely to force a second shared derived schema later.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recommended Order</h2>
+    <pre>1. rectify
+2. lowpass_envelope
+3. notch_iir
+4. bandpass_iir
+5. rms_window
+6. sliding_window</pre>
+    <p>
+      That order keeps the first slice simple. <code>rectify</code> and <code>lowpass_envelope</code>
+      finish the cleanup of the current combined transform model. <code>notch_iir</code> and
+      <code>bandpass_iir</code> can reuse most of the recent IIR work. <code>rms_window</code>
+      is still frame-local if implemented carefully. <code>sliding_window</code> is last because
+      it has the largest semantic impact on buffering, timestamps, and output shape.
+    </p>
+  </section>
+
+  <section>
+    <h2>Implementation Phases</h2>
+    <div class="status">In progress · updated on 2026-07-03</div>
+    <ul>
+      <li><strong>Phase 1 · Rectification split:</strong> completed in the generic transform path with <code>rectify</code> and <code>lowpass_envelope</code>.</li>
+      <li><strong>Phase 2 · Additional IIR filters:</strong> completed with <code>notch_iir</code> and <code>bandpass_iir</code> using the same generic numeric-frame path and shared IIR section design utilities.</li>
+      <li><strong>Phase 3 · Window energy transform:</strong> completed with <code>rms_window</code> using explicit sample-count config and prefix-window startup behavior.</li>
+      <li><strong>Phase 4 · Sliding-window framing:</strong> completed with explicit overlapping windows, end-of-window timestamps, worker-local output sequence numbering, and <code>NatSignalFrameDataSchemaV1</code> output preservation.</li>
+      <li><strong>Phase 5 · Cleanup:</strong> completed as a direct removal of the legacy combined transforms once the explicit composable set fully covered their behavior.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Validation Requirements</h2>
+    <ul>
+      <li>Reject invalid cutoff orderings for band-pass filters.</li>
+      <li>Reject invalid notch frequencies, Q values, and harmonic counts.</li>
+      <li>Reject zero or negative RMS and sliding-window sizes.</li>
+      <li>Verify that harmonic notch chains stop before Nyquist.</li>
+      <li>Verify transform chaining over <code>NatSignalFrameDataSchemaV1</code> without schema-specific code paths.</li>
+      <li>Add provenance coverage so downstream consumers can see exact transform settings.</li>
+    </ul>
+  </section>
+
+  <section class="warn">
+    <h2>Open Questions</h2>
+    <ul>
+      <li>Whether the current choice to keep <code>sliding_window</code> on <code>NatSignalFrameDataSchemaV1</code> should remain permanent or later move to a dedicated shared windowed-frame schema.</li>
+      <li>Whether RMS and low-pass envelope should accept durations in milliseconds, samples, or both.</li>
+      <li>Whether the frontend should start grouping transforms into filter, magnitude, and framing categories for discoverability.</li>
+    </ul>
+  </section>
+
+  <section class="risk">
+    <h2>What Not To Do</h2>
+    <ul>
+      <li>Do not reintroduce hidden rectification inside new filter transforms.</li>
+      <li>Do not collapse all preprocessing into one broad transform kind with a large config blob.</li>
+      <li>Do not let sliding-window semantics drift without an explicit timestamp and sequence policy.</li>
+      <li>Do not create frontend-only transform definitions that bypass backend capability discovery and provenance.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  The direction here is a clean transform vocabulary: filters, magnitude stages, and framing
+  stages that can be composed explicitly and inspected independently.
+</footer>
+</body>
+</html>

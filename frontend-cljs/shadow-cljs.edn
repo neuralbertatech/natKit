@@ -1,0 +1,34 @@
+;; natKit ClojureScript frontend — Visual Programming.
+;; Dependencies live in deps.edn (`:deps true` below).
+{:deps   {:aliases [:test]}
+ :nrepl  {:port 8777}
+
+ :dev-http {8280 "resources/public"}
+
+ :builds
+ {:app
+  {:target     :browser
+   :output-dir "resources/public/js/compiled"
+   :asset-path "/js/compiled"
+   :modules    {:app {:init-fn natkit.core/init}}
+   :dev
+   {:compiler-options
+    {:source-map true
+     :closure-defines {natkit.config/debug? true}}}
+   :release
+   {:compiler-options {:optimizations :advanced
+                       :closure-defines {natkit.config/debug? false}}}}
+
+  ;; Pure-logic test suite. Everything above natkit.ui is renderer-agnostic and
+  ;; runs here with no browser:  npx shadow-cljs compile test && node out/test.js
+  :test
+  {:target    :node-test
+   :output-to "out/test.js"
+   :ns-regexp "-test$"}
+
+  ;; Live integration check against a running backend — boots the real socket,
+  ;; events and app-db in node. See natkit.integration.
+  :integration
+  {:target    :node-script
+   :output-to "out/integration.js"
+   :main      natkit.integration/main}}}
