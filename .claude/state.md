@@ -2,9 +2,73 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-05
 
-## Active Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
+## Active Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
+
+Bidirectional server<->sensor commands, with command output on the log channel.
+The device subscribes to its own `Command-<id>-Json-NatExecutionCommandV1` topic
+and answers on `Log-<id>-Json-NatLogV1`, correlated by `command_id`.
+
+**Slice 1 — DONE, verified end-to-end on the board** (root `0e5538e`):
+- `libnatkit` `4998c19`: bridge outbound prefix typo fixed,
+  `natKit/reciving/` -> `natKit/receiving/`. Requires the bridge image to be
+  rebuilt (`podman build -t natnl/natkit-bridge:latest -f
+  Dockerfile_libnatkit_bridge .` in `libnatkit/`, then retag to
+  `docker.io/natnl/...` — compose resolves the docker.io name, not `localhost/`).
+- `natKit-IMU` `6e32315`: `embeded/include/CommandChannel.hpp` (two FreeRTOS
+  queues + a minimal JSON field reader), command/log topics on `KafkaTopic`,
+  `ping` / `calibrate.save_dcd` / `calibrate.status`, and a fix for the device
+  name (`String{UNIQUE_ID}` narrowed a uint64 to one byte).
+- No C++ schema classes were needed: the bridge only decodes for *logging*, so
+  forwarding is schema-agnostic and the schema name in the topic is the contract.
+
+**Slice 2 — NEXT:** a backend action (`send_device_command`) + a UI button, so
+this is reachable without a Kafka producer. Slice 3: a real guided calibration
+sequence reporting progress on the log channel.
+
+**Verification recipe** (no backend action yet):
+```
+podman exec mosquitto mosquitto_pub -h localhost \
+  -t 'natKit/receiving/Command-13793649670644-Json-NatExecutionCommandV1' \
+  -m '{"command_id":"x","source":"server","target":"sensor","command":"calibrate.status"}'
+podman exec natkit_natkit-v0-kafka_1 kafka-console-consumer --bootstrap-server \
+  localhost:9092 --topic Log-13793649670644-Json-NatLogV1 --partition 0 --offset 0
+```
+(`kafka-console-consumer` without `--partition/--offset` prints nothing here;
+`kafka-get-offsets` is the quick liveness check. `podman images` is broken on
+this box — readlink on the overlay dir — but build/ps/exec all work.)
+
+**CALIBRATION ROOT CAUSE FOUND AND FIXED (2026-08-05).** `calibrate.status`
+reported `cal_config=0x05 (accel=1 gyro=0 mag=1)` with accuracy
+`accel=2 gyro=0 rotation=0`: gyro dynamic calibration was never on, which is why
+rotation never left Unreliable. `sh2_setCalConfig` has failed with `SH2_ERR_HUB`
+from `setup()` since Feb 2026 (71e3be8), leaving the hub on its default 0x05.
+
+The call works nowhere in `setup()` — measured: first hub command -> OK but the
+hub goes silent; before the enableReports -> `SH2_ERR_HUB`; after them -> OK and
+silent; **deleted entirely -> silent too**, because each sh2 op pumps SHTP while
+awaiting its reply and the FAILING call was load-bearing timing. So `setup()` is
+left byte-for-byte as the verified-streaming version and the enable is deferred
+into the sample loop (`enableDynamicCalibrationOnce`, 5 s after the first sample,
+3 retries, failure reported on the log channel).
+
+Result, reproducible over two hardware resets: `setCalConfig(0x07) -> 0`,
+read-back 0x07, ~1900 frames/70 s, zero "Nothing to read", zero panics, and
+`/api/get_accuracies` now reports `gyroscope: 3` (was 0), stable over 20 polls.
+
+Also fixed in the same path: the SH2 status byte was used unmasked as an accuracy
+(bits 7:2 are the report delay, and values are packed 2 bits per sensor, so a
+nonzero delay would corrupt neighbouring sensors), and the backend ignored
+`has_data` while reading only `records->back()` — so any sensor absent from the
+last sample of a frame reported Unreliable.
+
+STILL UNVERIFIED: rotation reaches 0 only. It needs the physical 6-side routine to
+converge the magnetometer, which requires someone to actually move the board.
+That part was never broken.
+
+## Previous Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
+
 
 Plan: `plans/experiment-history-snapshots-plan.html`. Redesigns the VP experiment:
 it stops being a NODE and becomes a first-class object owning a graph + a history
