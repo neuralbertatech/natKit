@@ -61,6 +61,12 @@ COPY libnatkit/cmake /workspace/libnatkit/cmake
 COPY libnatkit/libnatkit /workspace/libnatkit/libnatkit
 COPY libnatkit/third-party /workspace/libnatkit/third-party
 
+# Normalize Linux build inputs copied from Windows while skipping binaries.
+RUN find /workspace/libnatkit/scripts /workspace/libnatkit/third-party/librdkafka -type f \
+    -exec sh -c 'for file do \
+      if grep -Iq . "$file"; then sed -i "s/\r$//" "$file"; fi; \
+    done' sh {} +
+
 RUN cmake \
         -S /workspace/libnatkit \
         -B /workspace/libnatkit/build \

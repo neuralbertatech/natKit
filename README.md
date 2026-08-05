@@ -18,7 +18,7 @@ This is a collection of tools created to help jumpstart users on working with BC
 
 Clone the repository:
 ```sh
-git clone https://github.com/neuralbertatech/natKit
+git clone --recurse-submodules https://github.com/neuralbertatech/natKit
 cd natKit
 ```
 
@@ -40,20 +40,35 @@ pip install -r requirements.txt
 pip install -r requirements.txt
 ```
 
-Start the docker server:
+### Development Docker stack
+
+Start Docker Desktop and wait for its Linux container engine to report that it
+is running. Then, from the repository root, build the repo-owned images and
+start the complete development stack:
+
 ```sh
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-To build the repo-owned container images locally instead of pulling the natKit
-service images from a registry, use the development override:
+This builds the natKit frontend, backend, bridge, and ML control plane from the
+local source tree while pulling third-party infrastructure images such as Kafka,
+Mosquitto, and NTP. Open the development UI at <http://localhost:8080>.
+
+To leave the stack running in the background, add `--detach`:
+
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build --detach
 ```
 
-This keeps the third-party infrastructure images (`cp-kafka`, `mosquitto`, and
-`ntp`) as registry pulls, but builds the natKit services from the local source
-tree.
+If the repository was cloned without `--recurse-submodules`, initialize its
+submodules before building:
+
+```sh
+git submodule update --init --recursive
+```
+
+See [Docker Compose development troubleshooting](docs/docker-compose-dev-troubleshooting.md)
+for common Docker Desktop, Windows line-ending, and optional ML worker issues.
 
 ## Getting Started
 
