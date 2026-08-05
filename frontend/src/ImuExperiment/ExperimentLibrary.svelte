@@ -20,10 +20,20 @@
         StreamGraphDefinition,
     } from "../StreamViewer/types";
     import {
+        compileStepProtocol,
         isStepProtocol,
         protocolClasses,
+        stepProtocolDurationMs,
         type StepProtocol,
     } from "../StreamViewer/experimentSteps";
+    import { adlStepProtocol, ADL_PROTOCOL_ID } from "../AdlExperiment/tasks";
+
+    let {
+        // Streams the operator assigned to body positions in Stream Selection.
+        // A built-in experiment is created with a source per assigned stream, so
+        // it is recordable immediately after calibration.
+        streamPositions = new Map<number, string>(),
+    }: { streamPositions?: Map<number, string> } = $props();
 
     let ws: StreamViewerWebSocket | null = null;
     let connection = $state<"connecting" | "connected" | "disconnected">(
@@ -155,6 +165,101 @@
         return out;
     }
 
+    // --- Built-in experiments ---------------------------------------------
+    const builtIns = $derived([
+        (() => {
+            const protocol = adlStepProtocol();
+            const schedule = compileStepProtocol(protocol);
+            return {
+                id: ADL_PROTOCOL_ID,
+                label: "ADL tasks",
+                description:
+                    "The original hard-coded activities-of-daily-living " +
+                    "sequence: mime each everyday task in turn, with a get-ready " +
+                    "prompt and a rest between.",
+                protocol,
+                cues: schedule.filter((c) => c.phase === "hold").length,
+                durationS: Math.round(stepProtocolDurationMs(schedule) / 1000),
+            };
+        })(),
+    ]);
+
+    let creating = $state<string | null>(null);
+
+    /**
+     * Create a real experiment from a built-in protocol, together with a board
+     * carrying one source per assigned stream and a markers node -- otherwise the
+     * experiment would exist with nothing to record from.
+     */
+    function createFromBuiltIn(builtIn: (typeof builtIns)[number]) {
+        if (!ws || creating) return;
+        creating = builtIn.id;
+        error = null;
+        const stamp = Date.now();
+        const boardId = `${builtIn.id}-board-${stamp}`;
+        const experimentId = `${builtIn.id}-${stamp}`;
+
+        const assigned = [...streamPositions.entries()];
+        const nodes: Record<string, unknown>[] = assigned.map(
+            ([streamId, position], index) => ({
+                id: `source/${streamId}`,
+                kind: "stream_source",
+                label: position && position !== "N/A" ? position : String(streamId),
+                position: { x: 120, y: 80 + index * 150 },
+                stream_id: String(streamId),
+                schema_name: "NatImuBulkDataSchema",
+                output_port_ids: ["data"],
+            }),
+        );
+        nodes.push({
+            id: `markers/${stamp}`,
+            kind: "markers",
+            label: "Markers",
+            position: { x: 520, y: 80 },
+            output_port_ids: ["markers"],
+        });
+
+        const graph = {
+            graph_version: 1,
+            graph_id: boardId,
+            label: `${builtIn.label} — ${new Date(stamp).toLocaleDateString()}`,
+            description: builtIn.description,
+            notes: [],
+            nodes,
+            edges: [],
+        };
+
+        // Messages are processed in order on one connection, so the board exists
+        // by the time the experiment referencing it is saved. editor_metadata is
+        // sent too so the Visual Programming editor loads this exact tree.
+        ws.send({
+            action: "save_stream_graph",
+            graph: { ...graph, editor_metadata: graph },
+            request_id: `builtin-graph:${stamp}`,
+        });
+        ws.send({
+            action: "save_experiment",
+            experiment: {
+                experiment_id: experimentId,
+                label: builtIn.label,
+                participant_id: "",
+                notes: "",
+                live_graph_id: boardId,
+                created_at_us: stamp * 1000,
+                updated_at_us: stamp * 1000,
+                protocol: builtIn.protocol,
+            },
+            request_id: `builtin-exp:${stamp}`,
+        });
+
+        // The list refresh is what confirms it landed.
+        setTimeout(() => {
+            refresh();
+            selectedExperimentId = experimentId;
+            creating = null;
+        }, 600);
+    }
+
     /** Open the Visual Programming board for this experiment, ready to record. */
     function recordExperiment(experiment: Experiment) {
         const board = experiment.live_graph_id;
@@ -187,12 +292,49 @@
         </p>
     {:else if error}
         <p class="note error">{error}</p>
-    {:else if experiments.length === 0}
-        <p class="note">
-            No experiments yet. Create one in Visual Programming — bind it to a
-            board, author its timeline, then record.
-        </p>
     {:else}
+        <div class="builtin-row">
+            <p class="eyebrow">Start from a built-in experiment</p>
+            {#each builtIns as builtIn}
+                <div class="builtin">
+                    <div class="builtin-main">
+                        <strong>{builtIn.label}</strong>
+                        <span class="experiment-meta"
+                            >{builtIn.cues} tasks · ~{Math.round(
+                                builtIn.durationS / 60,
+                            )} min</span
+                        >
+                        <span class="note">{builtIn.description}</span>
+                    </div>
+                    <button
+                        type="button"
+                        class="primary-btn"
+                        disabled={creating !== null || streamPositions.size === 0}
+                        title={streamPositions.size === 0
+                            ? "Assign at least one stream to a body position under Stream Selection first"
+                            : "Create this experiment with a board for the streams you assigned"}
+                        onclick={() => createFromBuiltIn(builtIn)}
+                    >
+                        {creating === builtIn.id ? "Creating…" : "Create"}
+                    </button>
+                </div>
+            {/each}
+            {#if streamPositions.size === 0}
+                <p class="note">
+                    Assign streams to body positions under Stream Selection to
+                    create one — the new experiment gets a source per assigned
+                    board.
+                </p>
+            {/if}
+        </div>
+    {/if}
+
+    {#if connection === "connected" && !error && experiments.length === 0}
+        <p class="note">
+            No experiments yet. Create one from a built-in above, or build your own
+            in Visual Programming.
+        </p>
+    {:else if connection === "connected" && !error}
         <div class="library-body">
             <ul class="experiment-list">
                 {#each experiments as experiment (experiment.experiment_id)}
@@ -332,6 +474,30 @@
     .library-header h3 {
         margin: 0;
         font-size: 1rem;
+    }
+
+    .builtin-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid #e4e4e7;
+    }
+
+    .builtin {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        border: 1px solid #d4d4d8;
+        border-radius: 6px;
+        padding: 0.45rem 0.55rem;
+    }
+
+    .builtin-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
     }
 
     .library-body {

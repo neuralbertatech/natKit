@@ -109,7 +109,16 @@
                     <BrokerConnection />
                 </Tabs.Content>
                 <Tabs.Content value={experimentsTab}>
-                    <ExperimentLibrary />
+                    <ExperimentLibrary
+                        streamPositions={new Map(
+                            [...stream_position_mapping.entries()].map(
+                                ([id, position]) => [
+                                    id,
+                                    sensor_position_to_string(position),
+                                ],
+                            ),
+                        )}
+                    />
                 </Tabs.Content>
                 {#if brokerConnected === true}
                     <Tabs.Content value={streamSelectionTab}>
