@@ -945,7 +945,10 @@
             {/if}
         </div>
 
-        <div class="panel-action-row">
+        <!-- Sticky: a long protocol (the ADL one is 30 step rows) otherwise pushes
+             Record thousands of pixels below the fold, which is exactly how it
+             looked missing. -->
+        <div class="panel-action-row record-footer">
             {#if recording}
                 <button type="button" class="action-btn secondary" onclick={onStop}>
                     <Square size={15} />
@@ -1166,6 +1169,20 @@
         border: 1px solid rgba(255, 255, 255, 0.1);
         background: rgba(12, 18, 28, 0.6);
         padding: 0.5rem 0.6rem;
+    }
+
+    .record-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        margin: 0 -0.85rem -0.85rem;
+        padding: 0.55rem 0.85rem;
+        background: linear-gradient(
+            to top,
+            rgba(11, 16, 32, 0.97) 65%,
+            rgba(11, 16, 32, 0)
+        );
+        border-top: 1px solid #24304f;
     }
 
     .panel-action-row {
