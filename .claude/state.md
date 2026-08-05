@@ -72,9 +72,36 @@ nonzero delay would corrupt neighbouring sensors), and the backend ignored
 `has_data` while reading only `records->back()` — so any sensor absent from the
 last sample of a frame reported Unreliable.
 
-STILL UNVERIFIED: rotation reaches 0 only. It needs the physical 6-side routine to
-converge the magnetometer, which requires someone to actually move the board.
-That part was never broken.
+**Zach ran the 6-side routine (2026-08-05): gyro now reads High, confirming the
+fix — but rotation did NOT move off 0 and accel stayed at 2.** So rotation is a
+SEPARATE defect, not a consequence of the gyro bug.
+
+Plumbing was ruled out by reading it: the active path (update3 -> event-based,
+ImuReader.hpp ~950) sets `data_point.calibration = event.accuracy`, which is the
+masked status of SH2_ROTATION_VECTOR. So the hub itself is reporting 0.
+
+Leading hypothesis, NOT yet measured: for the BNO08x the rotation vector's real
+quality signal is the separate `accuracy` float (radians) in
+`sh2_RotationVectorWAcc`, and its 2-bit status field may simply never be
+populated — the 0..3 status is meaningful for the raw accel/gyro/mag reports. If
+so, "Rotation: Unreliable" was never a measurement at all. AGAINST this
+hypothesis: Zach remembers rotation reaching High about a year ago, and the
+overall readout is worst-case, so it could not have shown High with rotation at 0.
+One of those two must be wrong; measure, do not assume.
+
+**UNCOMMITTED, COMPILED BUT UNFLASHED** in natKit-IMU (deliberately not committed
+so trunk stays at the verified-good state): an `imu.diag` command reporting raw
+per-report status bytes, report counts, and the rotation vector's `accuracy`
+float, plus `NAT_BNO08X_ENABLE_MAGNETIC_FIELD_CALIBRATED` turned on so mag
+convergence is observable at all. The mag report-enable is a hub-timing change and
+this hub has proven fragile about those, so it MUST be checked for streaming
+health after flashing.
+
+BLOCKED ON HARDWARE: /dev/ttyACM0 re-enumerated at 16:31 (while the board was
+being handled) and is now wedged — reads return nothing and both the DTR/RTS
+reset ioctl and a usbfs USBDEVFS_RESET hang. The board itself is fine and still
+streaming over WiFi. Needs a physical USB unplug/replug before anything can be
+flashed.
 
 ## Previous Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
 
