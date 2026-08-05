@@ -82,6 +82,10 @@ services:
 
   natkit-v0-ml-worker-a:
     image: natkit-ml-control-plane:dev
+    # The control plane already supplies embedded worker slots. This external
+    # worker requires a real shared-auth account, so keep it opt-in for local
+    # development instead of crash-looping when .env credentials are absent.
+    profiles: ["ml-worker"]
     command:
       - python
       - /workspace/libnatkit/scripts/natkit_ml_worker.py
