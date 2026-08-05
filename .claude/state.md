@@ -23,11 +23,20 @@ and answers on `Log-<id>-Json-NatLogV1`, correlated by `command_id`.
 - No C++ schema classes were needed: the bridge only decodes for *logging*, so
   forwarding is schema-agnostic and the schema name in the topic is the contract.
 
-**Slice 2 — NEXT:** a backend action (`send_device_command`) + a UI button, so
-this is reachable without a Kafka producer. Slice 3: a real guided calibration
-sequence reporting progress on the log channel.
+**Slice 2 — DONE** (libnatkit `4b8b9b8`, root `be5b672`): a `send_device_command`
+WS action that subscribes to the log topic, produces the command, then collects
+records until one is terminal; plus "Save to device" / "Read config" buttons on
+the VP IMU-calibration node. 17/17 backend checks and 11/11 browser checks
+against the live board. Gotcha: on a device's FIRST command the Command topic does
+not exist, and the bridge only forwards topics it has a messenger for (1 s
+discovery poll) — so the action creates the topic and waits a poll cycle before
+producing, or that first command is silently dropped. The buttons deliberately do
+NOT sit under the accuracy-selection branches; they need only a stream id.
 
-**Verification recipe** (no backend action yet):
+**Slice 3 — NEXT:** a guided calibration sequence (the 6-side routine driven from
+the server) with progress on the log channel.
+
+**Verification recipe** (a Kafka/MQTT-level alternative to the UI button):
 ```
 podman exec mosquitto mosquitto_pub -h localhost \
   -t 'natKit/receiving/Command-13793649670644-Json-NatExecutionCommandV1' \
