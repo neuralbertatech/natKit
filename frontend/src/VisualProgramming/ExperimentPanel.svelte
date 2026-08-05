@@ -201,6 +201,67 @@
         );
     }
 
+    // --- Media uploads -----------------------------------------------------
+    // The author picks a file; the backend stores it and returns an opaque id.
+    // Only that id's URL is kept in the protocol -- no filesystem paths are shown
+    // or typed, because where it lives is not the author's problem.
+    let uploading = $state<Record<string, "image" | "audio" | null>>({});
+    let uploadError = $state<string | null>(null);
+
+    async function uploadMedia(
+        parentId: string | null,
+        step: ExperimentStep,
+        slot: "image" | "audio",
+        file: File,
+    ) {
+        uploadError = null;
+        uploading = { ...uploading, [step.id]: slot };
+        try {
+            const form = new FormData();
+            form.append("file", file);
+            const response = await fetch("/api/media", {
+                method: "POST",
+                body: form,
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload?.message ?? `HTTP ${response.status}`);
+            }
+            patchStep(parentId, step.id, {
+                [slot === "image" ? "image_url" : "audio_url"]: payload.url,
+                // Kept only so the editor can show the author what they picked;
+                // the runner never needs it.
+                [slot === "image" ? "image_name" : "audio_name"]:
+                    payload.original_name || file.name,
+            });
+        } catch (error) {
+            uploadError =
+                error instanceof Error ? error.message : "Upload failed.";
+        } finally {
+            uploading = { ...uploading, [step.id]: null };
+        }
+    }
+
+    function clearMedia(
+        parentId: string | null,
+        step: ExperimentStep,
+        slot: "image" | "audio",
+    ) {
+        patchStep(parentId, step.id, {
+            [slot === "image" ? "image_url" : "audio_url"]: undefined,
+            [slot === "image" ? "image_name" : "audio_name"]: undefined,
+        });
+    }
+
+    /** What to show for an attached file: the author's filename if we have it. */
+    function mediaLabel(step: ExperimentStep, slot: "image" | "audio") {
+        const named = step as Record<string, string | undefined>;
+        const name = named[slot === "image" ? "image_name" : "audio_name"];
+        if (name) return name;
+        const url = named[slot === "image" ? "image_url" : "audio_url"];
+        return url ? "attached" : "";
+    }
+
     // Bring a legacy fixed protocol into the step editor without losing it: the
     // conversion produces the same timeline.
     function convertToSteps() {
@@ -647,37 +708,68 @@
                 {#if step.kind !== "repeat"}
                     <!-- Media on its own line: the head row is already dense, and
                          a URL needs room to be readable. -->
+                    <!-- Upload, not a path. The author picks a file; the
+                         backend stores it and hands back an opaque id. -->
                     <div class="step-media">
-                        <label class="step-inline" title="Image shown for this step">
-                            <ImageIcon size={11} />
-                            <input
-                                class="step-media-url"
-                                placeholder="/media/fist.png"
-                                disabled={readOnly}
-                                value={step.image_url ?? ""}
-                                oninput={(event) =>
-                                    patchStep(parentId, step.id, {
-                                        image_url:
-                                            (event.currentTarget as HTMLInputElement)
-                                                .value || undefined,
-                                    })}
-                            />
-                        </label>
-                        <label class="step-inline" title="Sound played once when this step begins">
-                            <Volume2 size={11} />
-                            <input
-                                class="step-media-url"
-                                placeholder="/media/beep.wav"
-                                disabled={readOnly}
-                                value={step.audio_url ?? ""}
-                                oninput={(event) =>
-                                    patchStep(parentId, step.id, {
-                                        audio_url:
-                                            (event.currentTarget as HTMLInputElement)
-                                                .value || undefined,
-                                    })}
-                            />
-                        </label>
+                        {#each [["image", "Image", "image/*"], ["audio", "Sound", "audio/*"]] as [slot, label, accept]}
+                            {@const attached = mediaLabel(
+                                step,
+                                slot as "image" | "audio",
+                            )}
+                            <div class="media-slot">
+                                {#if slot === "image"}
+                                    <ImageIcon size={11} />
+                                {:else}
+                                    <Volume2 size={11} />
+                                {/if}
+                                {#if attached}
+                                    <span class="media-name" title={attached}
+                                        >{attached}</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="icon-btn"
+                                        disabled={readOnly}
+                                        title={`Remove this ${label.toLowerCase()}`}
+                                        onclick={() =>
+                                            clearMedia(
+                                                parentId,
+                                                step,
+                                                slot as "image" | "audio",
+                                            )}
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                {:else}
+                                    <label class="media-pick">
+                                        {uploading[step.id] === slot
+                                            ? "Uploading…"
+                                            : `Add ${label.toLowerCase()}`}
+                                        <input
+                                            type="file"
+                                            accept={accept}
+                                            disabled={readOnly ||
+                                                uploading[step.id] != null}
+                                            onchange={(event) => {
+                                                const input =
+                                                    event.currentTarget as HTMLInputElement;
+                                                const file = input.files?.[0];
+                                                if (file) {
+                                                    void uploadMedia(
+                                                        parentId,
+                                                        step,
+                                                        slot as "image" | "audio",
+                                                        file,
+                                                    );
+                                                }
+                                                // Let the same file be re-picked.
+                                                input.value = "";
+                                            }}
+                                        />
+                                    </label>
+                                {/if}
+                            </div>
+                        {/each}
                     </div>
                 {/if}
 
@@ -717,6 +809,9 @@
                     <p class="hint-text">No steps yet — add one below.</p>
                 {/if}
             </div>
+            {#if uploadError}
+                <p class="hint-text upload-error">{uploadError}</p>
+            {/if}
             <div class="step-add">
                 {#each ["instruction", "cue", "rest", "wait", "repeat"] as kind}
                     <button
@@ -1222,9 +1317,38 @@
         padding-left: 0.1rem;
     }
 
-    .step-media-url {
-        width: 9rem;
+    .media-slot {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
         font-size: 0.64rem;
+        color: #7f91c8;
+        border: 1px solid #24304f;
+        border-radius: 999px;
+        padding: 0.1rem 0.4rem;
+    }
+
+    .media-name {
+        max-width: 8rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #b9c8f0;
+    }
+
+    /* A styled label over a hidden file input: the native control cannot be
+       restyled and its "no file chosen" text is noise here. */
+    .media-pick {
+        cursor: pointer;
+        text-decoration: underline dotted;
+    }
+
+    .media-pick input[type="file"] {
+        display: none;
+    }
+
+    .upload-error {
+        color: #f87171;
     }
 
     .step-add {
