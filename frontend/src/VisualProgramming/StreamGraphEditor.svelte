@@ -2819,6 +2819,35 @@
         }
     }
 
+    // Play a step's sound once, at its onset.
+    //
+    // This lives with the SESSION rather than in the runner component: the runner
+    // is only mounted when someone has opened a run surface, so putting it there
+    // meant a protocol's audio silently did not play if the operator was driving
+    // the session from the experiment panel. A stimulus is part of the run, not of
+    // one particular view of it.
+    let lastSoundedCueId: number | null = null;
+    $effect(() => {
+        if (!sessionRecording) {
+            lastSoundedCueId = null;
+            return;
+        }
+        const cue = activeSessionCue;
+        if (!cue || cue.cue_id === lastSoundedCueId) {
+            return;
+        }
+        lastSoundedCueId = cue.cue_id;
+        if (!cue.audio_url) {
+            return;
+        }
+        // Autoplay is permitted because starting a session is a user gesture. A
+        // failure must never interrupt the run, so it is reported, not thrown.
+        const sound = new Audio(cue.audio_url);
+        sound.play().catch((error) => {
+            console.warn(`Cue audio failed (${cue.audio_url}):`, error);
+        });
+    });
+
     // Release the wait the session is holding on.
     function continueSessionWait() {
         const rec = sessionRecording;

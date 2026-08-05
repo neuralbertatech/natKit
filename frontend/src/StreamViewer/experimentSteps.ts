@@ -37,6 +37,15 @@ interface StepCommon {
     text?: string;
     /** Practice: recorded, flagged, excluded from training. */
     tutorial?: boolean;
+    // Media stimulus shown/played for this step. Either an absolute URL or a
+    // site-root path — files under frontend/public are served from the root, so
+    // frontend/public/media/fist.png is "/media/fist.png".
+    //
+    // Both are recorded in the cue's marker attributes: what the participant was
+    // shown or heard is part of the experimental record, not just presentation.
+    image_url?: string;
+    /** Played once when the step begins. */
+    audio_url?: string;
 }
 
 export interface InstructionStep extends StepCommon {
@@ -195,6 +204,12 @@ export function compileStepProtocol(protocol: StepProtocol): EmgCueEvent[] {
         if (step.kind === "wait") {
             event.wait_for_input = true;
             event.continue_label = step.continue_label || "Continue";
+        }
+        if (step.image_url) {
+            event.image_url = step.image_url;
+        }
+        if (step.audio_url) {
+            event.audio_url = step.audio_url;
         }
         schedule.push(event);
         cueId += 1;

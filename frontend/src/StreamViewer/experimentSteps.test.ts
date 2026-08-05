@@ -266,3 +266,90 @@ describe("exampleStepProtocol", () => {
         expect(protocolClasses(exampleStepProtocol())).toEqual(["fist"]);
     });
 });
+
+describe("media cues", () => {
+    it("carries image and audio onto the compiled timeline", () => {
+        const schedule = compileStepProtocol(
+            protocol([
+                {
+                    id: "a",
+                    kind: "cue",
+                    label: "fist",
+                    text: "Copy this",
+                    duration_s: 2,
+                    image_url: "/media/fist.png",
+                    audio_url: "/media/beep.wav",
+                },
+                { id: "b", kind: "rest", text: "Relax", duration_s: 1 },
+            ]),
+        );
+        expect(schedule[0]).toMatchObject({
+            image_url: "/media/fist.png",
+            audio_url: "/media/beep.wav",
+        });
+        // A step without media must not gain empty keys — markers would then
+        // claim a stimulus that was never shown.
+        expect(schedule[1].image_url).toBeUndefined();
+        expect(schedule[1].audio_url).toBeUndefined();
+    });
+
+    it("works on instruction and wait steps too, not just cues", () => {
+        const schedule = compileStepProtocol(
+            protocol([
+                { id: "i", kind: "instruction", text: "Watch", duration_s: 1,
+                  image_url: "/media/diagram.png" },
+                { id: "w", kind: "wait", text: "Ready?", audio_url: "/media/chime.wav" },
+            ]),
+        );
+        expect(schedule[0].image_url).toBe("/media/diagram.png");
+        expect(schedule[1].audio_url).toBe("/media/chime.wav");
+    });
+
+    it("records the stimulus in the marker attributes", () => {
+        const schedule = compileStepProtocol(
+            protocol([
+                { id: "a", kind: "cue", label: "fist", duration_s: 2,
+                  image_url: "/media/fist.png", audio_url: "/media/beep.wav",
+                  tutorial: true },
+            ]),
+        );
+        const markers = buildCueMarkerPayloads({
+            sessionId: "s",
+            cues: schedule,
+            sessionStartedAtUs: 1_000_000,
+        });
+        // Both start and end carry it, so a window can be attributed either way.
+        for (const marker of markers) {
+            expect(marker.attributes).toMatchObject({
+                image_url: "/media/fist.png",
+                audio_url: "/media/beep.wav",
+                tutorial: true,
+            });
+        }
+    });
+
+    it("omits media keys from attributes when a cue has none", () => {
+        const schedule = compileStepProtocol(
+            protocol([{ id: "a", kind: "cue", label: "fist", duration_s: 1 }]),
+        );
+        const markers = buildCueMarkerPayloads({
+            sessionId: "s", cues: schedule, sessionStartedAtUs: 0,
+        });
+        expect("image_url" in markers[0].attributes).toBe(false);
+        expect("audio_url" in markers[0].attributes).toBe(false);
+        expect("tutorial" in markers[0].attributes).toBe(false);
+    });
+
+    it("survives wait resolution", () => {
+        const schedule = compileStepProtocol(
+            protocol([
+                { id: "w", kind: "wait", text: "Ready?", audio_url: "/media/chime.wav" },
+                { id: "a", kind: "cue", label: "fist", duration_s: 1,
+                  image_url: "/media/fist.png" },
+            ]),
+        );
+        const resolved = resolveScheduleWaits(schedule, { [schedule[0].cue_id]: 2000 });
+        expect(resolved[0].audio_url).toBe("/media/chime.wav");
+        expect(resolved[1].image_url).toBe("/media/fist.png");
+    });
+});

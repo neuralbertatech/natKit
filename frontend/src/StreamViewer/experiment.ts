@@ -56,6 +56,11 @@ export interface EmgCueEvent {
     wait_for_input?: boolean;
     // Text for the button that releases a wait step.
     continue_label?: string;
+    // Media stimulus for this cue: an image shown for its duration, and a sound
+    // played once at its onset. Carried through to the marker attributes so a
+    // recording says what the participant was actually shown and heard.
+    image_url?: string;
+    audio_url?: string;
 }
 
 export interface EmgStreamOption {
@@ -189,6 +194,9 @@ export function buildCueMarkerPayloads(args: {
                 phase: cue.phase,
                 gesture: cue.gesture,
                 prompt: cue.prompt,
+                ...(cue.image_url ? { image_url: cue.image_url } : {}),
+                ...(cue.audio_url ? { audio_url: cue.audio_url } : {}),
+                ...(cue.tutorial ? { tutorial: true } : {}),
             },
         },
         {
@@ -205,6 +213,9 @@ export function buildCueMarkerPayloads(args: {
                 phase: cue.phase,
                 gesture: cue.gesture,
                 prompt: cue.prompt,
+                ...(cue.image_url ? { image_url: cue.image_url } : {}),
+                ...(cue.audio_url ? { audio_url: cue.audio_url } : {}),
+                ...(cue.tutorial ? { tutorial: true } : {}),
             },
         },
     ]);

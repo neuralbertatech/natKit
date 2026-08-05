@@ -120,6 +120,14 @@
                 >{instruction}</span
             >
         {/if}
+        {#if activeCue?.image_url}
+            <img
+                class="cue-image"
+                class:large
+                src={activeCue.image_url}
+                alt={promptText}
+            />
+        {/if}
         <div class="cue-stage" class:active={isActivePhase}>
             <span class="cue-prompt">{promptText}</span>
             {#if secondsLeftInCue !== null}
@@ -392,6 +400,23 @@
     .run-btn.record:disabled {
         opacity: 0.5;
         cursor: not-allowed;
+    }
+
+    /* Image stimulus. Capped so a large asset cannot push the controls off the
+       node card; the modal presentation gets more room. */
+    .cue-image {
+        display: block;
+        max-width: 100%;
+        max-height: 90px;
+        margin: 0 auto 0.3rem;
+        border-radius: 6px;
+        object-fit: contain;
+        background: #0a0f1e;
+    }
+
+    .cue-image.large {
+        max-height: 320px;
+        margin-bottom: 0.6rem;
     }
 
     .run-btn.stop {

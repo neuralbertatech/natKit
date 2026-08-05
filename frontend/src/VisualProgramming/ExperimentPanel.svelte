@@ -11,6 +11,8 @@
         ChevronDown,
         ChevronUp,
         CircleDot,
+        Image as ImageIcon,
+        Volume2,
         Plus,
         Square,
         Trash2,
@@ -642,6 +644,43 @@
                     </div>
                 </div>
 
+                {#if step.kind !== "repeat"}
+                    <!-- Media on its own line: the head row is already dense, and
+                         a URL needs room to be readable. -->
+                    <div class="step-media">
+                        <label class="step-inline" title="Image shown for this step">
+                            <ImageIcon size={11} />
+                            <input
+                                class="step-media-url"
+                                placeholder="/media/fist.png"
+                                disabled={readOnly}
+                                value={step.image_url ?? ""}
+                                oninput={(event) =>
+                                    patchStep(parentId, step.id, {
+                                        image_url:
+                                            (event.currentTarget as HTMLInputElement)
+                                                .value || undefined,
+                                    })}
+                            />
+                        </label>
+                        <label class="step-inline" title="Sound played once when this step begins">
+                            <Volume2 size={11} />
+                            <input
+                                class="step-media-url"
+                                placeholder="/media/beep.wav"
+                                disabled={readOnly}
+                                value={step.audio_url ?? ""}
+                                oninput={(event) =>
+                                    patchStep(parentId, step.id, {
+                                        audio_url:
+                                            (event.currentTarget as HTMLInputElement)
+                                                .value || undefined,
+                                    })}
+                            />
+                        </label>
+                    </div>
+                {/if}
+
                 {#if step.kind === "repeat"}
                     {#each step.steps as child (child.id)}
                         {@render stepRow(child, step.id, depth + 1)}
@@ -786,6 +825,15 @@
                                 .gesture}</strong
                         >
                     </div>
+                    {#if recording.activeCue.image_url}
+                        <!-- The operator should see the stimulus the participant is
+                             being shown, without having to open a run surface. -->
+                        <img
+                            class="cue-thumb"
+                            src={recording.activeCue.image_url}
+                            alt={recording.activeCue.prompt}
+                        />
+                    {/if}
                 {/if}
                 {#if recording.activeCue?.wait_for_input}
                     <!-- A wait step holds the session. The runner surface may not
@@ -1166,6 +1214,19 @@
         margin-left: auto;
     }
 
+    .step-media {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.25rem;
+        padding-left: 0.1rem;
+    }
+
+    .step-media-url {
+        width: 9rem;
+        font-size: 0.64rem;
+    }
+
     .step-add {
         display: flex;
         flex-wrap: wrap;
@@ -1199,6 +1260,16 @@
     .add-step-btn:disabled {
         opacity: 0.45;
         cursor: default;
+    }
+
+    .cue-thumb {
+        display: block;
+        max-width: 100%;
+        max-height: 110px;
+        margin: 0.25rem 0;
+        border-radius: 6px;
+        object-fit: contain;
+        background: #0a0f1e;
     }
 
     .continue-wait {
