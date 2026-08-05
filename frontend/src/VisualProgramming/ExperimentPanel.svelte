@@ -24,6 +24,7 @@
         StreamGraphDefinition,
     } from "../StreamViewer/types";
     import type { EmgCueEvent } from "../StreamViewer/experiment";
+    import { adlStepProtocol, ADL_PROTOCOL_ID } from "../AdlExperiment/tasks";
     import {
         compileStepProtocol,
         isStepProtocol,
@@ -260,6 +261,45 @@
         if (name) return name;
         const url = named[slot === "image" ? "image_url" : "audio_url"];
         return url ? "attached" : "";
+    }
+
+    // --- Built-in protocols ------------------------------------------------
+    // A port of the experiments that used to be hard-coded elsewhere, so they can
+    // be run, recorded and reviewed through the same machinery as a user-authored
+    // one -- and edited afterwards, which a fixed program could not be. The
+    // original hard-coded pages are left untouched; this is the path across.
+    const builtInProtocols = $derived([
+        (() => {
+            const protocol = adlStepProtocol();
+            const schedule = compileStepProtocol(protocol);
+            return {
+                id: ADL_PROTOCOL_ID,
+                label: "ADL tasks",
+                description:
+                    "Activities of daily living: mime each everyday task in " +
+                    "turn, with a get-ready prompt and a rest between. Ported " +
+                    "from the hard-coded ADL Experiment page.",
+                protocol,
+                cues: schedule.filter((c) => c.phase === "hold").length,
+                durationS: Math.round(stepProtocolDurationMs(schedule) / 1000),
+            };
+        })(),
+    ]);
+
+    function applyBuiltInProtocol(builtIn: (typeof builtInProtocols)[number]) {
+        // Replacing a protocol throws away whatever was authored, so ask -- but
+        // only when there is something to lose.
+        const existing = stepProtocol?.steps?.length ?? 0;
+        if (
+            existing > 0 &&
+            !window.confirm(
+                `Replace this experiment's ${existing} step(s) with the ` +
+                    `${builtIn.label} protocol?`,
+            )
+        ) {
+            return;
+        }
+        onPatchProtocol(builtIn.protocol as unknown as Partial<SessionProtocol>);
     }
 
     // Bring a legacy fixed protocol into the step editor without losing it: the
@@ -857,6 +897,36 @@
             </button>
         {/if}
 
+        {#if protocol}
+            <p class="eyebrow section-label">Built-in protocols</p>
+            <p class="hint-text">
+                Ported from the hard-coded experiment pages. Loading one replaces
+                this experiment's protocol, and you can edit it afterwards like any
+                other.
+            </p>
+            {#each builtInProtocols as builtIn}
+                <div class="builtin-protocol">
+                    <div class="builtin-protocol-main">
+                        <strong>{builtIn.label}</strong>
+                        <span class="hint-text"
+                            >{builtIn.cues} tasks · ~{Math.round(
+                                builtIn.durationS / 60,
+                            )} min</span
+                        >
+                    </div>
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        disabled={readOnly}
+                        title={builtIn.description}
+                        onclick={() => applyBuiltInProtocol(builtIn)}
+                    >
+                        Load
+                    </button>
+                </div>
+            {/each}
+        {/if}
+
         {#if summary && !stepProtocol}
             <div class="summary-row">
                 <span>Schedule</span>
@@ -1402,6 +1472,23 @@
         border-color: #1d4ed8;
         color: #eff6ff;
         font-weight: 700;
+    }
+
+    .builtin-protocol {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        border: 1px solid #24304f;
+        border-radius: 6px;
+        padding: 0.35rem 0.45rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .builtin-protocol-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
     }
 
     .convert-steps {
