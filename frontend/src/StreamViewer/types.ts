@@ -584,6 +584,14 @@ export interface StreamGraphViewerNode extends StreamGraphBaseNode<"viewer"> {
   // phantom "markers" input appears on the node; enabling it (this flag) overlays
   // the markers on the waveform. Editor-only, rides editor_metadata.
   show_markers?: boolean;
+  // What this viewer draws. Absent = the schema-chosen renderer (waveform, IMU,
+  // markers...). "imu_calibration" instead shows the per-sensor calibration
+  // quality of the upstream IMU, mirroring the IMU Experiment tab's concept of
+  // whether a board is calibrated while worn. Editor-only, rides editor_metadata.
+  display_mode?: "imu_calibration";
+  // Which body position this board is mounted at, so the readout is labelled the
+  // way the person is set up. One of SENSOR_POSITION_NAMES.
+  sensor_position?: string;
 }
 
 export interface StreamGraphSinkNode extends StreamGraphBaseNode<"sink"> {
