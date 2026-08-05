@@ -84,6 +84,42 @@
     let dropdown_open: boolean[] = $state([]);
     let dropdown_values: SensorPosition[] = $state([]);
 
+    // This page configures IMU boards worn on a person, so by default only show
+    // streams that actually carry IMU bulk data. Kept as a toggle rather than a
+    // hard filter: a stream publishing something else is hidden, not lost, and the
+    // count says how many.
+    const IMU_DATA_SCHEMA = "NatImuBulkDataSchema";
+    let show_all_streams: boolean = $state(false);
+    let all_streams: Stream[] = $state([]);
+
+    function is_imu_stream(stream: Stream): boolean {
+        return stream.topics.some(
+            (topic) =>
+                topic.type === "Data" && topic.schema_name === IMU_DATA_SCHEMA,
+        );
+    }
+
+    const hidden_stream_count = $derived(
+        all_streams.length - all_streams.filter(is_imu_stream).length,
+    );
+
+    // Rebuild the displayed list and the per-row dropdown state together -- every
+    // dropdown array is indexed by position in `streams`, so they must be rebuilt
+    // whenever the filter changes or they would address the wrong row.
+    function apply_stream_filter() {
+        streams = show_all_streams
+            ? [...all_streams]
+            : all_streams.filter(is_imu_stream);
+        dropdown_enabled = streams.map(() => false);
+        dropdown_open = streams.map(() => false);
+        dropdown_values = streams.map(() => SensorPosition.None);
+    }
+
+    function toggle_show_all() {
+        show_all_streams = !show_all_streams;
+        apply_stream_filter();
+    }
+
     let searching_for_streams: boolean = $state(false);
     async function get_streams() {
         searching_for_streams = true;
@@ -96,7 +132,7 @@
                 response
                     .json()
                     .then((json) => {
-                        streams = [];
+                        all_streams = [];
                         for (var id in json) {
                             var value = json[id];
                             var topics_json = value["topics"];
@@ -111,21 +147,13 @@
                                         topic["serialization_type"],
                                 });
                             }
-                            streams.push({
+                            all_streams.push({
                                 id: Number(id),
                                 name: value["name"],
                                 topics: topics,
                             });
                         }
-                        dropdown_enabled = [
-                            ...Array(streams.length).keys(),
-                        ].map((_) => false);
-                        dropdown_open = [...Array(streams.length).keys()].map(
-                            (_) => false,
-                        );
-                        dropdown_values = [...Array(streams.length).keys()].map(
-                            (_) => SensorPosition.None,
-                        );
+                        apply_stream_filter();
                         searching_for_streams = false;
                     })
                     .catch((err) => {
@@ -236,7 +264,32 @@
             </Button>
         </div>
     </div>
+    <div class="filter-row">
+        <label class="filter-toggle">
+            <input
+                type="checkbox"
+                checked={show_all_streams}
+                onchange={toggle_show_all}
+            />
+            <span>Show all streams</span>
+        </label>
+        {#if !show_all_streams}
+            <span class="filter-note">
+                Showing streams that carry {IMU_DATA_SCHEMA} data{hidden_stream_count >
+                0
+                    ? ` — ${hidden_stream_count} other stream${hidden_stream_count === 1 ? "" : "s"} hidden`
+                    : ""}.
+            </span>
+        {/if}
+    </div>
     <div>
+        {#if streams.length === 0 && !searching_for_streams}
+            <p class="filter-note" style="padding-left: 1em;">
+                {all_streams.length === 0
+                    ? "No streams found. Check the broker connection and refresh."
+                    : `No IMU streams found among ${all_streams.length} stream(s). Tick "Show all streams" to pick one anyway.`}
+            </p>
+        {/if}
         <Accordion.Root>
             {#each streams as stream, index}
                 <Accordion.Item value="item-{index}">
@@ -330,6 +383,27 @@
 </div>
 
 <style>
+    .filter-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75em;
+        flex-wrap: wrap;
+        padding: 0 1em 0.5em;
+    }
+
+    .filter-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35em;
+        font-size: 0.85em;
+        cursor: pointer;
+    }
+
+    .filter-note {
+        font-size: 0.8em;
+        opacity: 0.7;
+    }
+
     div.stream-submission {
         align-content: center;
         margin: 1em;

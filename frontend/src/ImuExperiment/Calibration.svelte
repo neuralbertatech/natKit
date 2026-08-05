@@ -7,9 +7,14 @@
     let {
         stream_position_mapping,
         onStart = () => {},
+        onBypass = () => {},
+        bypassed = false,
     }: {
         stream_position_mapping: SvelteMap<number, SensorPosition>;
         onStart?: () => void;
+        // Proceed without waiting for the sensors to report good accuracy.
+        onBypass?: (skipped: boolean) => void;
+        bypassed?: boolean;
     } = $props();
 
     let calibration_statuses: Map<SensorPosition, CalibrationStatus> = $state(
@@ -132,6 +137,20 @@
         return () => clearInterval(interval);
     });
 
+    // The worst status across positions that actually have a sensor assigned. A
+    // setup is only as calibrated as its least-calibrated board.
+    const assigned_statuses = $derived(
+        [...stream_position_mapping.values()]
+            .map((position) => calibration_statuses.get(position))
+            .filter((status): status is CalibrationStatus => status !== undefined),
+    );
+    const all_calibrated = $derived(
+        assigned_statuses.length > 0 &&
+            assigned_statuses.every(
+                (status) => status === CalibrationStatus.High,
+            ),
+    );
+
     async function start_calibration() {
         if (start_in_progress) {
             return;
@@ -162,7 +181,6 @@
         }
     }
 
-    $inspect(stream_position_mapping);
 </script>
 
 <div style="margin: 1em;">
@@ -395,7 +413,41 @@
             disabled={start_in_progress || stream_position_mapping.size === 0}
             >{start_in_progress ? "Starting..." : "Start"}</Button
         >
+        {#if !bypassed}
+            <Button
+                variant="outline"
+                onclick={() => onBypass(true)}
+                disabled={stream_position_mapping.size === 0}
+                title="Go on to recording without waiting for the sensors to settle"
+                >Skip calibration</Button
+            >
+        {:else}
+            <Button variant="outline" onclick={() => onBypass(false)}
+                >Undo skip</Button
+            >
+        {/if}
     </div>
+
+    {#if stream_position_mapping.size === 0}
+        <p class="start-status">
+            Assign at least one stream to a body position under Stream Selection
+            first.
+        </p>
+    {:else if bypassed}
+        <p class="start-status warning">
+            Calibration skipped — recordings will proceed with the sensors as they
+            are. Orientation data may drift or be unreliable.
+        </p>
+    {:else if all_calibrated}
+        <p class="start-status success">
+            All assigned sensors report High accuracy.
+        </p>
+    {:else}
+        <p class="start-status">
+            Move each board through some rotations until its dot turns green. You
+            can skip this, but the data quality is on you.
+        </p>
+    {/if}
     {#if start_error}
         <p class="start-status error">{start_error}</p>
     {/if}
@@ -405,6 +457,11 @@
 </div>
 
 <style>
+    .start-status.warning {
+        color: #b45309;
+        font-weight: 600;
+    }
+
     .small-dot {
         height: 10px;
         width: 10px;

@@ -21,6 +21,29 @@
         new SvelteMap<number, SensorPosition>(),
     );
 
+    // Calibration is advisory here -- nothing in the backend blocks on it (
+    // /api/start_calibration is a stub). Skipping is therefore a data-quality
+    // decision, so it is remembered across a reload and shown on the tab rather
+    // than silently forgotten mid-session.
+    const BYPASS_KEY = "natkit.imu.calibrationBypassed";
+    let calibrationBypassed = $state(
+        typeof localStorage !== "undefined" &&
+            localStorage.getItem(BYPASS_KEY) === "true",
+    );
+
+    function setCalibrationBypassed(skipped: boolean) {
+        calibrationBypassed = skipped;
+        try {
+            localStorage.setItem(BYPASS_KEY, skipped ? "true" : "false");
+        } catch {
+            // Private-mode or blocked storage: the choice just does not persist.
+        }
+        if (skipped) {
+            // Skipping only means anything if it moves you on to recording.
+            currentTab = experimentsTab;
+        }
+    }
+
     function switchToCalibrationTab() {
         if (currentTab !== calibrationTab) {
             currentTab = calibrationTab;
@@ -54,6 +77,17 @@
 <div>
     {#if backendConnected === true}
         <div class="tabs">
+            {#if calibrationBypassed}
+                <p class="bypass-banner">
+                    Calibration skipped for this session — sensor accuracy is not
+                    being waited on.
+                    <button
+                        type="button"
+                        class="bypass-undo"
+                        onclick={() => setCalibrationBypassed(false)}>Undo</button
+                    >
+                </p>
+            {/if}
             <Tabs.Root bind:value={currentTab} class="tabs">
                 <Tabs.List>
                     <Tabs.Trigger value={brokerConnectionTab}
@@ -64,7 +98,9 @@
                             >Stream Selection</Tabs.Trigger
                         >
                         <Tabs.Trigger value={calibrationTab}
-                            >Calibration</Tabs.Trigger
+                            >Calibration{calibrationBypassed
+                                ? " (skipped)"
+                                : ""}</Tabs.Trigger
                         >
                     {/if}
                     <Tabs.Trigger value={experimentsTab}>Experiments</Tabs.Trigger>
@@ -83,7 +119,11 @@
                         />
                     </Tabs.Content>
                     <Tabs.Content value={calibrationTab}>
-                        <Calibration {stream_position_mapping} />
+                        <Calibration
+                            {stream_position_mapping}
+                            bypassed={calibrationBypassed}
+                            onBypass={setCalibrationBypassed}
+                        />
                     </Tabs.Content>
                 {/if}
             </Tabs.Root>
@@ -98,5 +138,24 @@
 <style>
     .tabs {
         margin: 1.5em;
+    }
+
+    .bypass-banner {
+        margin: 0 0 0.75em;
+        padding: 0.4em 0.7em;
+        border: 1px solid #f59e0b;
+        border-radius: 6px;
+        background: rgba(245, 158, 11, 0.12);
+        font-size: 0.85em;
+    }
+
+    .bypass-undo {
+        margin-left: 0.5em;
+        border: none;
+        background: none;
+        text-decoration: underline;
+        cursor: pointer;
+        font: inherit;
+        color: inherit;
     }
 </style>
