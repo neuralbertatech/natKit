@@ -33,6 +33,7 @@ import type {
   StreamGraphForkedMessage,
   ExperimentInstanceVerificationMessage,
   InstanceReplayMessage,
+  DeviceCommandResultMessage,
   StreamGraphValidationMessage,
   StreamGraphStatusMessage,
   StreamGraphStartedMessage,
@@ -81,6 +82,7 @@ export interface StreamViewerCallbacks {
     message: ExperimentInstanceVerificationMessage,
   ) => void;
   onInstanceReplay?: (message: InstanceReplayMessage) => void;
+  onDeviceCommandResult?: (message: DeviceCommandResultMessage) => void;
   onError?: (message: ErrorMessage) => void;
 }
 
@@ -290,6 +292,9 @@ export class StreamViewerWebSocket {
           break;
         case "instance_replay":
           this.callbacks.onInstanceReplay?.(message);
+          break;
+        case "device_command_result":
+          this.callbacks.onDeviceCommandResult?.(message);
           break;
         case "error":
           this.callbacks.onError?.(message);

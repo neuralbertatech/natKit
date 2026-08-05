@@ -29,6 +29,7 @@
         StreamGraphDeletedMessage,
         StreamGraphForkedMessage,
         ExperimentInstanceVerificationMessage,
+        DeviceCommandResultMessage,
         InstanceReplayMessage,
         StreamGraphStatusMessage,
         StreamGraphStatusSummary,
@@ -144,6 +145,13 @@
     // Latest artifact-integrity check per instance graph id (Phase 4 review).
     let instanceVerifications = $state<
         Record<string, ExperimentInstanceVerificationMessage>
+    >({});
+    // Device commands: what is in flight, and the last answer per stream. Keyed
+    // "<stream_id>:<command>" for pending, and by stream id for the result, so a
+    // node shows the most recent thing its device said.
+    let deviceCommandPending = $state<Record<string, boolean>>({});
+    let deviceCommandResults = $state<
+        Record<string, DeviceCommandResultMessage>
     >({});
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
@@ -590,6 +598,28 @@
             request_id: `graph-delete:${Date.now()}`,
             graph_id: graphId,
             force,
+        });
+        return true;
+    }
+
+    // Send a command to a device (EXECUTION_COMMAND) and wait for its answer on
+    // the log channel. The backend does the correlating, so the reply that lands
+    // here is already the device's own words.
+    function sendDeviceCommand(streamId: string, command: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        // Keyed per stream+command so two buttons on the same node can be in
+        // flight without one clearing the other's spinner.
+        deviceCommandPending = {
+            ...deviceCommandPending,
+            [`${streamId}:${command}`]: true,
+        };
+        wsManager.send({
+            action: "send_device_command",
+            request_id: `device-command:${Date.now()}`,
+            stream_id: streamId,
+            command,
         });
         return true;
     }
@@ -1100,6 +1130,16 @@
                     startStreamGraph(message.graph_id, undefined, message.replay_id);
                 }
             },
+            onDeviceCommandResult: (message: DeviceCommandResultMessage) => {
+                deviceCommandPending = {
+                    ...deviceCommandPending,
+                    [`${message.stream_id}:${message.command}`]: false,
+                };
+                deviceCommandResults = {
+                    ...deviceCommandResults,
+                    [message.stream_id]: message,
+                };
+            },
             onExperimentInstanceVerification: (
                 message: ExperimentInstanceVerificationMessage,
             ) => {
@@ -1320,6 +1360,9 @@
         {forkedGraphToOpen}
         onForkOpened={() => (forkedGraphToOpen = null)}
         {restartStreamGraphNode}
+        {sendDeviceCommand}
+        {deviceCommandPending}
+        {deviceCommandResults}
         {publishSessionBundle}
         {submitTrainJob}
         {trainJobStatus}

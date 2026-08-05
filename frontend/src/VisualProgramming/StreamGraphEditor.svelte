@@ -232,6 +232,14 @@
         // Phase 7: incremental reactivity — restart a node + downstream after a
         // debounced config edit while the graph is running.
         restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
+        // Device commands (EXECUTION_COMMAND): ask a sensor to do something and
+        // show what it says back on its log channel. Used by the calibration node.
+        sendDeviceCommand: (streamId: string, command: string) => boolean;
+        deviceCommandPending: Record<string, boolean>;
+        deviceCommandResults: Record<
+            string,
+            import("../StreamViewer/types").DeviceCommandResultMessage
+        >;
         publishSessionBundle: (payload: SessionPublishBundleInput) => boolean;
         // Phase 5: submit a train_validate job via the backend ML proxy, and
         // surface the latest job status + resulting model path for train nodes.
@@ -320,6 +328,9 @@
         stopInstanceReplay,
         activeReplay,
         restartStreamGraphNode,
+        sendDeviceCommand,
+        deviceCommandPending,
+        deviceCommandResults,
         publishSessionBundle,
         submitTrainJob,
         trainJobStatus,
@@ -4378,6 +4389,70 @@
                 </p>
             {/if}
         {/if}
+
+        <!-- Deliberately OUTSIDE the branches above: these talk to the sensor and
+             need nothing but its stream id. Nesting them under the "accuracy is
+             readable" branch made them vanish whenever the IMU selection was
+             missing -- which is exactly when you want to ask the device what it
+             thinks its calibration is. -->
+        {#if view.streamId}
+            <!-- Commands to the sensor itself, over the EXECUTION_COMMAND
+                 channel. "Save to device" matters because the hub only writes
+                 dynamic calibration to flash on a non-power-up reset, so a board
+                 that is simply switched off forgets what it learned. -->
+            {@const savePending =
+                deviceCommandPending[
+                    `${view.streamId}:calibrate.save_dcd`
+                ] === true}
+            {@const statusPending =
+                deviceCommandPending[`${view.streamId}:calibrate.status`] ===
+                true}
+            {@const result = deviceCommandResults[view.streamId]}
+            <div
+                class="calib-commands"
+                onmousedown={(e) => e.stopPropagation()}
+                role="presentation"
+            >
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={savePending}
+                    title="Persist the sensor's current calibration to its flash, so it survives a power cycle"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(
+                            view.streamId!,
+                            "calibrate.save_dcd",
+                        );
+                    }}
+                >
+                    {savePending ? "Saving…" : "Save to device"}
+                </button>
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={statusPending}
+                    title="Ask the sensor what calibration it has enabled and what accuracy it reports"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(view.streamId!, "calibrate.status");
+                    }}
+                >
+                    {statusPending ? "Reading…" : "Read config"}
+                </button>
+            </div>
+            {#if result}
+                <p
+                    class="calib-command-result"
+                    class:failed={!result.ok}
+                    title={result.command}
+                >
+                    {result.records.at(-1)?.message ??
+                        result.error ??
+                        (result.ok ? "Done." : "No answer.")}
+                </p>
+            {/if}
+        {/if}
     </div>
 {/snippet}
 
@@ -7775,6 +7850,44 @@
 
     .calib-part-value {
         color: #7f91c8;
+    }
+
+    .calib-commands {
+        display: flex;
+        gap: 0.3rem;
+        margin-top: 0.35rem;
+    }
+
+    .calib-command-btn {
+        flex: 1 1 0;
+        padding: 0.2rem 0.3rem;
+        font-size: 0.62rem;
+        color: #cfdaf7;
+        background: #2b3457;
+        border: 1px solid #3d4a75;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .calib-command-btn:hover:not(:disabled) {
+        background: #35406a;
+    }
+
+    .calib-command-btn:disabled {
+        opacity: 0.6;
+        cursor: progress;
+    }
+
+    .calib-command-result {
+        margin: 0.3rem 0 0;
+        font-size: 0.6rem;
+        line-height: 1.3;
+        color: #8fa8dd;
+        word-break: break-word;
+    }
+
+    .calib-command-result.failed {
+        color: #e2a0a0;
     }
 
     .calib-dot {

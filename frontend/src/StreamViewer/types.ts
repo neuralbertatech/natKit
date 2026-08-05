@@ -811,6 +811,10 @@ export interface InstanceRecording {
 export interface Experiment {
   experiment_id: string;
   label: string;
+  // Declared as SessionProtocol, but a StepProtocol is equally legitimate here
+  // and is what the step editor stores; `isStepProtocol` discriminates at the
+  // read sites. Widening this union cascades through ExperimentPanel's
+  // patch-a-protocol callbacks, so callers cast on the way in instead.
   protocol: SessionProtocol | null;
   participant_id: string;
   notes: string;
@@ -908,6 +912,34 @@ export interface ExperimentInstanceVerificationMessage {
     actual_sha256?: string;
     problem?: string;
   }[];
+}
+
+// One record a device emitted on its LOGGING_LOG topic while running a command.
+export interface DeviceLogRecord {
+  schema_version?: string;
+  source?: string;
+  command_id?: string;
+  command?: string;
+  level?: string;
+  ok?: boolean;
+  terminal?: boolean;
+  message?: string;
+  emitted_at_us?: number;
+}
+
+// Result of a command sent to a device on its EXECUTION_COMMAND topic. The
+// backend waits for the device's correlated answer, so `records` is what the
+// device actually said -- `timed_out` means it said nothing at all.
+export interface DeviceCommandResultMessage {
+  type: "device_command_result";
+  request_id: string;
+  stream_id: string;
+  command: string;
+  command_id: string;
+  ok: boolean;
+  timed_out: boolean;
+  error?: string;
+  records: DeviceLogRecord[];
 }
 
 export interface StreamGraphDiagnostic {
@@ -1109,7 +1141,8 @@ export type WebSocketMessage =
   | StreamGraphDeletedMessage
   | StreamGraphForkedMessage
   | ExperimentInstanceVerificationMessage
-  | InstanceReplayMessage;
+  | InstanceReplayMessage
+  | DeviceCommandResultMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
@@ -1346,6 +1379,18 @@ export interface DeleteStreamGraphAction {
   force?: boolean;
 }
 
+// Ask a device to run a command on its EXECUTION_COMMAND topic. The reply is a
+// DeviceCommandResultMessage carrying what the device said on its log channel.
+export interface SendDeviceCommandAction {
+  action: "send_device_command";
+  request_id: string;
+  stream_id: string;
+  command: string;
+  target?: "sensor" | "server";
+  args?: Record<string, unknown>;
+  timeout_ms?: number;
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -1381,4 +1426,5 @@ export type ClientAction =
   | DeleteStreamGraphAction
   | ListProfilesAction
   | SaveProfileAction
-  | DeleteProfileAction;
+  | DeleteProfileAction
+  | SendDeviceCommandAction;

@@ -17,7 +17,9 @@
     import { getWebSocketUrl } from "../StreamViewer/config";
     import type {
         Experiment,
+        SessionProtocol,
         StreamGraphDefinition,
+        StreamGraphNode,
     } from "../StreamViewer/types";
     import {
         compileStepProtocol,
@@ -200,10 +202,10 @@
         const experimentId = `${builtIn.id}-${stamp}`;
 
         const assigned = [...streamPositions.entries()];
-        const nodes: Record<string, unknown>[] = assigned.map(
+        const nodes: StreamGraphNode[] = assigned.map(
             ([streamId, position], index) => ({
                 id: `source/${streamId}`,
-                kind: "stream_source",
+                kind: "stream_source" as const,
                 label: position && position !== "N/A" ? position : String(streamId),
                 position: { x: 120, y: 80 + index * 150 },
                 stream_id: String(streamId),
@@ -213,14 +215,14 @@
         );
         nodes.push({
             id: `markers/${stamp}`,
-            kind: "markers",
+            kind: "markers" as const,
             label: "Markers",
             position: { x: 520, y: 80 },
             output_port_ids: ["markers"],
         });
 
         const graph = {
-            graph_version: 1,
+            graph_version: 1 as const,
             graph_id: boardId,
             label: `${builtIn.label} — ${new Date(stamp).toLocaleDateString()}`,
             description: builtIn.description,
@@ -247,7 +249,10 @@
                 live_graph_id: boardId,
                 created_at_us: stamp * 1000,
                 updated_at_us: stamp * 1000,
-                protocol: builtIn.protocol,
+                // A StepProtocol, which Experiment.protocol declares as
+                // SessionProtocol; the read sites discriminate with
+                // isStepProtocol. See the note on that field.
+                protocol: builtIn.protocol as unknown as SessionProtocol,
             },
             request_id: `builtin-exp:${stamp}`,
         });

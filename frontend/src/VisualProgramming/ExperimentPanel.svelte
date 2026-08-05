@@ -256,7 +256,9 @@
 
     /** What to show for an attached file: the author's filename if we have it. */
     function mediaLabel(step: ExperimentStep, slot: "image" | "audio") {
-        const named = step as Record<string, string | undefined>;
+        // Only cue/instruction steps carry media, so this reads fields that a
+        // RepeatStep does not have -- hence the trip through `unknown`.
+        const named = step as unknown as Record<string, string | undefined>;
         const name = named[slot === "image" ? "image_name" : "audio_name"];
         if (name) return name;
         const url = named[slot === "image" ? "image_url" : "audio_url"];
