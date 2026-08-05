@@ -4,6 +4,8 @@
     import Calibration from "./Calibration.svelte";
     import StreamSelector from "./StreamSelector.svelte";
     import BrokerConnection from "./BrokerConnection.svelte";
+    import ExperimentLibrary from "./ExperimentLibrary.svelte";
+    import { onDestroy } from "svelte";
     import {
         SensorPosition,
         sensor_position_to_string,
@@ -13,11 +15,11 @@
     const brokerConnectionTab = "broker-connection";
     const streamSelectionTab = "stream-selection";
     const calibrationTab = "calibration";
+    const experimentsTab = "experiments";
     let currentTab = $state(streamSelectionTab);
     let stream_position_mapping = $state(
         new SvelteMap<number, SensorPosition>(),
     );
-    console.log("parent", stream_position_mapping);
 
     function switchToCalibrationTab() {
         if (currentTab !== calibrationTab) {
@@ -27,29 +29,32 @@
 
     let backendConnected = $state(false);
     let brokerConnected = $state(false);
-    setInterval(async function () {
-        fetch(`/api/heartbeat`)
-            .then((response) => {
-                console.log("Backend connected");
-                backendConnected = true;
-            })
-            .catch((err) => {
-                console.error(`FOOOOOOOOOOOOOOOOO ${err}`);
-                backendConnected = false;
-            });
-    }, 1000);
+    // A fetch that RESOLVES only means the server answered -- a 500 counted as
+    // "connected" before, so check response.ok.
+    async function pollConnectivity() {
+        try {
+            backendConnected = (await fetch("/api/heartbeat")).ok;
+        } catch {
+            backendConnected = false;
+        }
+        try {
+            brokerConnected = (await fetch("/api/is_connected_to_broker")).ok;
+        } catch {
+            brokerConnected = false;
+        }
+    }
 
-    setInterval(async function () {
-        fetch(`/api/is_connected_to_broker`)
-            .then((response) => (brokerConnected = true))
-            .catch((err) => (brokerConnected = false));
-    }, 1000);
+    void pollConnectivity();
+    // Kept so leaving the page stops the polling; these intervals used to leak one
+    // pair per visit.
+    const connectivityTimer = setInterval(pollConnectivity, 1000);
+    onDestroy(() => clearInterval(connectivityTimer));
 </script>
 
 <div>
     {#if backendConnected === true}
         <div class="tabs">
-            <Tabs.Root bind:value={currentTab} class="w-[400px] tabs">
+            <Tabs.Root bind:value={currentTab} class="tabs">
                 <Tabs.List>
                     <Tabs.Trigger value={brokerConnectionTab}
                         >Broker Connection</Tabs.Trigger
@@ -62,9 +67,13 @@
                             >Calibration</Tabs.Trigger
                         >
                     {/if}
+                    <Tabs.Trigger value={experimentsTab}>Experiments</Tabs.Trigger>
                 </Tabs.List>
                 <Tabs.Content value={brokerConnectionTab}>
                     <BrokerConnection />
+                </Tabs.Content>
+                <Tabs.Content value={experimentsTab}>
+                    <ExperimentLibrary />
                 </Tabs.Content>
                 {#if brokerConnected === true}
                     <Tabs.Content value={streamSelectionTab}>

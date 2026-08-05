@@ -5,6 +5,7 @@
         StreamViewerWebSocket,
         type ConnectionState,
     } from "../StreamViewer/websocket";
+    import { getWebSocketUrl } from "../StreamViewer/config";
     import StreamGraphEditor from "./StreamGraphEditor.svelte";
     import type {
         StreamInfo,
@@ -57,12 +58,6 @@
 
     const STATUS_REFRESH_INTERVAL_MS = 500;
     const STREAM_GRAPH_REFRESH_INTERVAL_MS = 1000;
-
-    function getWebSocketUrl(): string {
-        const wsProtocol =
-            window.location.protocol === "https:" ? "wss:" : "ws:";
-        return `${wsProtocol}//${window.location.host}/ws/stream_viewer`;
-    }
 
     let connectionState = $state<ConnectionState>("disconnected");
     let lastError = $state<string | null>(null);
@@ -131,6 +126,17 @@
     let recordingInstanceGraphId = $state<string | null>(null);
     // A freshly created fork the editor should open (cleared once it has).
     let forkedGraphToOpen = $state<string | null>(null);
+    // Deep link: #/VisualProgramming?board=<graph_id> opens straight onto that
+    // board. The IMU Experiment page's "Record" uses this to hand an experiment
+    // over to the editor, which owns the recording engine. Reuses the editor's
+    // existing "open this graph" channel rather than adding a second one.
+    function boardFromLocation(): string | null {
+        const hash = window.location.hash;
+        const query = hash.slice(hash.indexOf("?") + 1);
+        if (!hash.includes("?")) return null;
+        const board = new URLSearchParams(query).get("board");
+        return board && board.trim() ? board.trim() : null;
+    }
     // The replay session in flight, if any (Phase 5). Held here because
     // materialization-style progress arrives as BROADCASTS from the replay thread,
     // not as replies.
@@ -157,6 +163,7 @@
     let lastStreamGraphRefreshAtMs = $state(0);
     let nowMs = $state(Date.now());
 
+    let appliedDeepLink = false;
     let wsManager: StreamViewerWebSocket | null = null;
     let statusTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -965,6 +972,15 @@
                 handleMlControlPlaneMessage(message);
             },
             onStreamGraphList: (message: StreamGraphListMessage) => {
+                // Honour ?board= on the first listing only; after that the user's
+                // selection is theirs.
+                if (!appliedDeepLink) {
+                    const wanted = boardFromLocation();
+                    if (wanted && (message.graphs ?? []).some((g) => g.graph_id === wanted)) {
+                        forkedGraphToOpen = wanted;
+                    }
+                    appliedDeepLink = true;
+                }
                 streamGraphs = message.graphs;
                 streamGraphStatuses = message.statuses;
             },

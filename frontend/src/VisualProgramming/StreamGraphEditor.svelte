@@ -3947,6 +3947,7 @@
     // nothing.
     let sensorAccuracies = $state<Record<string, unknown>>({});
     let accuracyTimer: ReturnType<typeof setInterval> | null = null;
+    let accuracySelectionMissing = $state(false);
 
     const hasCalibrationNode = $derived(
         draftGraph.nodes.some(
@@ -3962,7 +3963,14 @@
             const response = await fetch("/api/get_accuracies");
             if (!response.ok) return;
             const json = await response.json();
+            // The endpoint returns null until /api/set_streams has been called
+            // (the IMU Experiment page's Stream Selection step). That selection
+            // lives in backend memory, so it is lost on every backend restart --
+            // worth telling the operator rather than showing a bare "Unknown".
             sensorAccuracies = json?.accuracies ?? {};
+            accuracySelectionMissing =
+                json?.accuracies == null ||
+                Object.keys(json.accuracies).length === 0;
         } catch (error) {
             // A failed poll must not disturb the editor; the readout just stays
             // on its last value and reports Unknown for streams it never saw.
@@ -4001,6 +4009,11 @@
                 : null;
         return {
             streamId: streamId ? String(streamId) : null,
+            // Distinguish "the backend has no IMU selection" from "this stream is
+            // not one of the selected ones" -- the fixes differ.
+            selectionMissing: accuracySelectionMissing,
+            streamNotSelected:
+                !accuracySelectionMissing && streamId != null && raw === undefined,
             overall,
             overallLabel: calibration_status_to_string(overall),
             overallColor: calibration_status_to_color(overall),
@@ -4330,6 +4343,17 @@
     <div class="calib-panel">
         {#if !view.streamId}
             <p class="inline-note">Start the graph to read calibration.</p>
+        {:else if view.selectionMissing}
+            <p class="inline-note">
+                No IMU streams selected. Pick them under IMU Experiment → Stream
+                Selection (the choice lives in backend memory, so redo it after a
+                backend restart).
+            </p>
+        {:else if view.streamNotSelected}
+            <p class="inline-note">
+                This stream is not in the IMU selection — add it under IMU
+                Experiment → Stream Selection.
+            </p>
         {:else}
             <div class="calib-headline">
                 <span class={`calib-dot ${view.overallColor}`}></span>
