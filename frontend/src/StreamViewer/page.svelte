@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
     import { StreamViewerWebSocket, type ConnectionState } from "./websocket";
+    import { getWebSocketUrl } from "./config";
     import ChannelFrameViewer from "./ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "./FeatureVectorViewer.svelte";
     import EmgExperiment from "./EmgExperiment.svelte";
@@ -47,12 +48,6 @@
         EmgStreamOption,
         SessionPublishBundleInput,
     } from "./experiment";
-
-    function getWebSocketUrl(): string {
-        const wsProtocol =
-            window.location.protocol === "https:" ? "wss:" : "ws:";
-        return `${wsProtocol}//${window.location.host}/ws/stream_viewer`;
-    }
 
     function requestEmgTransformList() {
         lastEmgTransformRefreshAtMs = Date.now();

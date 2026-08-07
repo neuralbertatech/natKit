@@ -24,6 +24,7 @@
         StreamGraphDefinition,
     } from "../StreamViewer/types";
     import type { EmgCueEvent } from "../StreamViewer/experiment";
+    import { adlStepProtocol, ADL_PROTOCOL_ID } from "../AdlExperiment/tasks";
     import {
         compileStepProtocol,
         isStepProtocol,
@@ -199,6 +200,108 @@
                 blankStep(kind),
             ]),
         );
+    }
+
+    // --- Media uploads -----------------------------------------------------
+    // The author picks a file; the backend stores it and returns an opaque id.
+    // Only that id's URL is kept in the protocol -- no filesystem paths are shown
+    // or typed, because where it lives is not the author's problem.
+    let uploading = $state<Record<string, "image" | "audio" | null>>({});
+    let uploadError = $state<string | null>(null);
+
+    async function uploadMedia(
+        parentId: string | null,
+        step: ExperimentStep,
+        slot: "image" | "audio",
+        file: File,
+    ) {
+        uploadError = null;
+        uploading = { ...uploading, [step.id]: slot };
+        try {
+            const form = new FormData();
+            form.append("file", file);
+            const response = await fetch("/api/media", {
+                method: "POST",
+                body: form,
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload?.message ?? `HTTP ${response.status}`);
+            }
+            patchStep(parentId, step.id, {
+                [slot === "image" ? "image_url" : "audio_url"]: payload.url,
+                // Kept only so the editor can show the author what they picked;
+                // the runner never needs it.
+                [slot === "image" ? "image_name" : "audio_name"]:
+                    payload.original_name || file.name,
+            });
+        } catch (error) {
+            uploadError =
+                error instanceof Error ? error.message : "Upload failed.";
+        } finally {
+            uploading = { ...uploading, [step.id]: null };
+        }
+    }
+
+    function clearMedia(
+        parentId: string | null,
+        step: ExperimentStep,
+        slot: "image" | "audio",
+    ) {
+        patchStep(parentId, step.id, {
+            [slot === "image" ? "image_url" : "audio_url"]: undefined,
+            [slot === "image" ? "image_name" : "audio_name"]: undefined,
+        });
+    }
+
+    /** What to show for an attached file: the author's filename if we have it. */
+    function mediaLabel(step: ExperimentStep, slot: "image" | "audio") {
+        // Only cue/instruction steps carry media, so this reads fields that a
+        // RepeatStep does not have -- hence the trip through `unknown`.
+        const named = step as unknown as Record<string, string | undefined>;
+        const name = named[slot === "image" ? "image_name" : "audio_name"];
+        if (name) return name;
+        const url = named[slot === "image" ? "image_url" : "audio_url"];
+        return url ? "attached" : "";
+    }
+
+    // --- Built-in protocols ------------------------------------------------
+    // A port of the experiments that used to be hard-coded elsewhere, so they can
+    // be run, recorded and reviewed through the same machinery as a user-authored
+    // one -- and edited afterwards, which a fixed program could not be. The
+    // original hard-coded pages are left untouched; this is the path across.
+    const builtInProtocols = $derived([
+        (() => {
+            const protocol = adlStepProtocol();
+            const schedule = compileStepProtocol(protocol);
+            return {
+                id: ADL_PROTOCOL_ID,
+                label: "ADL tasks",
+                description:
+                    "Activities of daily living: mime each everyday task in " +
+                    "turn, with a get-ready prompt and a rest between. Ported " +
+                    "from the hard-coded ADL Experiment page.",
+                protocol,
+                cues: schedule.filter((c) => c.phase === "hold").length,
+                durationS: Math.round(stepProtocolDurationMs(schedule) / 1000),
+            };
+        })(),
+    ]);
+
+    function applyBuiltInProtocol(builtIn: (typeof builtInProtocols)[number]) {
+        // Replacing a protocol throws away whatever was authored, so ask -- but
+        // only when there is something to lose.
+        const existing = stepProtocol?.steps?.length ?? 0;
+        if (
+            existing > 0 &&
+            !window.confirm(
+                `Replace this experiment's ${existing} step(s) with the ` +
+                    `${builtIn.label} protocol?`,
+            )
+        ) {
+            return;
+        }
+        onPatchProtocol(builtIn.protocol as unknown as Partial<SessionProtocol>);
     }
 
     // Bring a legacy fixed protocol into the step editor without losing it: the
@@ -647,37 +750,68 @@
                 {#if step.kind !== "repeat"}
                     <!-- Media on its own line: the head row is already dense, and
                          a URL needs room to be readable. -->
+                    <!-- Upload, not a path. The author picks a file; the
+                         backend stores it and hands back an opaque id. -->
                     <div class="step-media">
-                        <label class="step-inline" title="Image shown for this step">
-                            <ImageIcon size={11} />
-                            <input
-                                class="step-media-url"
-                                placeholder="/media/fist.png"
-                                disabled={readOnly}
-                                value={step.image_url ?? ""}
-                                oninput={(event) =>
-                                    patchStep(parentId, step.id, {
-                                        image_url:
-                                            (event.currentTarget as HTMLInputElement)
-                                                .value || undefined,
-                                    })}
-                            />
-                        </label>
-                        <label class="step-inline" title="Sound played once when this step begins">
-                            <Volume2 size={11} />
-                            <input
-                                class="step-media-url"
-                                placeholder="/media/beep.wav"
-                                disabled={readOnly}
-                                value={step.audio_url ?? ""}
-                                oninput={(event) =>
-                                    patchStep(parentId, step.id, {
-                                        audio_url:
-                                            (event.currentTarget as HTMLInputElement)
-                                                .value || undefined,
-                                    })}
-                            />
-                        </label>
+                        {#each [["image", "Image", "image/*"], ["audio", "Sound", "audio/*"]] as [slot, label, accept]}
+                            {@const attached = mediaLabel(
+                                step,
+                                slot as "image" | "audio",
+                            )}
+                            <div class="media-slot">
+                                {#if slot === "image"}
+                                    <ImageIcon size={11} />
+                                {:else}
+                                    <Volume2 size={11} />
+                                {/if}
+                                {#if attached}
+                                    <span class="media-name" title={attached}
+                                        >{attached}</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="icon-btn"
+                                        disabled={readOnly}
+                                        title={`Remove this ${label.toLowerCase()}`}
+                                        onclick={() =>
+                                            clearMedia(
+                                                parentId,
+                                                step,
+                                                slot as "image" | "audio",
+                                            )}
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                {:else}
+                                    <label class="media-pick">
+                                        {uploading[step.id] === slot
+                                            ? "Uploading…"
+                                            : `Add ${label.toLowerCase()}`}
+                                        <input
+                                            type="file"
+                                            accept={accept}
+                                            disabled={readOnly ||
+                                                uploading[step.id] != null}
+                                            onchange={(event) => {
+                                                const input =
+                                                    event.currentTarget as HTMLInputElement;
+                                                const file = input.files?.[0];
+                                                if (file) {
+                                                    void uploadMedia(
+                                                        parentId,
+                                                        step,
+                                                        slot as "image" | "audio",
+                                                        file,
+                                                    );
+                                                }
+                                                // Let the same file be re-picked.
+                                                input.value = "";
+                                            }}
+                                        />
+                                    </label>
+                                {/if}
+                            </div>
+                        {/each}
                     </div>
                 {/if}
 
@@ -717,6 +851,9 @@
                     <p class="hint-text">No steps yet — add one below.</p>
                 {/if}
             </div>
+            {#if uploadError}
+                <p class="hint-text upload-error">{uploadError}</p>
+            {/if}
             <div class="step-add">
                 {#each ["instruction", "cue", "rest", "wait", "repeat"] as kind}
                     <button
@@ -762,6 +899,36 @@
             </button>
         {/if}
 
+        {#if protocol}
+            <p class="eyebrow section-label">Built-in protocols</p>
+            <p class="hint-text">
+                Ported from the hard-coded experiment pages. Loading one replaces
+                this experiment's protocol, and you can edit it afterwards like any
+                other.
+            </p>
+            {#each builtInProtocols as builtIn}
+                <div class="builtin-protocol">
+                    <div class="builtin-protocol-main">
+                        <strong>{builtIn.label}</strong>
+                        <span class="hint-text"
+                            >{builtIn.cues} tasks · ~{Math.round(
+                                builtIn.durationS / 60,
+                            )} min</span
+                        >
+                    </div>
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        disabled={readOnly}
+                        title={builtIn.description}
+                        onclick={() => applyBuiltInProtocol(builtIn)}
+                    >
+                        Load
+                    </button>
+                </div>
+            {/each}
+        {/if}
+
         {#if summary && !stepProtocol}
             <div class="summary-row">
                 <span>Schedule</span>
@@ -780,7 +947,10 @@
             {/if}
         </div>
 
-        <div class="panel-action-row">
+        <!-- Sticky: a long protocol (the ADL one is 30 step rows) otherwise pushes
+             Record thousands of pixels below the fold, which is exactly how it
+             looked missing. -->
+        <div class="panel-action-row record-footer">
             {#if recording}
                 <button type="button" class="action-btn secondary" onclick={onStop}>
                     <Square size={15} />
@@ -1003,6 +1173,20 @@
         padding: 0.5rem 0.6rem;
     }
 
+    .record-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        margin: 0 -0.85rem -0.85rem;
+        padding: 0.55rem 0.85rem;
+        background: linear-gradient(
+            to top,
+            rgba(11, 16, 32, 0.97) 65%,
+            rgba(11, 16, 32, 0)
+        );
+        border-top: 1px solid #24304f;
+    }
+
     .panel-action-row {
         display: flex;
         gap: 0.4rem;
@@ -1222,9 +1406,38 @@
         padding-left: 0.1rem;
     }
 
-    .step-media-url {
-        width: 9rem;
+    .media-slot {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
         font-size: 0.64rem;
+        color: #7f91c8;
+        border: 1px solid #24304f;
+        border-radius: 999px;
+        padding: 0.1rem 0.4rem;
+    }
+
+    .media-name {
+        max-width: 8rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #b9c8f0;
+    }
+
+    /* A styled label over a hidden file input: the native control cannot be
+       restyled and its "no file chosen" text is noise here. */
+    .media-pick {
+        cursor: pointer;
+        text-decoration: underline dotted;
+    }
+
+    .media-pick input[type="file"] {
+        display: none;
+    }
+
+    .upload-error {
+        color: #f87171;
     }
 
     .step-add {
@@ -1278,6 +1491,23 @@
         border-color: #1d4ed8;
         color: #eff6ff;
         font-weight: 700;
+    }
+
+    .builtin-protocol {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        border: 1px solid #24304f;
+        border-radius: 6px;
+        padding: 0.35rem 0.45rem;
+        margin-bottom: 0.3rem;
+    }
+
+    .builtin-protocol-main {
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
     }
 
     .convert-steps {

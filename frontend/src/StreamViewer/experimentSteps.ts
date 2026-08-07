@@ -46,6 +46,11 @@ interface StepCommon {
     image_url?: string;
     /** Played once when the step begins. */
     audio_url?: string;
+    // The filename the author uploaded, kept only so the editor can show them
+    // what they picked. Never used at run time, and never compiled into the
+    // timeline -- the opaque url is the only thing that matters there.
+    image_name?: string;
+    audio_name?: string;
 }
 
 export interface InstructionStep extends StepCommon {

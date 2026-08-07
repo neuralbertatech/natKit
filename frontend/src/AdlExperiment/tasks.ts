@@ -106,3 +106,66 @@ export function formatDuration(seconds: number): string {
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
+
+// --- The built-in ADL experiment as an authorable step protocol ------------
+// This task list was hard-coded into the ADL/IMU experiment flow. Expressing it
+// as a step protocol makes it one option among the user's own experiments: it can
+// be selected, recorded and reviewed like any other, and edited afterwards
+// instead of being a fixed program.
+//
+// The timing is a faithful translation of what the hard-coded runner did:
+// a COUNTDOWN_SECONDS "get ready" before each task, the task itself for
+// duration_seconds, and REST_PERIOD_SECONDS between tasks (not after the last).
+import {
+    newStepId,
+    type ExperimentStep,
+    type StepProtocol,
+} from "../StreamViewer/experimentSteps";
+
+export const ADL_PROTOCOL_ID = "adl-tasks-v1";
+
+export function adlStepProtocol(tasks: AdlTask[] = ADL_TASKS): StepProtocol {
+    const steps: ExperimentStep[] = [
+        {
+            id: newStepId("adl-intro"),
+            kind: "instruction",
+            text:
+                "You will be asked to mime a series of everyday activities. " +
+                "Follow each prompt; rest in between.",
+            duration_s: 5,
+        },
+    ];
+
+    tasks.forEach((task, index) => {
+        steps.push({
+            id: newStepId("adl-ready"),
+            kind: "instruction",
+            text: `Get ready: ${task.name}`,
+            duration_s: COUNTDOWN_SECONDS,
+        });
+        steps.push({
+            id: newStepId("adl-cue"),
+            kind: "cue",
+            // The task id is the class label a classifier would learn.
+            label: task.id,
+            text: task.instruction,
+            duration_s: task.duration_seconds,
+        });
+        if (index < tasks.length - 1) {
+            steps.push({
+                id: newStepId("adl-rest"),
+                kind: "rest",
+                text: "Rest",
+                duration_s: REST_PERIOD_SECONDS,
+            });
+        }
+    });
+
+    return {
+        protocol_version: 1,
+        protocol_id: ADL_PROTOCOL_ID,
+        label: "ADL tasks",
+        rest_class: "rest",
+        steps,
+    };
+}

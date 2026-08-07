@@ -158,3 +158,19 @@ ENVIRONMENT.html
 # artifacts. Large and machine-local — never committed (a 132 MB model blob here
 # is what first blocked pushing to GitHub's 100 MB limit).
 natVR/captures/
+
+# Container bind-mount state. The DIRECTORIES are tracked (docker-compose.dev.yml
+# bind-mounts ./uploads/ml-control-plane and ./uploads/ml-worker-a into the
+# containers, so they must exist in a fresh clone or the container creates them
+# root-owned) but their runtime contents never are. The control plane's live
+# scheduler.sqlite3 + -wal + -shm were committed by a catch-all `git add -A` in
+# 13c3ccd; besides dirtying git status permanently, a live sqlite in this tree is a
+# corruption risk because ~/code is Syncthing-synced -- which already happened once
+# (see the corrupt-backup file from 2026-08-04).
+#
+# The `!uploads/**/` line is load-bearing: git will not descend into an excluded
+# directory, so without re-including directories the .gitkeep negation below can
+# never match.
+uploads/**
+!uploads/**/
+!uploads/**/.gitkeep

@@ -88,6 +88,14 @@
         resolveScheduleWaits,
         scheduleForProtocol,
     } from "../StreamViewer/experimentSteps";
+    import {
+        accuracy_int_to_calibration_status,
+        calibration_status_for_accuracies,
+        calibration_status_to_color,
+        calibration_status_to_string,
+        SENSOR_POSITION_NAMES,
+        type SensorAccuracies,
+    } from "../ImuExperiment/util";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
     import ExperimentPanel from "./ExperimentPanel.svelte";
@@ -224,6 +232,14 @@
         // Phase 7: incremental reactivity — restart a node + downstream after a
         // debounced config edit while the graph is running.
         restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
+        // Device commands (EXECUTION_COMMAND): ask a sensor to do something and
+        // show what it says back on its log channel. Used by the calibration node.
+        sendDeviceCommand: (streamId: string, command: string) => boolean;
+        deviceCommandPending: Record<string, boolean>;
+        deviceCommandResults: Record<
+            string,
+            import("../StreamViewer/types").DeviceCommandResultMessage
+        >;
         publishSessionBundle: (payload: SessionPublishBundleInput) => boolean;
         // Phase 5: submit a train_validate job via the backend ML proxy, and
         // surface the latest job status + resulting model path for train nodes.
@@ -312,6 +328,9 @@
         stopInstanceReplay,
         activeReplay,
         restartStreamGraphNode,
+        sendDeviceCommand,
+        deviceCommandPending,
+        deviceCommandResults,
         publishSessionBundle,
         submitTrainJob,
         trainJobStatus,
@@ -1557,16 +1576,20 @@
         position: StreamGraphPosition = contextMenu.open
             ? contextMenu.graphPosition
             : getDefaultInsertionPosition(),
+        displayMode?: "imu_calibration",
     ) {
         const nextGraph = cloneGraph(draftGraph);
         const nodeId = `viewer/${Date.now()}`;
         nextGraph.nodes.push({
             id: nodeId,
             kind: "viewer",
-            label: "Viewer",
+            label: displayMode === "imu_calibration" ? "IMU Calibration" : "Viewer",
             position: { ...position },
             input_port_ids: ["input"],
-            inline_graph: false,
+            // A calibration readout is the node's whole point, so it is on by
+            // default rather than hidden behind the inline-graph toggle.
+            inline_graph: displayMode === "imu_calibration",
+            ...(displayMode ? { display_mode: displayMode } : {}),
         });
         selectedNodeId = nodeId;
         selectedNodeIds = new Set([nodeId]);
@@ -1628,12 +1651,25 @@
     // catalog so a new structural node type appears without editing this file.
     // Stream sources are enumerated from availableStreams instead (one per
     // live stream), and transforms have their own catalog-driven group.
-    const utilityCatalog = $derived(
-        nodeCatalog.filter(
+    // A frontend-only palette entry (the same trick composites use). It creates a
+    // viewer whose display_mode is imu_calibration -- no new backend node kind, so
+    // nothing about graph validation or startup changes.
+    const IMU_CALIBRATION_ENTRY: NodeCatalogEntry = {
+        kind: "viewer",
+        node_type: "imu_calibration",
+        label: "IMU Calibration",
+        description:
+            "Shows whether the upstream IMU is calibrated while worn: " +
+            "accelerometer, gyroscope and rotation accuracy, worst-case overall.",
+    } as NodeCatalogEntry;
+
+    const utilityCatalog = $derived([
+        ...nodeCatalog.filter(
             (entry) =>
                 entry.kind !== "stream_source" && entry.kind !== "transform",
         ),
-    );
+        IMU_CALIBRATION_ENTRY,
+    ]);
 
     // Dispatch a catalog entry to the matching node-creation path. Structural
     // kinds keep their bespoke creation (ports, stream binding); this is the
@@ -1642,7 +1678,9 @@
         entry: NodeCatalogEntry,
         position?: StreamGraphPosition,
     ) {
-        if (entry.kind === "viewer") {
+        if (entry.node_type === "imu_calibration") {
+            addViewerNode(position, "imu_calibration");
+        } else if (entry.kind === "viewer") {
             addViewerNode(position);
         } else if (entry.kind === "sink") {
             addSinkNode(position);
@@ -3913,6 +3951,107 @@
         ensureTimelineClock();
     });
 
+    // --- IMU calibration readout --------------------------------------------
+    // The IMU Experiment tab polls /api/get_accuracies once a second and colours a
+    // body map; a calibration node shows the same thing for one upstream stream.
+    // Poll only while such a node is on the board, so a graph without one costs
+    // nothing.
+    let sensorAccuracies = $state<Record<string, unknown>>({});
+    let accuracyTimer: ReturnType<typeof setInterval> | null = null;
+    let accuracySelectionMissing = $state(false);
+
+    const hasCalibrationNode = $derived(
+        draftGraph.nodes.some(
+            (node) =>
+                node.kind === "viewer" &&
+                (node as { display_mode?: string }).display_mode ===
+                    "imu_calibration",
+        ),
+    );
+
+    async function pollSensorAccuracies() {
+        try {
+            const response = await fetch("/api/get_accuracies");
+            if (!response.ok) return;
+            const json = await response.json();
+            // The endpoint returns null until /api/set_streams has been called
+            // (the IMU Experiment page's Stream Selection step). That selection
+            // lives in backend memory, so it is lost on every backend restart --
+            // worth telling the operator rather than showing a bare "Unknown".
+            sensorAccuracies = json?.accuracies ?? {};
+            accuracySelectionMissing =
+                json?.accuracies == null ||
+                Object.keys(json.accuracies).length === 0;
+        } catch (error) {
+            // A failed poll must not disturb the editor; the readout just stays
+            // on its last value and reports Unknown for streams it never saw.
+            console.warn("Could not read sensor accuracies:", error);
+        }
+    }
+
+    $effect(() => {
+        if (!hasCalibrationNode) {
+            if (accuracyTimer) {
+                clearInterval(accuracyTimer);
+                accuracyTimer = null;
+            }
+            return;
+        }
+        if (accuracyTimer) return;
+        void pollSensorAccuracies();
+        accuracyTimer = setInterval(pollSensorAccuracies, 1000);
+        return () => {
+            if (accuracyTimer) {
+                clearInterval(accuracyTimer);
+                accuracyTimer = null;
+            }
+        };
+    });
+
+    // Resolve the calibration state for a calibration node: its upstream stream's
+    // per-sensor accuracies, plus the worst-case overall.
+    function calibrationViewFor(node: EditorGraphNode) {
+        const streamId = nodeRuntimeStatus(node.id)?.output_stream_id;
+        const raw = streamId ? sensorAccuracies[String(streamId)] : undefined;
+        const overall = calibration_status_for_accuracies(raw);
+        const parts =
+            typeof raw === "object" && raw !== null && "accelerometer" in raw
+                ? (raw as SensorAccuracies)
+                : null;
+        return {
+            streamId: streamId ? String(streamId) : null,
+            // Distinguish "the backend has no IMU selection" from "this stream is
+            // not one of the selected ones" -- the fixes differ.
+            selectionMissing: accuracySelectionMissing,
+            streamNotSelected:
+                !accuracySelectionMissing && streamId != null && raw === undefined,
+            overall,
+            overallLabel: calibration_status_to_string(overall),
+            overallColor: calibration_status_to_color(overall),
+            position:
+                (node as { sensor_position?: string }).sensor_position || "N/A",
+            parts: parts
+                ? (
+                      [
+                          ["Accelerometer", parts.accelerometer],
+                          ["Gyroscope", parts.gyroscope],
+                          ["Rotation", parts.rotation],
+                      ] as const
+                  ).map(([label, value]) => {
+                      const status = accuracy_int_to_calibration_status(
+                          Number(value ?? 0),
+                      );
+                      return {
+                          label,
+                          status,
+                          text: calibration_status_to_string(status),
+                          color: calibration_status_to_color(status),
+                      };
+                  })
+                : [],
+        };
+    }
+
     // Compact time readout: wall-clock time and time since the run started.
     //
     // Which "start" that is depends on what the board is doing, and the three
@@ -4195,12 +4334,126 @@
 {/snippet}
 
 {#snippet inlineViewerChart(node: EditorGraphNode)}
-    {@const streamId = nodeRuntimeStatus(node.id)?.output_stream_id}
-    {@render streamRenderer(
-        streamId ? String(streamId) : null,
-        true,
-        viewerShowsMarkers(node),
-    )}
+    {#if (node as { display_mode?: string }).display_mode === "imu_calibration"}
+        {@render calibrationReadout(node)}
+    {:else}
+        {@const streamId = nodeRuntimeStatus(node.id)?.output_stream_id}
+        {@render streamRenderer(
+            streamId ? String(streamId) : null,
+            true,
+            viewerShowsMarkers(node),
+        )}
+    {/if}
+{/snippet}
+
+<!-- Calibration quality of the upstream IMU while it is worn: the worst-case
+     status headline, then each sub-sensor. Colour language matches the IMU
+     Experiment tab so the two surfaces cannot disagree. -->
+{#snippet calibrationReadout(node: EditorGraphNode)}
+    {@const view = calibrationViewFor(node)}
+    <div class="calib-panel">
+        {#if !view.streamId}
+            <p class="inline-note">Start the graph to read calibration.</p>
+        {:else if view.selectionMissing}
+            <p class="inline-note">
+                No IMU streams selected. Pick them under IMU Experiment → Stream
+                Selection (the choice lives in backend memory, so redo it after a
+                backend restart).
+            </p>
+        {:else if view.streamNotSelected}
+            <p class="inline-note">
+                This stream is not in the IMU selection — add it under IMU
+                Experiment → Stream Selection.
+            </p>
+        {:else}
+            <div class="calib-headline">
+                <span class={`calib-dot ${view.overallColor}`}></span>
+                <strong>{view.overallLabel}</strong>
+                {#if view.position !== "N/A"}
+                    <span class="calib-position">{view.position}</span>
+                {/if}
+            </div>
+            {#if view.parts.length > 0}
+                <div class="calib-parts">
+                    {#each view.parts as part}
+                        <div class="calib-part">
+                            <span class={`calib-dot ${part.color}`}></span>
+                            <span class="calib-part-label">{part.label}</span>
+                            <span class="calib-part-value">{part.text}</span>
+                        </div>
+                    {/each}
+                </div>
+            {:else}
+                <p class="inline-note">
+                    No accuracy reported for this stream yet.
+                </p>
+            {/if}
+        {/if}
+
+        <!-- Deliberately OUTSIDE the branches above: these talk to the sensor and
+             need nothing but its stream id. Nesting them under the "accuracy is
+             readable" branch made them vanish whenever the IMU selection was
+             missing -- which is exactly when you want to ask the device what it
+             thinks its calibration is. -->
+        {#if view.streamId}
+            <!-- Commands to the sensor itself, over the EXECUTION_COMMAND
+                 channel. "Save to device" matters because the hub only writes
+                 dynamic calibration to flash on a non-power-up reset, so a board
+                 that is simply switched off forgets what it learned. -->
+            {@const savePending =
+                deviceCommandPending[
+                    `${view.streamId}:calibrate.save_dcd`
+                ] === true}
+            {@const statusPending =
+                deviceCommandPending[`${view.streamId}:calibrate.status`] ===
+                true}
+            {@const result = deviceCommandResults[view.streamId]}
+            <div
+                class="calib-commands"
+                onmousedown={(e) => e.stopPropagation()}
+                role="presentation"
+            >
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={savePending}
+                    title="Persist the sensor's current calibration to its flash, so it survives a power cycle"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(
+                            view.streamId!,
+                            "calibrate.save_dcd",
+                        );
+                    }}
+                >
+                    {savePending ? "Saving…" : "Save to device"}
+                </button>
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={statusPending}
+                    title="Ask the sensor what calibration it has enabled and what accuracy it reports"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(view.streamId!, "calibrate.status");
+                    }}
+                >
+                    {statusPending ? "Reading…" : "Read config"}
+                </button>
+            </div>
+            {#if result}
+                <p
+                    class="calib-command-result"
+                    class:failed={!result.ok}
+                    title={result.command}
+                >
+                    {result.records.at(-1)?.message ??
+                        result.error ??
+                        (result.ok ? "Done." : "No answer.")}
+                </p>
+            {/if}
+        {/if}
+    </div>
 {/snippet}
 
 {#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
@@ -6284,6 +6537,30 @@
                                         Open Live Stream
                                     </button>
                                 {/if}
+                                {#if (selectedNode as { display_mode?: string }).display_mode === "imu_calibration"}
+                                    <!-- Which body position this board is worn at,
+                                         so the readout is labelled the way the
+                                         person is actually set up. -->
+                                    <label>
+                                        <span>Worn at</span>
+                                        <select
+                                            disabled={boardIsImmutable}
+                                            value={(selectedNode as { sensor_position?: string })
+                                                .sensor_position ?? "N/A"}
+                                            onchange={(event) =>
+                                                updateSelectedNode((node) => ({
+                                                    ...node,
+                                                    sensor_position: (
+                                                        event.currentTarget as HTMLSelectElement
+                                                    ).value,
+                                                }))}
+                                        >
+                                            {#each SENSOR_POSITION_NAMES as name}
+                                                <option value={name}>{name}</option>
+                                            {/each}
+                                        </select>
+                                    </label>
+                                {/if}
                             </div>
                         {/if}
 
@@ -7529,6 +7806,116 @@
     .diagnostic {
         display: flex;
         align-items: center;
+    }
+
+    /* IMU calibration readout on a viewer node. */
+    .calib-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        padding: 0.15rem 0.1rem;
+        font-size: 0.7rem;
+    }
+
+    .calib-headline {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        color: #e4ecff;
+    }
+
+    .calib-position {
+        margin-left: auto;
+        font-size: 0.64rem;
+        color: #7f91c8;
+    }
+
+    .calib-parts {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
+
+    .calib-part {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.64rem;
+        color: #b9c8f0;
+    }
+
+    .calib-part-label {
+        flex: 1 1 auto;
+    }
+
+    .calib-part-value {
+        color: #7f91c8;
+    }
+
+    .calib-commands {
+        display: flex;
+        gap: 0.3rem;
+        margin-top: 0.35rem;
+    }
+
+    .calib-command-btn {
+        flex: 1 1 0;
+        padding: 0.2rem 0.3rem;
+        font-size: 0.62rem;
+        color: #cfdaf7;
+        background: #2b3457;
+        border: 1px solid #3d4a75;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .calib-command-btn:hover:not(:disabled) {
+        background: #35406a;
+    }
+
+    .calib-command-btn:disabled {
+        opacity: 0.6;
+        cursor: progress;
+    }
+
+    .calib-command-result {
+        margin: 0.3rem 0 0;
+        font-size: 0.6rem;
+        line-height: 1.3;
+        color: #8fa8dd;
+        word-break: break-word;
+    }
+
+    .calib-command-result.failed {
+        color: #e2a0a0;
+    }
+
+    .calib-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+        background: #3a4568;
+    }
+
+    .calib-dot.faded {
+        background: #2b3552;
+    }
+
+    .calib-dot.gray {
+        background: #6b7280;
+    }
+
+    .calib-dot.red {
+        background: #ef4444;
+    }
+
+    .calib-dot.yellow {
+        background: #eab308;
+    }
+
+    .calib-dot.green {
+        background: #22c55e;
     }
 
     /* Compact time readout, bottom-centre of the canvas. */

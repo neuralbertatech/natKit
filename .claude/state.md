@@ -2,9 +2,109 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-05
 
-## Active Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
+## Active Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
+
+Bidirectional server<->sensor commands, with command output on the log channel.
+The device subscribes to its own `Command-<id>-Json-NatExecutionCommandV1` topic
+and answers on `Log-<id>-Json-NatLogV1`, correlated by `command_id`.
+
+**Slice 1 — DONE, verified end-to-end on the board** (root `0e5538e`):
+- `libnatkit` `4998c19`: bridge outbound prefix typo fixed,
+  `natKit/reciving/` -> `natKit/receiving/`. Requires the bridge image to be
+  rebuilt (`podman build -t natnl/natkit-bridge:latest -f
+  Dockerfile_libnatkit_bridge .` in `libnatkit/`, then retag to
+  `docker.io/natnl/...` — compose resolves the docker.io name, not `localhost/`).
+- `natKit-IMU` `6e32315`: `embeded/include/CommandChannel.hpp` (two FreeRTOS
+  queues + a minimal JSON field reader), command/log topics on `KafkaTopic`,
+  `ping` / `calibrate.save_dcd` / `calibrate.status`, and a fix for the device
+  name (`String{UNIQUE_ID}` narrowed a uint64 to one byte).
+- No C++ schema classes were needed: the bridge only decodes for *logging*, so
+  forwarding is schema-agnostic and the schema name in the topic is the contract.
+
+**Slice 2 — DONE** (libnatkit `4b8b9b8`, root `be5b672`): a `send_device_command`
+WS action that subscribes to the log topic, produces the command, then collects
+records until one is terminal; plus "Save to device" / "Read config" buttons on
+the VP IMU-calibration node. 17/17 backend checks and 11/11 browser checks
+against the live board. Gotcha: on a device's FIRST command the Command topic does
+not exist, and the bridge only forwards topics it has a messenger for (1 s
+discovery poll) — so the action creates the topic and waits a poll cycle before
+producing, or that first command is silently dropped. The buttons deliberately do
+NOT sit under the accuracy-selection branches; they need only a stream id.
+
+**Slice 3 — NEXT:** a guided calibration sequence (the 6-side routine driven from
+the server) with progress on the log channel.
+
+**Verification recipe** (a Kafka/MQTT-level alternative to the UI button):
+```
+podman exec mosquitto mosquitto_pub -h localhost \
+  -t 'natKit/receiving/Command-13793649670644-Json-NatExecutionCommandV1' \
+  -m '{"command_id":"x","source":"server","target":"sensor","command":"calibrate.status"}'
+podman exec natkit_natkit-v0-kafka_1 kafka-console-consumer --bootstrap-server \
+  localhost:9092 --topic Log-13793649670644-Json-NatLogV1 --partition 0 --offset 0
+```
+(`kafka-console-consumer` without `--partition/--offset` prints nothing here;
+`kafka-get-offsets` is the quick liveness check. `podman images` is broken on
+this box — readlink on the overlay dir — but build/ps/exec all work.)
+
+**CALIBRATION ROOT CAUSE FOUND AND FIXED (2026-08-05).** `calibrate.status`
+reported `cal_config=0x05 (accel=1 gyro=0 mag=1)` with accuracy
+`accel=2 gyro=0 rotation=0`: gyro dynamic calibration was never on, which is why
+rotation never left Unreliable. `sh2_setCalConfig` has failed with `SH2_ERR_HUB`
+from `setup()` since Feb 2026 (71e3be8), leaving the hub on its default 0x05.
+
+The call works nowhere in `setup()` — measured: first hub command -> OK but the
+hub goes silent; before the enableReports -> `SH2_ERR_HUB`; after them -> OK and
+silent; **deleted entirely -> silent too**, because each sh2 op pumps SHTP while
+awaiting its reply and the FAILING call was load-bearing timing. So `setup()` is
+left byte-for-byte as the verified-streaming version and the enable is deferred
+into the sample loop (`enableDynamicCalibrationOnce`, 5 s after the first sample,
+3 retries, failure reported on the log channel).
+
+Result, reproducible over two hardware resets: `setCalConfig(0x07) -> 0`,
+read-back 0x07, ~1900 frames/70 s, zero "Nothing to read", zero panics, and
+`/api/get_accuracies` now reports `gyroscope: 3` (was 0), stable over 20 polls.
+
+Also fixed in the same path: the SH2 status byte was used unmasked as an accuracy
+(bits 7:2 are the report delay, and values are packed 2 bits per sensor, so a
+nonzero delay would corrupt neighbouring sensors), and the backend ignored
+`has_data` while reading only `records->back()` — so any sensor absent from the
+last sample of a frame reported Unreliable.
+
+**Zach ran the 6-side routine (2026-08-05): gyro now reads High, confirming the
+fix — but rotation did NOT move off 0 and accel stayed at 2.** So rotation is a
+SEPARATE defect, not a consequence of the gyro bug.
+
+Plumbing was ruled out by reading it: the active path (update3 -> event-based,
+ImuReader.hpp ~950) sets `data_point.calibration = event.accuracy`, which is the
+masked status of SH2_ROTATION_VECTOR. So the hub itself is reporting 0.
+
+Leading hypothesis, NOT yet measured: for the BNO08x the rotation vector's real
+quality signal is the separate `accuracy` float (radians) in
+`sh2_RotationVectorWAcc`, and its 2-bit status field may simply never be
+populated — the 0..3 status is meaningful for the raw accel/gyro/mag reports. If
+so, "Rotation: Unreliable" was never a measurement at all. AGAINST this
+hypothesis: Zach remembers rotation reaching High about a year ago, and the
+overall readout is worst-case, so it could not have shown High with rotation at 0.
+One of those two must be wrong; measure, do not assume.
+
+**UNCOMMITTED, COMPILED BUT UNFLASHED** in natKit-IMU (deliberately not committed
+so trunk stays at the verified-good state): an `imu.diag` command reporting raw
+per-report status bytes, report counts, and the rotation vector's `accuracy`
+float, plus `NAT_BNO08X_ENABLE_MAGNETIC_FIELD_CALIBRATED` turned on so mag
+convergence is observable at all. The mag report-enable is a hub-timing change and
+this hub has proven fragile about those, so it MUST be checked for streaming
+health after flashing.
+
+BLOCKED ON HARDWARE: /dev/ttyACM0 re-enumerated at 16:31 (while the board was
+being handled) and is now wedged — reads return nothing and both the DTR/RTS
+reset ioctl and a usbfs USBDEVFS_RESET hang. The board itself is fine and still
+streaming over WiFi. Needs a physical USB unplug/replug before anything can be
+flashed.
+
+## Previous Task — Experiment history snapshots (Phases 0 + 1 DONE, Phase 2 NEXT)
+
 
 Plan: `plans/experiment-history-snapshots-plan.html`. Redesigns the VP experiment:
 it stops being a NODE and becomes a first-class object owning a graph + a history
