@@ -1,5 +1,6 @@
 <script lang="ts">
     import * as Tabs from "$lib/components/ui/tabs";
+    import { onDestroy } from "svelte";
     import { SvelteMap } from "svelte/reactivity";
     import BrokerConnection from "./BrokerConnection.svelte";
     import StreamSelector from "./StreamSelector.svelte";
@@ -11,6 +12,11 @@
         type SessionData,
         type ExperimentPhase,
     } from "./types";
+
+    // This page stays MOUNTED while you are on another one, so that a run in
+    // progress is not destroyed by navigating away (see App.svelte). `active`
+    // says whether it is the page actually on screen.
+    let { active = true }: { active?: boolean } = $props();
 
     // Tab/phase constants
     const connectionTab = "connection";
@@ -29,23 +35,32 @@
     let sessionData: SessionData | null = $state(null);
     let calibrationReady = $state(false);
 
-    // Connection status polling
-    setInterval(async function () {
-        fetch(`/api/heartbeat`)
-            .then((response) => {
-                backendConnected = true;
-            })
-            .catch((err) => {
-                console.error("Backend connection error:", err);
-                backendConnected = false;
-            });
-    }, 1000);
+    // Connection status polling.
+    //
+    // Skipped while this page is off screen: nobody is reading these two
+    // indicators, and the page stays mounted for the whole session now. State is
+    // left as-is and refreshes within a second of coming back.
+    // A fetch that RESOLVES only means the server answered -- a 500 counted as
+    // "connected" before, so check response.ok.
+    async function pollConnectivity() {
+        if (!active) return;
+        try {
+            backendConnected = (await fetch(`/api/heartbeat`)).ok;
+        } catch {
+            backendConnected = false;
+        }
+        try {
+            brokerConnected = (await fetch(`/api/is_connected_to_broker`)).ok;
+        } catch {
+            brokerConnected = false;
+        }
+    }
 
-    setInterval(async function () {
-        fetch(`/api/is_connected_to_broker`)
-            .then((response) => (brokerConnected = true))
-            .catch((err) => (brokerConnected = false));
-    }, 1000);
+    void pollConnectivity();
+    // These intervals had no cleanup and were never cleared, so every visit to
+    // this page left another pair polling forever.
+    const connectivityTimer = setInterval(pollConnectivity, 1000);
+    onDestroy(() => clearInterval(connectivityTimer));
 
     // Navigation functions
     function switchToStreamSelection() {

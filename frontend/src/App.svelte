@@ -22,6 +22,29 @@
   router.mode.hash();
   router.subscribe((_) => window.scrollTo(0, 0));
 
+  // --- pages that must survive navigation --------------------------------
+  // A running experiment lives in component state: TaskRunner's 1 Hz tick, its
+  // countdown/rest timers, the session id, and the samples collected so far. A
+  // <Route> DESTROYS its contents the moment you click another nav link, so
+  // glancing at another page mid-run used to abandon the run and lose the data.
+  // (The inner tabs were never the problem -- bits-ui renders inactive tab
+  // content and only marks it hidden.)
+  //
+  // So these two are mounted lazily on first visit and then kept, hidden when
+  // their route isn't active. Anything already running keeps running.
+  const IMU_PATH = "/ImuExperiment";
+  const ADL_PATH = "/AdlExperiment";
+  let imuVisited = $state(false);
+  let adlVisited = $state(false);
+  // subscribe() fires immediately with the current route, so this initial value
+  // is only what holds until that first call.
+  let currentPath = $state("/");
+  router.subscribe((r) => {
+    currentPath = r.path ?? "/";
+    if (currentPath === IMU_PATH) imuVisited = true;
+    if (currentPath === ADL_PATH) adlVisited = true;
+  });
+
   let session = $state<AuthSession | null>(null);
   let loadingSession = $state(true);
   let authError = $state("");
@@ -204,12 +227,19 @@
     <Route path="/about">
       <About />
     </Route>
-    <Route path="/ImuExperiment">
-      <ImuExperiment />
-    </Route>
-    <Route path="/AdlExperiment">
-      <AdlExperiment />
-    </Route>
+    <!-- Deliberately NOT <Route>: see the note in the script. Mounted on first
+         visit and then kept alive so a run in progress is not destroyed by
+         navigating away. -->
+    {#if imuVisited}
+      <div class="persistent-page" hidden={currentPath !== IMU_PATH}>
+        <ImuExperiment active={currentPath === IMU_PATH} />
+      </div>
+    {/if}
+    {#if adlVisited}
+      <div class="persistent-page" hidden={currentPath !== ADL_PATH}>
+        <AdlExperiment active={currentPath === ADL_PATH} />
+      </div>
+    {/if}
     <Route path="/StreamViewer">
       <StreamViewer />
     </Route>
@@ -226,6 +256,11 @@
 {/if}
 
 <style>
+  /* `hidden` alone loses to any display rule the page sets on itself. */
+  .persistent-page[hidden] {
+    display: none !important;
+  }
+
   :global(body) {
     margin: 0;
     font-family:
