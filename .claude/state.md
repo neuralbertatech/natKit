@@ -169,8 +169,35 @@ Totals now: svelte-check 0/0, **vitest 110/110**. Board: #313 and #335 closed,
    - Live check **asserts Playwright's `dialog` event never fires**, which is the
      regression guard for this work.
 
-**Next: #336** — spatial protocol canvas (view toggle; steps as nodes, repeat
-groups as zoomable containers, markers node as portal). Not started.
+**#336 DONE 2026-08-10 — spatial protocol canvas (commit `8cd8408`).**
+`ProtocolCanvas.svelte`: List/Canvas toggle; steps as colour-coded nodes in an
+auto-laid-out sequence lane; repeat groups as black-box containers with
+double-click/Open zoom, breadcrumb, and a group-scoped add palette (no nesting);
+selection opens labelled fields. **`StepFields.svelte` extracted (~330 lines out
+of the designer) so the list rows and the canvas inspector render ONE
+definition** — that extraction is what keeps the canvas from being a second copy
+of the fields.
+- The markers-node portal is an **"Open protocol" button, not double-click**:
+  that gesture already opens the participant run surface and repurposing it
+  would break conducting an experiment. Flagged on the ticket for Zach's call.
+- ⚠️ **Class-name collision bug, found only by measuring:** container nodes had
+  ~300px dead space either side because a dependency ships a global
+  `.container { margin: auto }`. Svelte scopes OUR rules but a global rule still
+  matches our element by class name. Renamed to `.is-group`; swept all unscoped
+  rules matching canvas elements (rest are Tailwind resets). **Generic class
+  names are unsafe here even with scoped styles.**
+
+**TEC-NATKIT-3 (#314) is CLOSED** — all five bullets done. Phase 5 (wiring whole
+experiments together as session blocks) deliberately deferred as **#341**, which
+carries the open question: is a block a copy or a reference?
+
+**Board now labelled** (the org had zero labels before): one type label per
+ticket (Feature / Task / EPIC / Maintenance / Testing) plus UI/UX where
+user-facing. Note the list endpoint does NOT return labels — read per ticket.
+
+**Verification screenshots are attached to tickets** via `assistant task attach`
+(v0.7.0). Capture script conventions live in #338; sets are written to
+`~/natkit-verification/<sha>/` with a MANIFEST.md.
 
 ⚠️ **Scripted-UI hygiene, learned again:** a script that throws before its
 cleanup leaks a scratch board AND experiment. Wrap cleanup in `finally`. Also
