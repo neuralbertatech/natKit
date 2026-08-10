@@ -19,6 +19,8 @@
         Dices,
         GripVertical,
         Sparkles,
+        List,
+        Network,
         Image as ImageIcon,
         Volume2,
         Plus,
@@ -28,6 +30,8 @@
     import type { Experiment, SessionProtocol } from "../StreamViewer/types";
     import { adlStepProtocol, ADL_PROTOCOL_ID } from "../AdlExperiment/tasks";
     import QuickSetupCard from "./QuickSetupCard.svelte";
+    import StepFields from "./StepFields.svelte";
+    import ProtocolCanvas from "./ProtocolCanvas.svelte";
     import { askConfirm } from "./dialogs.svelte";
     import {
         compileQuickSetupSteps,
@@ -58,9 +62,18 @@
         onPatch: (patch: Partial<Experiment>) => void;
         onPatchProtocol: (patch: Partial<SessionProtocol>) => void;
         onClose: () => void;
+        /** Which step view to open on; the portal on a markers node uses canvas. */
+        initialView?: "list" | "canvas";
     }
 
-    let { bound, readOnly, onPatch, onPatchProtocol, onClose }: Props = $props();
+    let {
+        bound,
+        readOnly,
+        onPatch,
+        onPatchProtocol,
+        onClose,
+        initialView = "list",
+    }: Props = $props();
 
     const stepProtocol = $derived(
         bound && isStepProtocol(bound.protocol)
@@ -451,6 +464,16 @@
             }),
         );
     }
+
+    // --- List / canvas view -------------------------------------------------
+    // A toggle, not a replacement: the list is the canonical, keyboard-complete
+    // surface, and the canvas is a second way of looking at the same protocol.
+    // The prop is the DEFAULT, not the value: opening from a markers node lands
+    // on the canvas, and toggling from there overrides it for this session of
+    // the overlay. Reading the prop inside a derived (rather than seeding
+    // $state with it) keeps it live and avoids a captures-initial-value trap.
+    let stepViewOverride = $state<"list" | "canvas" | null>(null);
+    const stepView = $derived(stepViewOverride ?? initialView);
 
     // --- Collapsible repeat groups ------------------------------------------
     // A ×3 group of 10 steps is 30s of scrolling; collapsed it is one line.
@@ -986,14 +1009,44 @@
                         </button>
                     </div>
                 </div>
-                <p class="hint-text">
-                    Each step is shown to the participant in order. A
-                    <strong>cue</strong> records its class label; an instruction
-                    with <strong>wait for input</strong> holds the session until
-                    someone presses the button; anything marked
-                    <strong>tutorial</strong> is recorded but kept out of
-                    training. Drag the grip to reorder.
-                </p>
+                <div class="view-switch-row">
+                    <p class="hint-text">
+                        Each step is shown to the participant in order. A
+                        <strong>cue</strong> records its class label; an
+                        instruction with <strong>wait for input</strong> holds
+                        the session until someone presses the button; anything
+                        marked <strong>tutorial</strong> is recorded but kept
+                        out of training.{stepView === "list"
+                            ? " Drag the grip to reorder."
+                            : ""}
+                    </p>
+                    <div class="view-switch" role="tablist" aria-label="Step view">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={stepView === "list"}
+                            class="view-tab"
+                            class:active={stepView === "list"}
+                            title="Edit every field inline, in order"
+                            onclick={() => (stepViewOverride = "list")}
+                        >
+                            <List size={12} />
+                            List
+                        </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={stepView === "canvas"}
+                            class="view-tab"
+                            class:active={stepView === "canvas"}
+                            title="See the shape of the protocol; zoom into repeat groups"
+                            onclick={() => (stepViewOverride = "canvas")}
+                        >
+                            <Network size={12} />
+                            Canvas
+                        </button>
+                    </div>
+                </div>
 
                 {#snippet stepRow(
                     step: ExperimentStep,
@@ -1043,337 +1096,34 @@
                                 </button>
                             {/if}
 
-                            <label class="field kind-field">
-                                <span>Step type</span>
-                                <select
-                                    class="step-kind"
-                                    disabled={readOnly}
-                                    value={step.kind}
-                                    onchange={(event) => {
-                                        const kind = (
-                                            event.currentTarget as HTMLSelectElement
-                                        ).value as ExperimentStepKind;
-                                        replaceStep(
-                                            parentId,
-                                            step.id,
-                                            retypeStep(step, kind),
-                                        );
-                                    }}
-                                >
-                                    {#each Object.entries(STEP_KIND_LABELS).filter(([kind]) => kind !== "wait" || step.kind === "wait") as [kind, kindLabel]}
-                                        <option value={kind}>{kindLabel}</option>
-                                    {/each}
-                                </select>
-                            </label>
-
-                            {#if step.kind === "repeat"}
-                                <label class="field num-field">
-                                    <span>Times</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        disabled={readOnly}
-                                        value={step.times}
-                                        oninput={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                times: Number(
-                                                    (
-                                                        event.currentTarget as HTMLInputElement
-                                                    ).value,
-                                                ),
-                                            })}
-                                    />
-                                </label>
-                                {#if step.shuffle === true}
-                                    <label
-                                        class="field num-field"
-                                        title="Shuffle seed — the same seed reproduces the same order on every run"
-                                    >
-                                        <span>Seed</span>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            disabled={readOnly}
-                                            value={step.seed ?? 1}
-                                            oninput={(event) =>
-                                                patchStep(parentId, step.id, {
-                                                    seed: Number(
-                                                        (
-                                                            event.currentTarget as HTMLInputElement
-                                                        ).value,
-                                                    ),
-                                                })}
-                                        />
-                                    </label>
-                                    <button
-                                        type="button"
-                                        class="icon-btn dice-btn"
-                                        disabled={readOnly}
-                                        title="Reroll the shuffle seed — a new order, still reproducible"
-                                        onclick={() =>
-                                            patchStep(parentId, step.id, {
-                                                seed: rollSeed(),
-                                            })}
-                                    >
-                                        <Dices size={12} />
-                                    </button>
-                                {/if}
-                                {#if step.interleave_rest}
-                                    <!-- The interleaved rest's own timing. It is
-                                         not an editable row, so its duration and
-                                         jitter live on the group. -->
-                                    <label
-                                        class="field num-field"
-                                        title="Length of each inserted rest"
-                                    >
-                                        <span>Rest (s)</span>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.5"
-                                            disabled={readOnly}
-                                            value={step.interleave_rest.duration_s}
-                                            oninput={(event) =>
-                                                patchInterleaveRest(parentId, step, {
-                                                    duration_s: Number(
-                                                        (
-                                                            event.currentTarget as HTMLInputElement
-                                                        ).value,
-                                                    ),
-                                                })}
-                                        />
-                                    </label>
-                                    <label
-                                        class="field num-field"
-                                        title="Randomize each inserted rest by up to ± this many seconds, from the protocol's timing seed. Stops participants anticipating the next cue."
-                                    >
-                                        <span>± Jitter (s)</span>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="0.5"
-                                            disabled={readOnly}
-                                            value={step.interleave_rest.jitter_s ?? 0}
-                                            oninput={(event) => {
-                                                const value = Number(
-                                                    (
-                                                        event.currentTarget as HTMLInputElement
-                                                    ).value,
-                                                );
-                                                patchInterleaveRest(parentId, step, {
-                                                    jitter_s:
-                                                        value > 0 ? value : undefined,
-                                                });
-                                            }}
-                                        />
-                                    </label>
-                                {/if}
-                                {#if collapsedGroups.has(step.id)}
-                                    <span class="group-summary">
-                                        {groupSummary(step)}
-                                    </span>
-                                {/if}
-                            {:else}
-                                <label class="field grow">
-                                    <span>Shown to participant</span>
-                                    <input
-                                        placeholder="e.g. Make a fist"
-                                        disabled={readOnly}
-                                        value={step.text ?? ""}
-                                        oninput={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                text: (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).value,
-                                            })}
-                                    />
-                                </label>
-                            {/if}
-
-                            {#if step.kind === "cue" || step.kind === "rest"}
-                                <label
-                                    class="field label-field"
-                                    title={step.kind === "cue"
-                                        ? "The class a trainer learns from — recorded on this cue's markers"
-                                        : "Optional — defaults to the protocol's rest class"}
-                                >
-                                    <span>
-                                        {step.kind === "cue"
-                                            ? "Class label (trained on)"
-                                            : "Class label (optional)"}
-                                    </span>
-                                    <input
-                                        placeholder={step.kind === "rest"
-                                            ? stepProtocol?.rest_class || "rest"
-                                            : "e.g. fist"}
-                                        disabled={readOnly}
-                                        value={(step as { label?: string }).label ??
-                                            ""}
-                                        oninput={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                label: (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).value,
-                                            })}
-                                    />
-                                </label>
-                            {/if}
-
-                            {#if step.kind === "cue" || step.kind === "rest" || (step.kind === "instruction" && step.wait_for_input !== true)}
-                                <label class="field num-field">
-                                    <span>
-                                        {step.kind === "cue"
-                                            ? "Hold (s)"
-                                            : "Duration (s)"}
-                                    </span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.5"
-                                        disabled={readOnly}
-                                        value={(step as { duration_s?: number })
-                                            .duration_s ?? 0}
-                                        oninput={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                duration_s: Number(
-                                                    (
-                                                        event.currentTarget as HTMLInputElement
-                                                    ).value,
-                                                ),
-                                            })}
-                                    />
-                                </label>
-                                <label
-                                    class="field num-field"
-                                    title="Randomize this duration by up to ± this many seconds — drawn from the protocol's timing seed, so the same seed recreates the same schedule. 0 = fixed."
-                                >
-                                    <span>± Jitter (s)</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        step="0.5"
-                                        disabled={readOnly}
-                                        value={(step as { jitter_s?: number })
-                                            .jitter_s ?? 0}
-                                        oninput={(event) => {
-                                            const value = Number(
-                                                (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).value,
-                                            );
-                                            // 0 means "fixed" — keep the JSON
-                                            // clean rather than storing it.
-                                            patchStep(parentId, step.id, {
-                                                jitter_s:
-                                                    value > 0
-                                                        ? value
-                                                        : undefined,
-                                            });
-                                        }}
-                                    />
-                                </label>
-                            {/if}
-
-                            {#if step.kind === "wait" || (step.kind === "instruction" && step.wait_for_input === true)}
-                                <label class="field label-field">
-                                    <span>Continue-button text</span>
-                                    <input
-                                        placeholder="Continue"
-                                        disabled={readOnly}
-                                        value={step.continue_label ?? ""}
-                                        oninput={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                continue_label: (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).value,
-                                            })}
-                                    />
-                                </label>
-                            {/if}
-
-                            <div class="card-flags">
-                                {#if step.kind === "instruction"}
-                                    <label
-                                        class="field check"
-                                        title="Hold the session at this instruction until someone presses the button, instead of running for a fixed time"
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            disabled={readOnly}
-                                            checked={step.wait_for_input === true}
-                                            onchange={(event) => {
-                                                const checked = (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).checked;
-                                                patchStep(parentId, step.id, {
-                                                    wait_for_input:
-                                                        checked || undefined,
-                                                    continue_label: checked
-                                                        ? step.continue_label ||
-                                                          "Continue"
-                                                        : undefined,
-                                                });
-                                            }}
-                                        />
-                                        <span>Wait for input</span>
-                                    </label>
-                                {/if}
-                                {#if step.kind === "repeat"}
-                                    <label
-                                        class="field check"
-                                        title="Shuffle the group's order on each pass (seeded, so a run is reproducible)"
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            disabled={readOnly}
-                                            checked={step.shuffle === true}
-                                            onchange={(event) =>
-                                                patchStep(parentId, step.id, {
-                                                    shuffle: (
-                                                        event.currentTarget as HTMLInputElement
-                                                    ).checked,
-                                                })}
-                                        />
-                                        <span>Shuffle each pass</span>
-                                    </label>
-                                    <label
-                                        class="field check"
-                                        title="Insert a rest after every step in this group (including the last, so passes are separated too). Added at compile time and after shuffling, so the rests never end up back to back."
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            disabled={readOnly}
-                                            checked={step.interleave_rest != null}
-                                            onchange={(event) =>
-                                                toggleInterleaveRest(
-                                                    parentId,
-                                                    step,
-                                                    (
-                                                        event.currentTarget as HTMLInputElement
-                                                    ).checked,
-                                                )}
-                                        />
-                                        <span>Rest between steps</span>
-                                    </label>
-                                {/if}
-                                <label
-                                    class="field check"
-                                    title="Practice: recorded and flagged, but excluded from training"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        disabled={readOnly}
-                                        checked={step.tutorial === true}
-                                        onchange={(event) =>
-                                            patchStep(parentId, step.id, {
-                                                tutorial: (
-                                                    event.currentTarget as HTMLInputElement
-                                                ).checked,
-                                            })}
-                                    />
-                                    <span>Tutorial</span>
-                                </label>
-                            </div>
+                            <StepFields
+                                {step}
+                                {readOnly}
+                                restClass={stepProtocol?.rest_class || "rest"}
+                                collapsed={collapsedGroups.has(step.id)}
+                                uploadingSlot={uploading[step.id] ?? null}
+                                groupSummaryText={step.kind === "repeat"
+                                    ? groupSummary(step)
+                                    : ""}
+                                {retypeStep}
+                                {rollSeed}
+                                stepKindLabels={STEP_KIND_LABELS}
+                                {mediaLabel}
+                                onPatch={(patch) =>
+                                    patchStep(parentId, step.id, patch)}
+                                onReplace={(next) =>
+                                    replaceStep(parentId, step.id, next)}
+                                onPatchInterleave={(patch) =>
+                                    step.kind === "repeat" &&
+                                    patchInterleaveRest(parentId, step, patch)}
+                                onToggleInterleave={(enabled) =>
+                                    step.kind === "repeat" &&
+                                    toggleInterleaveRest(parentId, step, enabled)}
+                                onUploadMedia={(slot, file) =>
+                                    uploadMedia(parentId, step, slot, file)}
+                                onClearMedia={(slot) =>
+                                    clearMedia(parentId, step, slot)}
+                            />
 
                             <div class="step-actions">
                                 <button
@@ -1523,35 +1273,62 @@
                     </div>
                 {/snippet}
 
-                <div class="step-list" role="list">
-                    {#each stepProtocol.steps as step (step.id)}
-                        {@render stepRow(step, null)}
-                    {/each}
-                    {#if stepProtocol.steps.length === 0}
-                        <p class="hint-text">No steps yet — add one below.</p>
+                {#if stepView === "canvas"}
+                    <ProtocolCanvas
+                        protocol={stepProtocol}
+                        {readOnly}
+                        {uploading}
+                        stepKindLabels={STEP_KIND_LABELS}
+                        kindColors={KIND_COLORS}
+                        {retypeStep}
+                        {rollSeed}
+                        {mediaLabel}
+                        {groupSummary}
+                        onPatchStep={patchStep}
+                        onReplaceStep={replaceStep}
+                        onPatchInterleave={patchInterleaveRest}
+                        onToggleInterleave={toggleInterleaveRest}
+                        onUploadMedia={(parentId, step, slot, file) =>
+                            void uploadMedia(parentId, step, slot, file)}
+                        onClearMedia={clearMedia}
+                        onAddStep={addStep}
+                        onRemoveStep={removeStep}
+                        onMoveStep={moveStep}
+                    />
+                    {#if uploadError}
+                        <p class="hint-text upload-error">{uploadError}</p>
                     {/if}
-                </div>
-                {#if uploadError}
-                    <p class="hint-text upload-error">{uploadError}</p>
+                {:else}
+                    <div class="step-list" role="list">
+                        {#each stepProtocol.steps as step (step.id)}
+                            {@render stepRow(step, null)}
+                        {/each}
+                        {#if stepProtocol.steps.length === 0}
+                            <p class="hint-text">No steps yet — add one below.</p>
+                        {/if}
+                    </div>
+                    {#if uploadError}
+                        <p class="hint-text upload-error">{uploadError}</p>
+                    {/if}
+                    <div class="step-add">
+                        {#each STEP_ADD_BUTTONS as entry}
+                            <button
+                                type="button"
+                                class="add-step-btn"
+                                disabled={readOnly}
+                                title={entry.hint}
+                                onclick={() => addStep(null, entry.kind)}
+                            >
+                                <Plus size={11} />
+                                <span
+                                    class="kind-dot"
+                                    style={`background:${KIND_COLORS[entry.kind]}`}
+                                ></span>
+                                {entry.label}
+                            </button>
+                        {/each}
+                    </div>
                 {/if}
-                <div class="step-add">
-                    {#each STEP_ADD_BUTTONS as entry}
-                        <button
-                            type="button"
-                            class="add-step-btn"
-                            disabled={readOnly}
-                            title={entry.hint}
-                            onclick={() => addStep(null, entry.kind)}
-                        >
-                            <Plus size={11} />
-                            <span
-                                class="kind-dot"
-                                style={`background:${KIND_COLORS[entry.kind]}`}
-                            ></span>
-                            {entry.label}
-                        </button>
-                    {/each}
-                </div>
             {/if}
 
             <div class="builtin-section">
@@ -1738,8 +1515,7 @@
         padding-right: 0.3rem;
     }
 
-    input,
-    select {
+    input {
         border-radius: 6px;
         border: 1px solid rgba(255, 255, 255, 0.14);
         background: rgba(12, 18, 28, 0.75);
@@ -1781,25 +1557,6 @@
 
     .field.name-field {
         width: 14rem;
-    }
-
-    .field.check {
-        flex-direction: row;
-        align-items: center;
-        gap: 0.25rem;
-        font-size: 0.66rem;
-        color: #7f91c8;
-        cursor: pointer;
-        white-space: nowrap;
-    }
-
-    .field.check > span {
-        font-size: 0.66rem;
-    }
-
-    .field.check input[type="checkbox"] {
-        width: auto;
-        margin: 0;
     }
 
     .hint-text {
@@ -2031,6 +1788,38 @@
         display: flex;
         gap: 0.3rem;
         flex: none;
+    }
+
+    .view-switch-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+
+    .view-switch {
+        display: flex;
+        gap: 0.2rem;
+        flex: none;
+    }
+
+    .view-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        border: 1px solid #24304f;
+        border-radius: 999px;
+        background: #101830;
+        color: #b9c8f0;
+        font-size: 0.68rem;
+        padding: 0.2rem 0.6rem;
+        cursor: pointer;
+    }
+
+    .view-tab.active {
+        border-color: #4f7ef7;
+        background: rgba(79, 126, 247, 0.18);
+        color: #e4ecff;
     }
 
     .kind-dot {

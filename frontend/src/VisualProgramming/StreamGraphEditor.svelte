@@ -10,6 +10,7 @@
         Eye,
         FileDown,
         FlaskConical,
+        Network,
         GitBranch,
         Monitor,
         Package,
@@ -387,6 +388,9 @@
     // The protocol-authoring overlay (ExperimentDesigner); the panel stays the
     // operator surface.
     let showExperimentDesigner = $state(false);
+    // Which view the designer opens on. The markers node is the spatial portal
+    // into its experiment's protocol, so it opens straight onto the canvas.
+    let designerInitialView = $state<"list" | "canvas">("list");
     // The toolbar floats over the canvas and WRAPS: its height changes with how
     // many buttons are showing (selecting a node adds Group, a composite adds two
     // more) and with the viewport width. The side panels are absolutely positioned
@@ -5444,7 +5448,10 @@
                         onBind={bindExperiment}
                         onCreate={createExperiment}
                         onPatch={patchBoundExperiment}
-                        onEditProtocol={() => (showExperimentDesigner = true)}
+                onEditProtocol={() => {
+                            designerInitialView = "list";
+                            showExperimentDesigner = true;
+                        }}
                         onDelete={deleteBoundExperiment}
                         onRecord={() =>
                             boundExperimentView &&
@@ -6036,6 +6043,23 @@
                                         ? "Open experiment"
                                         : "Bind an experiment"}
                                 </button>
+                                {#if boundExperimentView}
+                                    <!-- The portal: this node carries the
+                                         experiment's markers, so the protocol
+                                         lives "inside" it. -->
+                                    <button
+                                        type="button"
+                                        class="action-btn secondary"
+                                        title="Look inside this node at the protocol producing its markers"
+                                        onclick={() => {
+                                            designerInitialView = "canvas";
+                                            showExperimentDesigner = true;
+                                        }}
+                                    >
+                                        <Network size={15} />
+                                        Open protocol
+                                    </button>
+                                {/if}
                             </div>
                         {/if}
 
@@ -6869,6 +6893,7 @@
     <ExperimentDesigner
         bound={boundExperimentView}
         readOnly={boardIsImmutable}
+        initialView={designerInitialView}
         onPatch={patchBoundExperiment}
         onPatchProtocol={patchBoundProtocol}
         onClose={() => (showExperimentDesigner = false)}
