@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+        "target": "ES2022",
+        // DOM because the specs run code inside the page (page.evaluate), and
+        // node because the fixtures do fs/git/WebSocket work outside it.
+        "lib": ["ES2023", "DOM"],
+        "module": "ESNext",
+        "types": ["node"],
+        "skipLibCheck": true,
+        "moduleResolution": "bundler",
+        "isolatedModules": true,
+        "moduleDetection": "force",
+        "noEmit": true,
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true
+    },
+    "include": ["e2e/**/*.ts", "playwright.config.ts"]
+}

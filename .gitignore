@@ -174,3 +174,10 @@ natVR/captures/
 uploads/**
 !uploads/**/
 !uploads/**/.gitkeep
+
+# Playwright's own failure artifacts (traces, videos, failure screenshots). The
+# suite's *evidence* set is written outside the repo entirely -- see
+# frontend/e2e/README.md -- because ~/code is Syncthing-synced and those are run
+# artifacts, not source.
+frontend/test-results/
+frontend/playwright-report/
