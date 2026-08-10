@@ -4,7 +4,40 @@
 
 **Last updated:** 2026-08-10
 
-## Active Task — Committed Playwright suite for the VP UI (TEC-NATKIT-15 DONE)
+## Board — new EPIC #343 filed 2026-08-10 (ESP-IDF firmware fork), NOT started
+
+**#343 (TEC-NATKIT-20), the board's first EPIC**, with 7 child slices #344–#350:
+a **fork** of the ESP32 node firmware on native ESP-IDF that changes the
+architecture to primary/secondary per the #319 whiteboard — leaf nodes are sensor
++ ESP-NOW only (no WiFi/MQTT/NTP), a primary is the ESP-NOW hub and 1s timing
+master, and it forwards over serial to a gateway ESP32 on WiFi/Ethernet that
+speaks the existing MQTT topic contract.
+
+Zach's constraint, which shapes every slice: **the current firmware must not be
+overwritten** — we may not keep this. So `natKit-IMU/embeded` (`trunk` @
+`635d86e`, Arduino via pioarduino / IDF 5.5.5, board `pico32`) stays buildable and
+flashable throughout, the fork is recommended as a sibling directory
+(`natKit-IMU/firmware-idf/`, native `idf.py`, `natVR/firmware` as the template),
+rollback is one documented command, and #350 is an explicit adopt-or-discard
+decision with measured criteria.
+
+Slice order: #344 scaffold → #345 BNO08x on native IDF (spi_master + CEVA sh2,
+carrying the hardware-found fixes) → #346 **on-air frame format** (the biggest
+unknown: ~5 KB bulk frame vs ESP-NOW's per-packet limit → fragment or shrink;
+measure on our chips) → #347 leaf → #348 primary (registry, reassembly, serial mux,
+backpressure) → #349 gateway (WiFi/Ethernet, esp-mqtt, `esp_netif_sntp`) → #350
+bench vs the current firmware and decide.
+
+Open questions left for Zach, deliberately not decided: primary and gateway as one
+board or two; which chip/PHY for the gateway's Ethernet; and whether the
+`EXECUTION_COMMAND` path is relayed to nodes in the first cut.
+
+**#340** (ESP-NOW timing broadcast) IS this epic's timing slice but is only
+*related* — the CLI's `-parent` is create-only, so it cannot be reparented from
+here. Also note **#339 no longer exists** (404), so #340's `follows #339` gate is
+gone; if the uPTP-vs-ESPNow-vs-NTP evaluation still matters it needs refiling.
+
+## Prior Task — Committed Playwright suite for the VP UI (TEC-NATKIT-15 DONE)
 
 **#338 CLOSED 2026-08-10 — commit `20f2bc2`.** The throwaway `/tmp` verification
 scripts are now a committed suite: `frontend/e2e/`, 23 tests over 7 spec files,
@@ -157,10 +190,13 @@ descriptions are the original asks. #314's undone bullets were split into
 comments; also corrected #321 (the hardware channel family already exists —
 `HARDWARE_CONFIGURATION` is declared but never used) and anchored #318 to the
 `StreamType` extension seam.
-⚠️ **Vikunja stores descriptions/comments as HTML (tiptap), NOT markdown**, and
-the `assistant` CLI advertises `-description <md>` but does no conversion — so
-markdown lands as literal text with newlines collapsed. Send HTML. The CLI also
-has no comment edit/delete, so a bad comment can only be fixed in the web UI.
+⚠️ **Vikunja stores descriptions/comments as HTML (tiptap), NOT markdown.** The
+`assistant` CLI DOES convert markdown now (v0.7.0) — the older note here saying
+it does not is wrong — but **do not hard-wrap the markdown you send it**: inside
+a list item a soft line break becomes `</p><p>`, splitting a wrapped sentence
+into two paragraphs, and `**bold**` spanning a newline is not emphasised at all
+(the asterisks show verbatim). One long line per paragraph and per bullet.
+Comment edit works; `comment delete` and `attachment delete` still 401.
 
 **#313 DONE 2026-08-10 — rest interleaving (the other half of the ticket).**
 `RepeatStep.interleave_rest?: InterleavedRest` ({duration_s, jitter_s?, label?,
