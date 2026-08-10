@@ -4,7 +4,107 @@
 
 **Last updated:** 2026-08-10
 
-## Board — new EPIC #343 filed 2026-08-10 (ESP-IDF firmware fork), NOT started
+## Current Task — EPIC #343 slice 0 DONE and hardware-verified (#344 CLOSED)
+
+**#344 (TEC-NATKIT-21) is CLOSED at 100%** — commits `598a800` (scaffold),
+`880a042` (config corrected from what the board reports), `84ed628` (READMEs).
+The fork lives in the **`natKit-IMU` submodule on branch `firmware-idf-fork`**
+(trunk untouched at `635d86e`), as a sibling directory `natKit-IMU/firmware-idf/`
+— native `idf.py`, no PlatformIO, `natVR/firmware` as the template.
+
+- **Role is a Kconfig choice** (`main/Kconfig.projbuild`:
+  `CONFIG_NATKIT_ROLE_{LEAF,PRIMARY,GATEWAY}`), so it is three images from one
+  tree rather than a hand-edited `#define`. `main.cpp` logs the banner (firmware
+  + version, role, target/rev/cores/IDF, device id + MAC, reset reason, heap),
+  inits NVS, then dispatches to `runLeaf/runPrimary/runGateway`; each stub logs
+  which slice fills it in and falls into `idleStatusLoop` (uptime + free heap
+  every `CONFIG_NATKIT_STATUS_LOG_INTERVAL_S`, default 10s) so an unimplemented
+  role is a visibly-alive board, not an apparently-bricked one.
+- **`./build-role.sh <role> [target] [idf.py args]`** is the reproducible path:
+  each (role, target) gets its own build dir AND its own generated `sdkconfig`
+  (`-D SDKCONFIG=`), because a shared `./sdkconfig` is how one role silently
+  inherits another's config. Plain `idf.py build` still works and gives the leaf.
+- **All three role sources compile into every image** even though one entry
+  point is called — conditional registration would leave two roles never
+  compiled in any given build.
+- `sdkconfig` and `dependencies.lock` are **gitignored** (both bake in the
+  target; the lock rewrites itself on every alternate-target build). The
+  committed truth is `sdkconfig.defaults[.esp32|.esp32c3]` +
+  `roles/*.defaults`.
+- **Device-id compatibility is pinned at compile time.** `packMac` is
+  `constexpr` and `device_id.cpp` static_asserts the real board
+  (`0c:8b:95:96:b9:f4` → `13793649670644`, the number inside every existing
+  topic name). Verified the assert FIRES by sabotaging a shift and rebuilding —
+  an untested guard is decoration.
+
+**Verified — Zach plugged the node in mid-session, so this is on real silicon.**
+All 6 images (3 roles × esp32/esp32c3) build clean, ~`0x2c110` bytes on esp32 /
+~`0x2db40` on esp32c3 against the default 1 MB app partition (83% free); each
+build's generated `sdkconfig` really carries its `CONFIG_NATKIT_ROLE_*` (a
+fragment that failed to apply would still have built). On the board
+(**ESP32-PICO-V3-02 rev v3.0, MAC `0c:8b:95:96:b9:f4`**, `/dev/ttyACM0`) the leaf
+image boots and logs the full banner — `natKit-IMU-idf v0.1.0`, `role: leaf`,
+`target: esp32 rev 3.0, 2 core(s)`, `device id: 13793649670644`, `last reset:
+power-on` — with **heap flat at 297112 B across 40s**.
+
+**The rollback contract is proven, not just documented.** `pio run -e release -t
+fullclean` + rebuild (25m07s, SUCCESS) then `pio run -e release -t upload`
+brought back `natKit-IMU v0.5.0` / `Unique ID: 13793649670644`, NTP synced and
+**streaming** to `natKit/sending/Data-13793649670644-Binary-NatImuBulkDataSchema`.
+**The board was left running the original firmware, streaming as found.**
+Evidence + a full 4 MB pre-flash dump: `~/natkit-verification/598a800/`
+(`MANIFEST.md`; 4 files attached to #344).
+
+`idf.py qemu` would have made all this possible with no board and is **blocked on
+`libslirp.so.0`** (not installed; `sudo dnf install libslirp`, tarball already
+cached in `~/.espressif/dist`). Still worth fixing — it is the no-hardware boot
+check for every later slice.
+
+**Traps found while doing it:**
+- ⚠️ **ESP-IDF reads `sdkconfig.defaults*` ONLY when the generated `sdkconfig`
+  does not exist yet.** Editing the defaults after the first build silently does
+  nothing: the build succeeds and the setting is absent from the image. Caught
+  only by reading the generated `sdkconfig` back — a flash option had been
+  "applied" for two builds. `build-role.sh` now warns when a defaults file is
+  newer than the generated `sdkconfig`; fix is `rm build/<target>-<role>/sdkconfig`.
+- ⚠️ **Read the serial port from exactly ONE process.** Two readers split the
+  byte stream into plausible-looking interleaved output (half of one line spliced
+  into another), which reads exactly like a firmware bug. Cost three captures.
+  Reset + read in a single process (`/tmp/esp-boot-capture.py` pattern: pyserial,
+  DTR low / pulse RTS, then read).
+- **The board is NOT the 4 MB PICO-D4 the epic assumes** — it is a PICO-V3-02
+  with 8 MB flash and 2 MB PSRAM. Flash size is still declared 4 MB on purpose
+  (under-declaring wastes space; over-declaring on a real 4 MB part breaks a
+  boot), and the open question "is the fleet uniformly V3-02?" is on #343.
+- Flash is a **Boya** part; it was falling back to the generic driver on every
+  boot until `CONFIG_SPI_FLASH_SUPPORT_BOYA_CHIP=y`.
+- `esp_chip_info_t` has **no `full_revision`** in IDF 5.5.3; `revision` is packed
+  `MXX` (major × 100 + minor), so this PICO-V3-02 reads `301`.
+- **`main` does not get every component's headers implicitly** — `esp_timer.h`
+  was "No such file or directory" until `esp_timer` went into `REQUIRES`.
+- `pio run -t fullclean` on `embeded/` forces a **network re-fetch** of the
+  pinned git deps (libnatkit-core and its nested submodules) plus an
+  Arduino-from-source rebuild: **25m07s measured**. The rollback is one command,
+  but after a fullclean it is a slow one — do not fullclean if rolling back in a
+  hurry, and note that for ~25 min this session the documented rollback was not
+  actually available, which is why the 4 MB flash dump was taken first.
+
+**Two READMEs, deliberately split:** `natKit-IMU/README.md` gained the
+authoritative "there are two firmwares" section — which image is on which board
+(a record to update when you flash, not a measurement), and the one rollback
+command (`cd embeded && pio run -e release -t upload`).
+`natKit-IMU/firmware-idf/README.md` carries the fork's build/config/invariants.
+
+**Left for Zach:** the parent repo still pins the submodule at `trunk`
+`635d86e` — the pointer was deliberately NOT bumped, so natKit keeps referencing
+the known-good firmware while the fork lives on its own branch. Bumping it is a
+one-liner when you want the fork in the checkout by default.
+
+**Next slice: #345 (TEC-NATKIT-22)** — BNO08x on native IDF (`spi_master` + CEVA
+`sh2`), carrying the five hardware-found fixes listed on that ticket. Then #346
+(TEC-NATKIT-23), the on-air frame format, which is the epic's biggest unknown.
+
+## Board — EPIC #343 filed 2026-08-10 (ESP-IDF firmware fork)
 
 **#343 (TEC-NATKIT-20), the board's first EPIC**, with 7 child slices #344–#350:
 a **fork** of the ESP32 node firmware on native ESP-IDF that changes the
