@@ -55,10 +55,17 @@ brought back `natKit-IMU v0.5.0` / `Unique ID: 13793649670644`, NTP synced and
 Evidence + a full 4 MB pre-flash dump: `~/natkit-verification/598a800/`
 (`MANIFEST.md`; 4 files attached to #344).
 
-`idf.py qemu` would have made all this possible with no board and is **blocked on
-`libslirp.so.0`** (not installed; `sudo dnf install libslirp`, tarball already
-cached in `~/.espressif/dist`). Still worth fixing — it is the no-hardware boot
-check for every later slice.
+**QEMU works now — Zach installed `libslirp` mid-session, so ALL SIX images have
+been booted, not just built.** leaf/esp32 on silicon; primary/esp32,
+gateway/esp32 and leaf/esp32c3 under QEMU (`./build-role.sh <role> <target>
+qemu`). The C3 reports `rev 0.3, 1 core(s)`, confirming the packed-`MXX`
+revision handling on a second target. Caveats, all in the fork's README:
+- Use the **plain `qemu` action, NOT `qemu monitor`** — the monitor refuses to run
+  without a TTY, while `qemu` alone uses `-serial mon:stdio`, so
+  `timeout 40 ./build-role.sh <role> <target> qemu </dev/null` is scriptable.
+- **QEMU's efuse is blank**: MAC `00:00:00:00:00:00`, device id `0`. An emulator
+  artifact — do not "fix" it. The real id is only observable on silicon.
+- No BNO08x, no ESP-NOW peer, no UART peer emulated, so #345/#346 need the bench.
 
 **Traps found while doing it:**
 - ⚠️ **ESP-IDF reads `sdkconfig.defaults*` ONLY when the generated `sdkconfig`
@@ -95,10 +102,14 @@ authoritative "there are two firmwares" section — which image is on which boar
 command (`cd embeded && pio run -e release -t upload`).
 `natKit-IMU/firmware-idf/README.md` carries the fork's build/config/invariants.
 
-**Left for Zach:** the parent repo still pins the submodule at `trunk`
-`635d86e` — the pointer was deliberately NOT bumped, so natKit keeps referencing
-the known-good firmware while the fork lives on its own branch. Bumping it is a
-one-liner when you want the fork in the checkout by default.
+**Submodule pin: left at `trunk` `635d86e` — Zach's call (2026-08-10: "we can
+update the pin from trunk to this if we need").** Consequence to know rather than
+discover: while the pin stays there, a `git submodule update` in the parent
+checks natKit-IMU back out at `635d86e` detached and **`firmware-idf/` vanishes
+from the working tree** (commits are safe on the `firmware-idf-fork` branch —
+`git -C natKit-IMU checkout firmware-idf-fork` brings it back). That is the
+opposite of #344's "both firmwares in one checkout" recommendation, so bumping
+the pin is what actually delivers it.
 
 **Next slice: #345 (TEC-NATKIT-22)** — BNO08x on native IDF (`spi_master` + CEVA
 `sh2`), carrying the five hardware-found fixes listed on that ticket. Then #346
