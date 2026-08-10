@@ -99,6 +99,9 @@
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
     import ExperimentPanel from "./ExperimentPanel.svelte";
+    import ExperimentDesigner from "./ExperimentDesigner.svelte";
+    import DialogHost from "./DialogHost.svelte";
+    import { askConfirm, askName, showAlert } from "./dialogs.svelte";
     import {
         DEFAULT_VIEWPORT,
         NODE_WIDTH,
@@ -381,6 +384,9 @@
     // The experiment panel is where the protocol is authored and Record lives now
     // that the experiment owns the board rather than sitting on the canvas.
     let showExperimentPanel = $state(false);
+    // The protocol-authoring overlay (ExperimentDesigner); the panel stays the
+    // operator surface.
+    let showExperimentDesigner = $state(false);
     // The toolbar floats over the canvas and WRAPS: its height changes with how
     // many buttons are showing (selecting a node adds Group, a composite adds two
     // more) and with the viewport width. The side panels are absolutely positioned
@@ -1230,12 +1236,20 @@
         markDraftChanged(nextGraph);
     }
 
-    function selectGraph(graphId: string) {
+    // Every path that throws away an unsaved board asks the same question, so it
+    // is asked in one place.
+    function confirmDiscardEdits(nextAction: string): Promise<boolean> {
+        return askConfirm({
+            title: "Discard unsaved edits?",
+            body: `This board has changes that have not been saved. ${nextAction}`,
+            confirmLabel: "Discard and continue",
+            danger: true,
+        });
+    }
+
+    async function selectGraph(graphId: string) {
         if (graphDirty) {
-            const shouldDiscard = window.confirm(
-                "Discard unsaved graph edits?",
-            );
-            if (!shouldDiscard) {
+            if (!(await confirmDiscardEdits("Opening another board will lose them."))) {
                 return;
             }
         }
@@ -1256,12 +1270,9 @@
         requestStreamGraphStatus(graphId);
     }
 
-    function createGraph() {
+    async function createGraph() {
         if (graphDirty) {
-            const shouldDiscard = window.confirm(
-                "Discard unsaved graph edits?",
-            );
-            if (!shouldDiscard) {
+            if (!(await confirmDiscardEdits("Creating a new board will lose them."))) {
                 return;
             }
         }
@@ -1292,10 +1303,13 @@
 
     // Phase 8: load a starter preset as a new board, binding its source to the
     // first available stream (the user can rebind in the inspector).
-    function loadStarterTemplate(template: StarterTemplate) {
+    async function loadStarterTemplate(template: StarterTemplate) {
         if (graphDirty) {
-            const shouldDiscard = window.confirm("Discard unsaved graph edits?");
-            if (!shouldDiscard) {
+            if (
+                !(await confirmDiscardEdits(
+                    "Loading a starter template will lose them.",
+                ))
+            ) {
                 return;
             }
         }
@@ -1336,18 +1350,33 @@
     // capturing the bundle path, protocol, device binding, and validation
     // accuracy. The bundle is already baked into the graph's classify node, so
     // loading a profile just reloads that graph — resume in one click.
-    function saveCurrentAsProfile() {
+    async function saveCurrentAsProfile() {
         if (!selectedGraphId) {
-            window.alert("Save the graph first, then save it as a profile.");
+            await showAlert({
+                title: "Save the board first",
+                body: "A profile points at a saved board, so this board needs to be saved before it can become one.",
+            });
             return;
         }
         if (graphDirty) {
-            window.alert(
-                "Save the graph (unsaved edits) before creating a profile.",
-            );
+            await showAlert({
+                title: "Unsaved edits",
+                body: "Save this board before creating a profile, or the profile would point at the version on the server rather than what you see.",
+            });
             return;
         }
-        const displayName = window.prompt("Profile name (e.g. Alice):", "");
+        const displayName = await askName({
+            title: "Save as profile",
+            body: "A profile remembers this board plus its trained model, so a participant can be resumed in one click.",
+            label: "Profile name",
+            placeholder: "e.g. Alice",
+            noun: "profile",
+            existing: profiles.map((profile) => ({
+                name: profile.display_name,
+                hint: profile.participant_id,
+            })),
+            confirmLabel: "Save profile",
+        });
         if (!displayName) {
             return;
         }
@@ -1391,9 +1420,12 @@
         });
     }
 
-    function loadProfile(profile: Profile) {
+    async function loadProfile(profile: Profile) {
         if (!profile.graph_id) {
-            window.alert("This profile has no saved graph.");
+            await showAlert({
+                title: "This profile has no board",
+                body: `"${profile.display_name}" was saved without a board, so there is nothing to open.`,
+            });
             return;
         }
         const hasGraph = graphDefinitions.some(
@@ -1401,18 +1433,22 @@
         );
         if (!hasGraph) {
             listStreamGraphs();
-            window.alert(
-                "Refreshing saved graphs — pick the profile again once the list loads.",
-            );
+            await showAlert({
+                title: "Refreshing saved boards",
+                body: "This profile's board is not in the list yet. Pick the profile again once the list finishes loading.",
+            });
             return;
         }
-        selectGraph(profile.graph_id);
+        void selectGraph(profile.graph_id);
     }
 
-    function removeProfile(profile: Profile) {
-        const confirmed = window.confirm(
-            `Delete profile "${profile.display_name}"? The saved graph is not deleted.`,
-        );
+    async function removeProfile(profile: Profile) {
+        const confirmed = await askConfirm({
+            title: `Delete profile "${profile.display_name}"?`,
+            body: "The board and the trained model it points at are kept — only the profile entry is removed.",
+            confirmLabel: "Delete profile",
+            danger: true,
+        });
         if (confirmed) {
             deleteProfile(profile.participant_id);
         }
@@ -2328,16 +2364,32 @@
         persistExperiment({ ...target, live_graph_id: selectedGraphId });
     }
 
-    function createExperiment(): void {
+    async function createExperiment(): Promise<void> {
         flushExperimentEdit();
         if (!selectedGraphId) {
-            window.alert("Create or select a board first.");
+            await showAlert({
+                title: "Pick a board first",
+                body: "An experiment owns a board and its recorded history, so it needs one to bind to. Create or select a board, then try again.",
+            });
             return;
         }
-        const label = window.prompt(
-            "Experiment name (e.g. Finger counting):",
-            "",
-        );
+        const label = await askName({
+            title: "New experiment",
+            body: "The experiment owns this board and every recording made from it.",
+            label: "Experiment name",
+            placeholder: "e.g. Finger counting",
+            noun: "experiment",
+            // Shown and filtered as you type, so a name that collides with one
+            // you already have is obvious before it is created.
+            existing: experiments.map((experiment) => ({
+                name: experiment.label || experiment.experiment_id,
+                hint:
+                    experiment.live_graph_id === selectedGraphId
+                        ? "on this board"
+                        : (experiment.live_graph_id || "no board"),
+            })),
+            confirmLabel: "Create experiment",
+        });
         if (!label) {
             return;
         }
@@ -2356,6 +2408,9 @@
             updated_at_us: nowUs,
         });
         showExperimentPanel = true;
+        // A brand-new experiment's next step is authoring its protocol, so open
+        // the designer straight away (it renders once the bind lands).
+        showExperimentDesigner = true;
     }
 
     function patchBoundExperiment(patch: Partial<Experiment>): void {
@@ -2457,31 +2512,49 @@
     // Deleting an instance destroys recorded data, so a SEALED one needs a second,
     // explicit confirmation and the backend's force flag — a mis-click must not be
     // able to erase history.
-    function deleteInstance(graphId: string, immutable: boolean): void {
+    async function deleteInstance(
+        graphId: string,
+        immutable: boolean,
+    ): Promise<void> {
         const instance = graphDefinitions.find(
             (graph) => graph.graph_id === graphId,
         );
         const label = instance?.instance_id ?? graphId;
-        const prompt = immutable
-            ? `Delete sealed recording "${label}"? Its Parquet files and marker ` +
-              `timeline are deleted too, permanently.`
-            : `Delete instance "${label}"?`;
-        if (!window.confirm(prompt)) {
+        const confirmed = await askConfirm({
+            title: immutable
+                ? `Permanently delete recording "${label}"?`
+                : `Delete instance "${label}"?`,
+            body: immutable
+                ? "This is sealed recorded history. Deleting it cannot be undone."
+                : "This instance is editable, so nothing recorded is lost.",
+            points: immutable
+                ? [
+                      "Its Parquet data files are deleted from disk.",
+                      "Its marker timeline is deleted.",
+                      "Any model trained from it will lose its lineage.",
+                  ]
+                : undefined,
+            confirmLabel: immutable ? "Delete permanently" : "Delete instance",
+            danger: true,
+        });
+        if (!confirmed) {
             return;
         }
         deleteStreamGraph(graphId, immutable);
     }
 
-    function deleteBoundExperiment(): void {
+    async function deleteBoundExperiment(): Promise<void> {
         const current = boundExperiment;
         if (!current) {
             return;
         }
         discardExperimentEdit();
-        const confirmed = window.confirm(
-            `Delete experiment "${current.label || current.experiment_id}"? ` +
-                "The board and any recorded data are not deleted.",
-        );
+        const confirmed = await askConfirm({
+            title: `Delete experiment "${current.label || current.experiment_id}"?`,
+            body: "Its protocol and participant details are removed. The board it owns, and any data already recorded, are kept.",
+            confirmLabel: "Delete experiment",
+            danger: true,
+        });
         if (confirmed) {
             deleteExperiment(current.experiment_id);
         }
@@ -2490,9 +2563,14 @@
     // Migration (Phase 1): lift a legacy `experiment` node's protocol into a
     // stored experiment bound to this board, and swap the node for a `markers`
     // source IN PLACE — same node id, so every edge it fed survives untouched.
-    function convertExperimentNode(node: StreamGraphExperimentNode): void {
+    async function convertExperimentNode(
+        node: StreamGraphExperimentNode,
+    ): Promise<void> {
         if (!selectedGraphId) {
-            window.alert("Save the board first, then convert.");
+            await showAlert({
+                title: "Save the board first",
+                body: "Converting binds a stored experiment to this board, which needs the board to exist on the server. Save it, then convert.",
+            });
             return;
         }
         const config = node.config;
@@ -3225,14 +3303,23 @@
         compositeTemplates = listCompositeTemplates();
     }
 
-    function createCompositeFromSelection() {
+    async function createCompositeFromSelection() {
         if (selectedNodeIds.size === 0) {
             return;
         }
-        const label = window.prompt(
-            "Name this composite",
-            "New composite",
-        );
+        const label = await askName({
+            title: "Group into a composite",
+            body: `${selectedNodeIds.size} selected node${selectedNodeIds.size === 1 ? "" : "s"} will become one reusable node you can drop onto any board.`,
+            label: "Composite name",
+            placeholder: "e.g. EMG preprocessing",
+            initial: "New composite",
+            noun: "composite",
+            existing: compositeTemplates.map((template) => ({
+                name: template.label,
+                hint: `${template.nodes.length} nodes`,
+            })),
+            confirmLabel: "Create composite",
+        });
         if (!label) {
             return;
         }
@@ -3242,9 +3329,10 @@
             label,
         );
         if (!result) {
-            window.alert(
-                "Cannot create a composite from this selection. Composites cannot contain other composites yet.",
-            );
+            await showAlert({
+                title: "This selection cannot be grouped",
+                body: "Composites cannot contain other composites yet. Ungroup any composite in the selection first, or leave it out.",
+            });
             return;
         }
         saveCompositeTemplate(result.template);
@@ -3662,7 +3750,17 @@
             refreshCompositeTemplates();
         }
         if (errors.length > 0) {
-            window.alert(errors.join("\n"));
+            await showAlert({
+                title:
+                    templates.length > 0
+                        ? "Imported with some problems"
+                        : "Could not import that file",
+                body:
+                    templates.length > 0
+                        ? `${templates.length} composite${templates.length === 1 ? "" : "s"} imported. The rest were skipped:`
+                        : undefined,
+                points: errors,
+            });
         }
     }
 
@@ -5346,7 +5444,7 @@
                         onBind={bindExperiment}
                         onCreate={createExperiment}
                         onPatch={patchBoundExperiment}
-                        onPatchProtocol={patchBoundProtocol}
+                        onEditProtocol={() => (showExperimentDesigner = true)}
                         onDelete={deleteBoundExperiment}
                         onRecord={() =>
                             boundExperimentView &&
@@ -6762,6 +6860,20 @@
         onchange={handleCompositeFileChange}
     />
 </div>
+
+<!-- One host renders whichever in-app dialog is pending; it sits above the
+     designer and composite overlays. -->
+<DialogHost />
+
+{#if showExperimentDesigner && boundExperimentView}
+    <ExperimentDesigner
+        bound={boundExperimentView}
+        readOnly={boardIsImmutable}
+        onPatch={patchBoundExperiment}
+        onPatchProtocol={patchBoundProtocol}
+        onClose={() => (showExperimentDesigner = false)}
+    />
+{/if}
 
 {#if expandedComposite}
     {@const layout = compositeInternalsLayout(expandedComposite)}

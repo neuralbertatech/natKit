@@ -2,9 +2,184 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-07
 
-## Active Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
+## Active Task — Experiment authoring UX rework (Phase 1 SHIPPED, Phases 2–5 planned)
+
+Zach flagged the VP experiment-definition panel as "genuinely a bad experience":
+unlabeled fields, cramped 320px strip, no quick setup, and a wish for experiments
+as zoomable/wireable spatial objects. Plan:
+`plans/experiment-authoring-ux-rework-plan.html` — 5 phases, one `StepProtocol`
+shape under every altitude (quick-setup recipe → step list → step detail →
+(later) sequence canvas with zoomable repeat groups → session composition).
+Keeps the experiment-as-entity model and the `markers` node untouched.
+
+**Phase 1 DONE 2026-08-07 (uncommitted, branch `zach/tab-persistence`):**
+- Every step field labeled (Step type / Shown to participant / Class label
+  (trained on) / Hold (s) / Continue-button text / Times / Shuffle each pass /
+  Tutorial (not trained on)). `ExperimentPanel.svelte` step rows restructured
+  into head (type + actions) / labeled fields / flags.
+- **Instructions can hold for input**: `InstructionStep` gained
+  `wait_for_input` + `continue_label` (`experimentSteps.ts`); the toggle swaps
+  Duration for button text. Compiles to the same zero-length barrier a `wait`
+  step emits, so runner/clock-freeze/`resolveScheduleWaits` needed no changes;
+  the standalone `wait` kind survives for existing protocols.
+- Kind color accents (left border), Duplicate-step button (deep-copies repeat
+  groups with fresh ids), and kind changes now carry text/duration/media over
+  (`retypeStep` swapped wholesale via `replaceStep` so old-kind fields don't
+  linger — `patchStep` merges and would leak them).
+- Verified: svelte-check 0 errors, vitest 79/79 (2 new tests), and LIVE
+  headless screenshots against the dev stack (frontend container bind-mounts
+  ./frontend with HMR, so source edits are served immediately). Scratch board +
+  experiment created and fully deleted after — boards back to the original 8.
+  Recipe: playwright-core from `~/.hermes/hermes-agent/node_modules` (import by
+  absolute path — ESM ignores NODE_PATH), Node 22's global WebSocket for the WS
+  protocol, deep-link to /VisualProgramming does NOT route (tinro lands on
+  Home) — click the nav link instead. Auth is open in dev (session endpoint
+  answers authenticated without a cookie).
+
+**Zach signed off (2026-08-07): designer = overlay; recipe hard-detaches on
+customize; Phase 4 canvas will be a view toggle, list stays canonical.**
+
+**Phase 2 DONE 2026-08-07 (uncommitted):** new `ExperimentDesigner.svelte`
+overlay (same idiom as composite-internals: z-60 backdrop, Esc/backdrop close);
+ALL protocol authoring moved there (step editor, legacy fixed form, built-ins,
+media); `ExperimentPanel.svelte` rewritten as the operator status card
+(bind/create, participant/notes, protocol summary card + "Edit protocol",
+Record/Stop, live cue, history). `createExperiment` opens the designer
+immediately. New in the designer: **compiled-timeline strip** (per-class colored
+segments via scheduleForProtocol — works for BOTH protocol shapes; waits render
+as amber ticks since they have no length; tutorial spans hatched; class legend),
+**collapsible repeat groups** (one-line "10 steps · ~60s total" summary),
+**drag-to-reorder** off a grip handle (HTML5 dnd; arrows kept as accessible
+path; repeat groups refuse to nest; drop-into-group appends).
+
+Verified: svelte-check 0/0, vitest 79/79, live headless: designer auto-opens on
+create, convert-to-steps, wait toggle updates strip (tick + chip), collapse,
+reorder AND drop-into persist through the debounced save + echo, Esc closes,
+"Edit protocol" reopens, no console errors, stores restored exactly (8 boards /
+7 experiments — Zach ACTUALLY HAS 7 real experiments now, created since Aug 5;
+state.md's old "0 experiments" is stale — filter cleanups by scratch label,
+never assume the store is empty).
+
+Gotchas learned the hard way:
+- **Playwright's `dragTo` does not drive HTML5 dnd here** — dispatch synthetic
+  DragEvents (`new DataTransfer()` works in Chromium) to test drag paths.
+- **Real bug found by that test:** dragover on the group body bubbled to the
+  group card's own handler, overwriting "into the group" with "after the group
+  card" — every drop-into was silently a no-op reorder. Fixed with
+  stopPropagation in `handleGroupBodyDragOver`.
+- A crashed UI script leaks its scratch experiment AND board; two leaked this
+  session and were cleaned by id/label over the WS protocol
+  (delete_experiment / delete_stream_graph). Verify store counts after every
+  scripted run.
+
+**Phase 2.5 DONE 2026-08-07 — seeded randomization + step-type cleanup
+(uncommitted).** Zach asked for: randomization that is seed-based/recreatable,
+and better step types.
+- `experimentSteps.ts`: `TimedStep` mixin (`duration_s` + optional `jitter_s`)
+  on instruction/cue/rest; `StepProtocol.seed` feeds one mulberry32 stream in
+  `compileStepProtocol` (advanced once per jittered emission) → duration ±
+  jitter, clamped ≥0. Barriers (wait / instruction-holding) never jitter. Same
+  protocol JSON = same schedule; reroll seed = new variation. 4 new tests
+  (83/83).
+- Designer: "± Jitter (s)" on timed steps (0 stored as undefined to keep JSON
+  clean; hides while an instruction holds for input); shuffle Seed + dice on
+  repeat groups (shown when shuffle on); "Timing seed" + dice in the header;
+  legacy fixed form gained its Shuffle seed field.
+- Step-type cleanup: `wait` retired from the add palette and the kind dropdown
+  (option still shown when the step IS one, so old protocols render);
+  `retypeStep` wait→instruction carries `wait_for_input`+`continue_label` so
+  conversion is behaviour-preserving. Add buttons now have kind color dots +
+  "what it's for" tooltips.
+- Verified: svelte-check 0/0, vitest 83/83, live headless (palette without
+  Wait, dropdown without wait option, both dice buttons render, timeline strip
+  visibly recompiles on timing-seed reroll, jitter field hides under the wait
+  toggle, stores restored exactly, no console errors).
+
+**Vikunja board audited 2026-08-10** (project 53 via the `assistant` CLI). This
+work maps onto tickets **#313** (rests) and **#314** (experiment window), whose
+descriptions are the original asks. #314's undone bullets were split into
+**#335** quick setup and **#336** spatial canvas. Findings recorded as ticket
+comments; also corrected #321 (the hardware channel family already exists —
+`HARDWARE_CONFIGURATION` is declared but never used) and anchored #318 to the
+`StreamType` extension seam.
+⚠️ **Vikunja stores descriptions/comments as HTML (tiptap), NOT markdown**, and
+the `assistant` CLI advertises `-description <md>` but does no conversion — so
+markdown lands as literal text with newlines collapsed. Send HTML. The CLI also
+has no comment edit/delete, so a bad comment can only be fixed in the web UI.
+
+**#313 DONE 2026-08-10 — rest interleaving (the other half of the ticket).**
+`RepeatStep.interleave_rest?: InterleavedRest` ({duration_s, jitter_s?, label?,
+text?}); the compiler inserts a rest after EVERY child including the last (that
+trailing rest is what separates consecutive passes), and does so **after
+shuffling** — which is the whole reason it is a compile step and not real rows.
+"Interleave on, 0s" inserts nothing. Jitter composes with the protocol timing
+seed. UI: "Rest between steps" toggle on the group card revealing Rest (s) +
+± Jitter (s); collapsed summary says "5 steps + rests · ~60s total".
+Verified: vitest 8 new tests including **an interleaved group reproducing
+`buildCueSchedule`'s exact phase/gesture sequence and duration**; live run went
+32 segments (10 rows) → 17 (5 cue rows) → 32 segments with only 5 rows.
+
+**#335 DONE 2026-08-10 — quick setup.** New `StreamViewer/quickSetup.ts` (pure,
+20 tests): `QuickSetupRecipe` → steps in the shape get-ready → practice
+(tutorial) → ready gate → main block, built on #313's interleave so the
+generated protocol is N cue rows not 2N. `labelFromFilename` ("Fist Closed.PNG"
+→ `fist_closed`). New `QuickSetupCard.svelte` in the designer replaces the step
+list while a recipe is attached: Images/Class-names toggle, multi-file drop zone
+uploading via `/api/media`, thumbnail tiles with editable labels, knobs, live
+summary. Recipe stored as `protocol.quick_setup` (typed `unknown` on
+StepProtocol + `isQuickSetupRecipe` guard, to avoid a circular import and
+because it is read back from a store).
+**Detach is enforced at the `commitSteps` choke point** — every hand edit funnels
+there, so that is where the recipe is dropped; "Customize steps…" confirms and
+is one-way by design. Live-verified with 3 real uploads incl. thumbnails
+actually rendering, knob→regenerate, backend round-trip, and detach keeping the
+steps while a following hand edit stays detached.
+
+Totals now: svelte-check 0/0, **vitest 110/110**. Board: #313 and #335 closed,
+#314 at 80% (only #336 left).
+
+**Follow-ups after Zach moved #313/#335 to a validation bucket (2026-08-10):**
+
+1. **Interleaving is now the DEFAULT.** `stepsFromLegacyProtocol` emits cues +
+   `interleave_rest` instead of rest rows, so converting ANY legacy protocol
+   (incl. the Finger-counting default) yields 5 rows not 10 with the toggle
+   already on — compiled timeline unchanged (32 segments), which the existing
+   equivalence test pins. `blankStep("repeat")` also defaults to
+   `interleave_rest: {duration_s: 2}`.
+2. **All 20 `window.confirm/alert/prompt` call sites are GONE.** New
+   `VisualProgramming/dialogs.svelte.ts` (await-able `askConfirm`/`askName`/
+   `showAlert`, a queue, and a settle-guard against Enter+click double-resolve)
+   plus `DialogHost.svelte` mounted once in the editor (z-index 80, above the
+   designer's 60). The name dialog **lists existing names and filters as you
+   type** with an "n of m" counter, warns on a case/whitespace-insensitive exact
+   match (does NOT block — ids are generated, so duplicates are legal), and is
+   reused for experiment / profile / composite names.
+   - Functions that now await a dialog became `async`: `selectGraph`,
+     `createGraph`, `loadStarterTemplate`, `createExperiment`, `deleteInstance`,
+     `deleteBoundExperiment`, `convertExperimentNode`,
+     `createCompositeFromSelection`, `saveCurrentAsProfile`, `removeProfile`,
+     `loadProfile`. **The non-dirty path stays synchronous** (no `await` is
+     reached), so callers depending on immediate selection are unaffected.
+   - ⚠️ **CSS trap hit twice, both caught only by screenshotting:** a
+     `display:flex` container turns bare text nodes into flex items (the
+     collision sentence stacked into columns) and strips `list-item` off `<li>`s
+     (bullet markers vanished). Don't flex a text paragraph or a `<ul>`.
+   - Live check **asserts Playwright's `dialog` event never fires**, which is the
+     regression guard for this work.
+
+**Next: #336** — spatial protocol canvas (view toggle; steps as nodes, repeat
+groups as zoomable containers, markers node as portal). Not started.
+
+⚠️ **Scripted-UI hygiene, learned again:** a script that throws before its
+cleanup leaks a scratch board AND experiment. Wrap cleanup in `finally`. Also
+**do not reload the page and assume the same board is selected** — the VP page
+picks its own, which is how one run ended up reading a different experiment.
+Zach has **8 real experiments** in the store now; filter cleanup by the
+"UX Scratch Test" label and verify counts after every run.
+
+## Prior Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
 
 Bidirectional server<->sensor commands, with command output on the log channel.
 The device subscribes to its own `Command-<id>-Json-NatExecutionCommandV1` topic
