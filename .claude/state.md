@@ -2,9 +2,62 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-10
 
-## Active Task — Experiment authoring UX rework (Phase 1 SHIPPED, Phases 2–5 planned)
+## Active Task — Committed Playwright suite for the VP UI (TEC-NATKIT-15 DONE)
+
+**#338 CLOSED 2026-08-10 — commit `20f2bc2`.** The throwaway `/tmp` verification
+scripts are now a committed suite: `frontend/e2e/`, 23 tests over 7 spec files,
+`npm run test:e2e`, ~1.4 min against the dev stack. `@playwright/test` is a real
+dev dependency (browsers already cached in `~/.cache/ms-playwright`);
+`npm run check` type-checks `tsconfig.e2e.json` too, and **vitest is now scoped
+to `src/`** (`vite.config.ts` `test.include`) or it tries to run browser specs.
+
+Read `frontend/e2e/README.md` first — it carries the paid-for gotchas. The ones
+that cost time THIS session:
+- **A Save clicked before the socket connects is a silent no-op.** Every editor
+  action that talks to the backend returns false and only sets an error string.
+  `VpApp.open` waits for `.conn-pill.connected`; before that, every test failed
+  with "board never reached the backend store".
+- **A new board is a local draft — there is no auto-save for one.** It must be
+  saved explicitly, because `save_experiment` refuses to bind a board the backend
+  has never seen (`persistExperiment` saves it first in the app's own flow).
+- **A repeat group contains its children's fields and actions**, and `± Jitter
+  (s)` exists at both levels — hence `ownField`/`stepAction`, which scope through
+  the card's own `.card-main`. A bare `.locator('button[title=...]')` on a group
+  matches 4 elements.
+- **The canvas replaces the list**, so step rows are not in the DOM to count once
+  Canvas is showing — read counts before switching.
+- **`fill()` only raises `input`**; the comma-separated class list commits on
+  `change` and needs a blur.
+- **A rendered thumbnail is not proof the image loaded** — poll `naturalWidth>0`.
+  (The old `/tmp/qs-images` PNGs were valid; the check was just too early. The
+  committed fixtures are hand-generated 64×64 PNGs.)
+
+Evidence: `~/natkit-verification/<sha>/` (`-dirty` when the tree is not clean),
+`<ticket>-<nn>-<slug>.png` at 1600×1050 @2x + `MANIFEST.md` with a caption per
+shot AND the run health (native dialogs / console errors / stores restored).
+33 shots attached to #313/#314/#335/#336/#337; manifest on #338 (attachment #53
+is current — **`attachment delete` still 401s**, so #52 is a stale duplicate).
+Seeded randomization is proven by **image equality** (seed 1 / 2 / 1 again,
+asserting shots 1 and 3 byte-identical).
+
+**Real defect found by the suite → #342 (TEC-NATKIT-19):** the designer
+re-renders the **last-saved** protocol for the duration of the save round trip,
+because `flushExperimentEdit` clears `pendingExperimentEdit` when it SENDS the
+save, not when the `experiment_saved` echo lands. Measured ~11ms via a
+MutationObserver (410ms after the edit = the 400ms debounce), but it is as long
+as the round trip. It resets the canvas's zoomed-into group (keyed by step id) —
+which is why "open a repeat group right after converting" bounced to the top
+level — and is a plausible source of a transient `recipe.cues`-on-null crash in
+`QuickSetupCard`. `Designer.convertToSteps` waits for the round trip via
+`VpApp.waitForStoredProtocol` instead of racing it; **that settle can be deleted
+once #342 is fixed.**
+
+Not covered (deliberate): recording a session (needs a device + live broker),
+replay/instance review, and the markers-node "Open protocol" portal.
+
+## Prior Task — Experiment authoring UX rework (Phase 1 SHIPPED, Phases 2–5 planned)
 
 Zach flagged the VP experiment-definition panel as "genuinely a bad experience":
 unlabeled fields, cramped 320px strip, no quick setup, and a wish for experiments
