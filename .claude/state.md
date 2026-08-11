@@ -7,10 +7,24 @@
 ## Current Task — EPIC #343 slice 0 DONE and hardware-verified (#344 CLOSED)
 
 **#344 (TEC-NATKIT-21) is CLOSED at 100%** — commits `598a800` (scaffold),
-`880a042` (config corrected from what the board reports), `84ed628` (READMEs).
-The fork lives in the **`natKit-IMU` submodule on branch `firmware-idf-fork`**
-(trunk untouched at `635d86e`), as a sibling directory `natKit-IMU/firmware-idf/`
-— native `idf.py`, no PlatformIO, `natVR/firmware` as the template.
+`880a042` (config corrected from what the board reports), `84ed628` + `a4952cb` +
+`59cb34a` (READMEs).
+
+**MERGED TO TRUNK 2026-08-11 (Zach's call — "we are using a separate code
+path").** natKit-IMU `trunk` is now `59cb34a` and **the parent repo's pin is
+bumped to it** (`e32af4e`), so `natKit-IMU/firmware-idf/` is in a default
+checkout — which is what #344 wanted (both firmwares in one checkout). The
+`firmware-idf-fork` branch still exists and is identical to trunk; it is now
+redundant and safe to delete. Nothing is pushed — both repos are local-only.
+
+Why the merge was safe, verified not assumed: `git diff trunk..fork` was **971
+insertions, 0 deletions**, nothing under `embeded/`, and the only file outside
+`firmware-idf/` was natKit-IMU's own README. Re-verified AT trunk after
+merging: `embeded/` builds (`pio run -e release`, SUCCESS) and all three fork
+roles build.
+
+The fork is a sibling directory `natKit-IMU/firmware-idf/` — native `idf.py`, no
+PlatformIO, `natVR/firmware` as the template.
 
 - **Role is a Kconfig choice** (`main/Kconfig.projbuild`:
   `CONFIG_NATKIT_ROLE_{LEAF,PRIMARY,GATEWAY}`), so it is three images from one
@@ -102,14 +116,10 @@ authoritative "there are two firmwares" section — which image is on which boar
 command (`cd embeded && pio run -e release -t upload`).
 `natKit-IMU/firmware-idf/README.md` carries the fork's build/config/invariants.
 
-**Submodule pin: left at `trunk` `635d86e` — Zach's call (2026-08-10: "we can
-update the pin from trunk to this if we need").** Consequence to know rather than
-discover: while the pin stays there, a `git submodule update` in the parent
-checks natKit-IMU back out at `635d86e` detached and **`firmware-idf/` vanishes
-from the working tree** (commits are safe on the `firmware-idf-fork` branch —
-`git -C natKit-IMU checkout firmware-idf-fork` brings it back). That is the
-opposite of #344's "both firmwares in one checkout" recommendation, so bumping
-the pin is what actually delivers it.
+**Rollback is unchanged by the merge** — `embeded/` is byte-identical to what it
+was at `635d86e`, so `cd embeded && pio run -e release -t upload` is still the one
+command, and the epic's "the current firmware must stay flashable" constraint
+still holds with both trees on one branch.
 
 **Next slice: #345 (TEC-NATKIT-22)** — BNO08x on native IDF (`spi_master` + CEVA
 `sh2`), carrying the five hardware-found fixes listed on that ticket. Then #346
