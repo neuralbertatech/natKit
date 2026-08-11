@@ -4,7 +4,37 @@
 
 **Last updated:** 2026-08-10
 
-## Current Task — #345 (TEC-NATKIT-22) BNO08x port: WIP at 40%, NOT streaming
+## Current Task — #346 (TEC-NATKIT-23) frame format: DECIDED, 75%. #345 BLOCKED.
+
+**#346 is 75% and the epic's "biggest unknown" is dead** (`e7894ca`). Both numbers
+the epic reasoned from were wrong, and measuring them removed the problem:
+- **The frame is 524 bytes, not ~5 KB.** `NatImuBulkDataSchema` Binary encodes
+  `24 + 50 * sampleCount`; the running firmware sends 10 samples, and the live
+  console prints `Bytes Encoded 524`. The 5 KB figure was the legacy 5000-byte
+  fallback or the 16 KB MQTT buffer.
+- **ESP-NOW on this PICO-D4 is version 2 with a ceiling of exactly 1470 bytes**
+  (1470 confirmed, 1471 → `ESP_ERR_ESPNOW_ARG`). Probed, not read off a header.
+- At the real IMU rate: 50/50 frames confirmed, 0 failures, 2.5 KB/s. Flat out:
+  177.8 frames/s (91 KB/s), excess **refused at the API** — explicit
+  back-pressure, no silent loss. ~35× headroom.
+- **DECIDED and on the ticket: the NODE builds the canonical frame, one frame =
+  one packet.** No fragmentation, no reassembly state on the primary, loss
+  degrades to whole missing frames that `seqNo` already makes detectable.
+- Serial budget also fine: 2.5 KB/s per node vs ~11.5 KB/s at 115200 ≈ 4 nodes
+  (~35 at 921600). natVR's stall was 19 KB/s of JSON — a different regime.
+
+**Still open on #346, both needing hardware I don't have:** `esp_now_get_version()`
+on a **C3** (a v1 primary would break the decision — v1 devices cannot receive v2
+packets >250 B), and the multi-node loss run. **The harness is committed and
+ready:** `./build-role.sh espnow-probe esp32` for the sender, a second board with
+`CONFIG_NATKIT_ESPNOW_PROBE_RECEIVER=y` on the same channel for the receiver,
+which reports **sequence gaps** (4-byte seq in every packet), not just a count.
+
+⚠️ **#346's `Blocked` label is stale and I could NOT remove it** — `task update
+-label -Name` 401s like every other DELETE in this CLI (adding works). **Needs
+clearing in the web UI.** #345 and #347 are correctly labelled Blocked.
+
+## Blocked — #345 (TEC-NATKIT-22) BNO08x port: WIP at 40%, NOT streaming
 
 **Committed `b42d763` on natKit-IMU `trunk`, deliberately as WIP.** The board was
 restored to `embeded/` afterwards and verified streaming, so hardware is safe.
