@@ -4,7 +4,56 @@
 
 **Last updated:** 2026-08-10
 
-## Current Task — EPIC #343 slice 0 DONE and hardware-verified (#344 CLOSED)
+## Current Task — #345 (TEC-NATKIT-22) BNO08x port: WIP at 40%, NOT streaming
+
+**Committed `b42d763` on natKit-IMU `trunk`, deliberately as WIP.** The board was
+restored to `embeded/` afterwards and verified streaming, so hardware is safe.
+
+**Works on hardware:** the hub answers (4 product ids); `sh2_getCalConfig` reports
+**0x05 (accel=1 gyro=0 mag=1)**, the same value the Arduino firmware sees, so the
+port reads the hub correctly; accelerometer reads `+0.051 -5.371 +8.184` m/s²
+(**magnitude 9.76** = a real gravity vector); **the ticket's calibration fix
+works** — deferred `setCalConfig(0x07)` returns 0 with a 0x07 read-back and gyro
+accuracy reached **high**; heap flat over 40s.
+
+**Does NOT work:** sustained streaming. A few reports arrive, then the hub
+**resets itself ~10× in 40s** (real `SH2_RESET` events, with ZERO INT timeouts of
+ours), and reads return 15-byte SHTP **channel-0** packets instead of the
+**channel-3** sensor reports that were enabled. **The fault is in the transport,
+not the decode.**
+
+**Two findings that contradict #345's "port the fixes verbatim" advice:**
+1. **`setCalConfig` must NOT be called in setup on this fork.** On Arduino it
+   fails there harmlessly (`SH2_ERR_HUB`); here it SUCCEEDS, and a succeeding
+   early call is the documented way to wedge this hub — observed exactly that
+   (returned 0 → hub stopped asserting INT → next op -5 → stream dead after 2
+   reports). Timing, not code: Arduino starts the IMU after WiFi/MQTT, a leaf gets
+   there ~350ms after power-on. The SHTP *pumping* the old note calls
+   "load-bearing" is kept explicitly; the write is deferred to the sample loop.
+2. **The Adafruit two-CS-framed read does not port.** It relies on the hub
+   re-presenting an unread packet after CS deasserts; literally ported it gave a
+   byte-shifted stream (17,593 reads, 0 errors, all "15 bytes, channel 0", seq
+   jumping 198/74/208/88). Now one continuous CS assertion
+   (`spi_device_acquire_bus` + `SPI_TRANS_CS_KEEP_ACTIVE`) covers header + body.
+
+**Next hypotheses, in order:** (1) whether the Arduino build actually drives
+**software** SPI — `platformio.ini`'s pinned-BusIO comment says BusIO 1.17.3/4's
+rewrite "lands in the exact software-SPI transfer path `begin_SPI()` drives",
+which would mean the working timing is not what I reproduced; (2) SPI mode/clock;
+(3) CS-to-clock and inter-transfer setup times, the class of thing the
+two-transaction read was accidentally providing.
+
+**Diagnostics are committed and are what this needs:** `Bno08x::halStats()`
+counts reads, packets, empty/oversize headers, per-phase SPI failures and INT
+timeouts, and records the last packet's length, channel and sequence; the leaf
+prints all of it once a second with the INT level. Captures in
+`~/natkit-verification/b42d763/` (3 attached to #345).
+
+⚠️ **Reflashing the fork takes the IMU node off the air.** Rollback is `cd
+embeded && pio run -e release -t upload` (~29s incremental) and a byte-exact 4 MB
+pre-flash dump is at `~/natkit-verification/598a800/`.
+
+## Prior Task — EPIC #343 slice 0 DONE and hardware-verified (#344 CLOSED)
 
 **#344 (TEC-NATKIT-21) is CLOSED at 100%** — commits `598a800` (scaffold),
 `880a042` (config corrected from what the board reports), `84ed628` + `a4952cb` +
