@@ -2,9 +2,80 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-10
+**Last updated:** 2026-08-12
 
-## Current Task — #346 (TEC-NATKIT-23) frame format: DECIDED, 75%. #345 BLOCKED.
+## Current Task — #345 (TEC-NATKIT-22) BNO08x port: STREAMING at 85%
+
+**FIXED. `ceb8150` on natKit-IMU trunk, pin bumped (`2a00ce3`).** The port now
+streams; what was left of the ticket needs hands on the board rather than more
+debugging.
+
+**Two differences from `embeded`'s Adafruit stack — found by READING it, not by
+guessing — and both had to go:**
+1. **MOSI was not driven at all.** `Adafruit_SPIDevice::read` memsets the buffer
+   to its sendvalue (0x00) and does a FULL-DUPLEX transfer, so MOSI carries zeros
+   for every clock of every read. The HAL passed `tx_buffer = nullptr`, which in
+   `spi_master` means "no MOSI phase" — the pin is undriven. The BNO08x is full
+   duplex, so whatever sits on MOSI while we clock a read is shifted into the
+   hub's own SHTP receiver: we were feeding it garbage writes. That is what
+   explains real `SH2_RESET` events with ZERO INT timeouts of ours.
+2. **CS was peripheral-driven, not hand-driven.** Adafruit asserts it with
+   `digitalWrite` before its transfers and releases it after (microseconds of
+   setup and hold); `spics_io_num` gives a fraction of a bit-time. Now a plain
+   GPIO around each whole SHTP packet.
+
+Also, because we now do our own transfers: SPI stages through **our own
+word-aligned buffers**, since sh2's rx/tx buffers are library statics with no DMA
+guarantees, and the ESP32's SPI DMA writes whole 32-bit words — so a read whose
+length is not a multiple of 4 can scribble up to 3 bytes past the end, which now
+lands in our slack instead of sh2's state.
+
+**Hypothesis 1 from the last session is DISPROVEN and needed no hardware.** The
+working Arduino path is NOT software SPI: `main.cpp` calls `imuReader.start2()`
+→ `Bno08xDevice2` → `spiClass.begin(5, 21, 19)` + `begin_SPI(cs, int, &spiClass)`,
+and `begin_SPI` builds the HARDWARE-SPI `Adafruit_SPIDevice` on HSPI/SPI2 at 1 MHz
+mode 3. `ImuReader::start()`, with its commented-out `spiClass.begin`, is dead
+code. Do not re-open that line of enquiry.
+
+**Measured, at rest, board undisturbed** (`~/natkit-verification/ceb8150/`,
+3 files attached to #345):
+- **300s soak: 106,475 reports at 357 Hz**, holding from second 3 to the end.
+- **`resets 1`, `INT timeouts 2`, `spi fail 0/0`, `empty 0`, `oversize 1`** —
+  every error counter still at its bring-up value five minutes in.
+- **Heap flat at 290,584 B (min 290,404)**, which is the ticket's soak bar.
+- Gyro calibration reaches **high** at second 8; the deferred `setCalConfig(0x07)`
+  returns 0 with a 0x07 read-back, so that earlier fix carries over intact.
+- Accel `-1.250 +0.797 +9.715` m/s², **magnitude 9.83** — a real gravity vector.
+- Bring-up reads as a real SHTP sequence now: 276-byte advertisement on channel 0,
+  control on 2, the 5-byte executable reset-complete on 1, four hub part numbers,
+  then channel-3 reports with a monotonic sequence. Contrast the previous capture:
+  every packet 15 bytes on channel 0, sequence jumping 198/74/208/88.
+
+**Per-sensor rates are NOT a fork difference.** accel ~64 Hz, gyro/mag/rotation
+~98 Hz against the 18000 us asked for — but `embeded`'s live path enables the same
+four reports at the same `NAT_BNO08X_DELAY_BETWEEN_SAMPLES_US` of 18000, so this is
+the hub's own behaviour and both firmwares get it.
+
+**Left on #345, all of it needing hands:** values compared against the current
+firmware **under motion** (at rest both should read the same gravity vector;
+`embeded` prints no values on serial — they go over MQTT — so this also needs the
+dev stack up), and the **six-side calibration routine**. Rotation accuracy still
+reads `unreliable` / `3.142 rad`, which is the pre-existing separate defect, not
+something this port introduced.
+
+**⚠️ THE FORK IS CURRENTLY FLASHED — the IMU node is NOT on the air.** It is
+running the leaf image and streaming to the console, deliberately left that way so
+the two remaining physical checks can be done without reflashing. Rollback is
+`cd natKit-IMU/embeded && pio run -e release -t upload` (~29s incremental; do NOT
+`fullclean` first, that forces a 25-minute network re-fetch), and a byte-exact
+4 MB pre-flash dump is at `~/natkit-verification/598a800/`.
+
+**Capture harness:** `~/natkit-verification/ceb8150/capture.py <seconds> [port]`
+resets the board and streams its console in ONE process — two readers splice the
+byte stream into plausible-looking interleaved lines and cost three captures last
+session.
+
+## Prior Task — #346 (TEC-NATKIT-23) frame format: DECIDED, 75%, still BLOCKED
 
 **#346 is 75% and the epic's "biggest unknown" is dead** (`e7894ca`). Both numbers
 the epic reasoned from were wrong, and measuring them removed the problem:
@@ -30,11 +101,23 @@ ready:** `./build-role.sh espnow-probe esp32` for the sender, a second board wit
 `CONFIG_NATKIT_ESPNOW_PROBE_RECEIVER=y` on the same channel for the receiver,
 which reports **sequence gaps** (4-byte seq in every packet), not just a count.
 
-⚠️ **#346's `Blocked` label is stale and I could NOT remove it** — `task update
--label -Name` 401s like every other DELETE in this CLI (adding works). **Needs
-clearing in the web UI.** #345 and #347 are correctly labelled Blocked.
+⚠️ **The probe commit `e7894ca` broke the other three roles' builds; fixed in
+`dd543d6`.** `CONFIG_NATKIT_ESPNOW_CHANNEL` was `depends on NATKIT_ESPNOW_PROBE`,
+so the symbol vanished whenever the probe was not selected — while
+`espnow_probe.cpp` reads it as a VALUE and compiles into every image by design.
+Leaf, primary and gateway all failed with "was not declared in this scope"; only
+the probe role built. Un-gated rather than wrapping the file in `#if`, because
+compiling every source into every image is the invariant that stops a role from
+rotting. All four roles build for esp32 again from a cleared sdkconfig.
 
-## Blocked — #345 (TEC-NATKIT-22) BNO08x port: WIP at 40%, NOT streaming
+⚠️ **`Blocked` is now stale on BOTH #345 and #346 and the CLI still cannot remove
+a label** — `task update -label -Blocked` 401s (adding works). **Both need
+clearing in the web UI.** #347 is correctly labelled.
+
+## Superseded — #345's earlier WIP state (40%, NOT streaming)
+
+Kept because the hypotheses it rules out are still worth not re-testing; the
+fix is in the Current Task section above.
 
 **Committed `b42d763` on natKit-IMU `trunk`, deliberately as WIP.** The board was
 restored to `embeded/` afterwards and verified streaming, so hardware is safe.
