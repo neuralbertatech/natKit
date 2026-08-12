@@ -4,7 +4,22 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #348 (TEC-NATKIT-25) PRIMARY UPLINK: SHIPPED, 85%, Verification
+## ✅ #340, #315 and #348 ARE CLOSED — Zach approved all three 2026-08-12
+
+All at 100% in Done. **Do not re-verify them**; the evidence is attached to each
+ticket and summarised below. Epic #343 is at 70%: five of seven slices done
+(#344-#348), leaving **#349 gateway** and **#350 bench-and-decide**, plus the
+optional **#373** WiFi-direct stopgap.
+
+**Next slice is #349 (TEC-NATKIT-26), the gateway.** It is also the only thing
+that will exercise #348's real UART path, since everything so far ran in the
+console-shared bring-up mode for want of a USB-to-TTL adapter.
+
+**⚠️ #350's verification depends on the backend recording path, and #365 says that
+path returns 0 samples while frames are on the wire.** Resolve #365 before #350
+rather than during it. It is in the Ice Box and arguably mis-filed.
+
+## Prior Task — #348 (TEC-NATKIT-25) PRIMARY UPLINK: DONE, 100%
 
 **`d660556` on natKit-IMU trunk, pin bumped (`ef4e114`).** Evidence + manifest in
 `~/natkit-verification/d660556-uplink/`, 5 files attached to #348.
@@ -50,7 +65,7 @@ clock fit travelling separately in the node-status frame; registry open by defau
 **Reassembly is DELETED, not deferred** — #346's one-frame-one-packet decision
 means there is no fragment buffer to time out.
 
-## Prior Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: SHIPPED, 90%, Verification
+## Prior Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: DONE, 100%
 
 **`87a6830` on natKit-IMU trunk, pin bumped (`aaa5eec`).** Evidence + manifest in
 `~/natkit-verification/87a6830-coherence/`, 6 files attached to #315.
@@ -110,7 +125,7 @@ RADIO** instead of idling forever, so the failure is visible to the primary rath
 than only over USB. Written expecting board 3 to be sensorless; it isn't, so this
 path is exercised only under QEMU and **has not run on silicon**.
 
-## Prior Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: SHIPPED, 90%, Verification
+## Prior Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: DONE, 100%
 
 **`6c60cec` on natKit-IMU trunk, pin bumped (`9667d9a`).** The primary is the
 clock master; a leaf fits its clock to the primary's and the shift is applied by
