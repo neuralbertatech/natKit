@@ -56,19 +56,72 @@ code. Do not re-open that line of enquiry.
 four reports at the same `NAT_BNO08X_DELAY_BETWEEN_SAMPLES_US` of 18000, so this is
 the hub's own behaviour and both firmwares get it.
 
-**Left on #345, all of it needing hands:** values compared against the current
-firmware **under motion** (at rest both should read the same gravity vector;
-`embeded` prints no values on serial — they go over MQTT — so this also needs the
-dev stack up), and the **six-side calibration routine**. Rotation accuracy still
-reads `unreliable` / `3.142 rad`, which is the pre-existing separate defect, not
-something this port introduced.
+**Zach ran the six-side routine (2026-08-12) and EVERY accuracy the ticket asks for
+is reached:** gyro `high` at 8s, mag `low`→`medium`→**`high`** at 64s, accel
+**`high`** at 71s, rotation **`medium` at 52s and `high` at 61s`**. 199s of handling,
+peak gyro 5.857 rad/s (336 °/s), and the transport counters NEVER moved off their
+bring-up values (`resets 1`, `INT timeouts 2`, `spi fail 0/0`, `empty 0`,
+`oversize 1`), rate holding ~358 Hz.
 
-**⚠️ THE FORK IS CURRENTLY FLASHED — the IMU node is NOT on the air.** It is
-running the leaf image and streaming to the console, deliberately left that way so
-the two remaining physical checks can be done without reflashing. Rollback is
-`cd natKit-IMU/embeded && pio run -e release -t upload` (~29s incremental; do NOT
-`fullclean` first, that forces a 25-minute network re-fetch), and a byte-exact
-4 MB pre-flash dump is at `~/natkit-verification/598a800/`.
+**ROTATION ACCURACY IS NOT A DEAD FIELD — that year-old question is settled.** The
+standing hypothesis was that the rotation vector's 2-bit status is never populated
+on this hub, so "Rotation: Unreliable" was never a measurement. Disproven: it reads
+`medium` and `high`, its float error estimate tracks it (2.86 rad unconverged →
+0.109 rad calibrated), and it decays back toward `medium` when the board sits still.
+It read `unreliable` because the FUSION had not converged.
+
+**At-rest values match the current firmware exactly.** Board reflashed with
+`embeded` WITHOUT being moved, so it is the same physical orientation:
+
+| | accel (m/s²) | gyro | \|accel\| | quat |
+|---|---|---|---|---|
+| fork | `+0.625 -1.078 +9.727` | `0.000` | 9.806 | `+0.930 -0.040 -0.050 +0.363` |
+| `embeded` | `+0.625 -1.078 +9.727` | `0.000` | 9.806 | `+0.876 -0.032 -0.055 +0.478` |
+
+Accel and gyro identical to three decimals on every axis. The quaternion differs
+only in **heading** — rotation about gravity, which depends on fusion convergence
+and resets when the hub is reflashed; both are unit quaternions and both agree on
+the gravity direction.
+
+**Side effect worth knowing: `embeded` now reports rotation accuracy `medium`, where
+it has historically read 0.** The fork's deferred `sh2_setDcdAutoSave(true)`
+persisted the six-side calibration into the hub's own FLASH, so the shipped
+firmware inherited it with no change to `embeded`.
+
+**#345 is at 95% in Verification.** The only residual is a genuinely *simultaneous*
+under-motion comparison, which one board cannot give (two firmwares cannot run at
+once, and two different motion windows are not the same measurement).
+
+**✅ THE BOARD IS BACK ON THE CURRENT FIRMWARE AND STREAMING AS FOUND** — verified
+after the rollback: 524-byte frames to
+`natKit/sending/Data-13793649670644-Binary-NatImuBulkDataSchema`, `seqNo` advancing.
+Reflash the fork with `./build-role.sh leaf esp32 -p /dev/ttyACM0 flash`; roll back
+with `cd natKit-IMU/embeded && pio run -e release -t upload --upload-port /dev/ttyACM0`
+(~29s incremental; do NOT `fullclean` first, that forces a 25-minute network
+re-fetch). A byte-exact 4 MB pre-flash dump is at `~/natkit-verification/598a800/`.
+
+**⚠️ `--upload-port` is now REQUIRED — two boards are connected.** PlatformIO
+auto-picked `/dev/ttyACM1` (the second node) for the rollback upload. It failed to
+connect rather than flashing the wrong board, but do not rely on that.
+
+**⚠️ NEW DEFECT FILED: #365 (TEC-NATKIT-28).** The backend's own route for reading
+decoded samples — `set_streams` → `start_recording` → `get_session_data` — returns
+**0 samples while frames are visibly flowing on the wire**, and `stop_recording`
+reports `"sample_count":0` with `"status":"success"`. `/api/get_accuracies` was
+`null` throughout, consistent with the same cause. **So do not use that path to
+verify IMU values**; decode off MQTT instead
+(`~/natkit-verification/ceb8150/decode_frame.py`, written from
+`NatImuBulkDataSchema::encodeToBytes`, not guesswork).
+
+**Two hardware-handling traps:**
+- **Handling the board re-enumerates the USB device** and killed a capture outright
+  (the same hazard that wedged `/dev/ttyACM0` in an earlier session). `capture.py`
+  now reopens the port WITHOUT pulsing reset and marks the gap in the log.
+- **A rate measured over serial is only meaningful while the host is draining the
+  UART.** In the aborted run the reported rate fell 360 Hz → flat 63.9 Hz eight
+  seconds before the USB dropped, with every transport counter clean: the console is
+  in the sample loop's critical path, so once the host stops reading, `ESP_LOGI`
+  blocks on a full FIFO and throttles the loop. Not a sensor regression.
 
 **Capture harness:** `~/natkit-verification/ceb8150/capture.py <seconds> [port]`
 resets the board and streams its console in ONE process — two readers splice the
