@@ -4,6 +4,53 @@
 
 **Last updated:** 2026-08-12
 
+## Current Task — #349 (TEC-NATKIT-26) GATEWAY: SHIPPED, 85%, Verification
+
+**`cea0421` on natKit-IMU trunk, pin bumped (`eac4b1e`).** Evidence in
+`~/natkit-verification/cea0421-gateway/`, 5 files attached to #349.
+
+**✅ THE FORK'S DATA REACHES KAFKA.** leaf → ESP-NOW → primary → framed serial →
+gateway → MQTT → bridge → Kafka, on the existing topic contract, **no server-side
+change**. Decoded OFF THE BROKER: 524 B, schemaVersion 1, sampleCount 10,
+sampleRateHz 100, timestamps **2026-08-12 21:08:23** (real wall clock), samples
+20 ms apart, |accel| 9.72 m/s². Steady state **139 frames in / 135 Kafka records
+per 30 s** (~4.6/s), 0 CRC failures over 838 frames, heap flat ~109 KB.
+
+**New files:** `main/gateway_net.{hpp,cpp}` (WiFi+SNTP+MQTT), `main/uplink_reader.{hpp,cpp}`
+(framed serial in with resync), `gateway.cpp` rewritten, `main/DevConfig.hpp.example`.
+**`main/DevConfig.hpp` is GITIGNORED and holds real credentials** — only the
+gateway reads it.
+
+**⚠️ TESTED WITH A HOST RELAY, NOT A WIRE.** No USB-to-TTL adapter and no jumper
+between boards, so `/tmp/relay.py` (copy in the evidence dir) carries bytes from
+the primary's USB serial into the gateway's. Everything downstream is real. **The
+physical UART1 link (GPIO 26/25 @ 921600) is UNTESTED** — same gap as #348, and
+two jumper wires would close both.
+**Only 3 boards, so leaf B was repurposed as the gateway.** Two streams through a
+gateway is untested.
+
+**⚠️ `esp_mqtt_client_enqueue` LOSES ~78% OF THE STREAM.** It caps at ~ONE MESSAGE
+PER MQTT POLL CYCLE (the outbox is drained by the client's task loop). The gateway
+reported ~5/s "refused 0" while mosquitto got **1.07/s**. **Use
+`esp_mqtt_client_publish`** — QoS 0 has nothing to acknowledge. Fifth counter in
+this epic to measure one step off its name; caught only by checking the rate at
+mosquitto AND Kafka.
+
+**⚠️ THE BRIDGE SILENTLY STOPS FORWARDING — likely #365's cause.** Mosquitto was
+receiving frames while the Kafka offset stayed FROZEN; the bridge had logged
+nothing for ~3 hours. `podman restart natkit-v0-bridge` fixed it instantly.
+**Check the Kafka offset is climbing before blaming the backend's recording path.**
+Cross-posted to #365.
+
+**Design:** a frame that cannot be corrected is **REFUSED, not published raw** (an
+uncorrected frame is indistinguishable downstream and poisons the time axis);
+timestamps patched **in place** (a decode/re-encode would be a THIRD implementation
+of the encoding); ⚠️ header `deviceTsUs` is **µs** while sample time is **ms**.
+
+**Left open:** Ethernet PHY; **the downward command path is NOT built**, so VP
+calibration buttons do not reach a fork node; Parquet export is #350 and depends
+on #365.
+
 ## ✅ #340, #315 and #348 ARE CLOSED — Zach approved all three 2026-08-12
 
 All at 100% in Done. **Do not re-verify them**; the evidence is attached to each
@@ -11,9 +58,8 @@ ticket and summarised below. Epic #343 is at 70%: five of seven slices done
 (#344-#348), leaving **#349 gateway** and **#350 bench-and-decide**, plus the
 optional **#373** WiFi-direct stopgap.
 
-**Next slice is #349 (TEC-NATKIT-26), the gateway.** It is also the only thing
-that will exercise #348's real UART path, since everything so far ran in the
-console-shared bring-up mode for want of a USB-to-TTL adapter.
+**#349 is now DONE too (see above), so the next slice is #350 — bench the fork
+against the current firmware and decide.**
 
 **⚠️ #350's verification depends on the backend recording path, and #365 says that
 path returns 0 samples while frames are on the wire.** Resolve #365 before #350
