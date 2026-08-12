@@ -128,6 +128,61 @@ resets the board and streams its console in ONE process — two readers splice t
 byte stream into plausible-looking interleaved lines and cost three captures last
 session.
 
+## Also done 2026-08-12 — #347 (TEC-NATKIT-24) LEAF NODE: shipped, 95%, Verification
+
+**`9643900`.** Evidence + manifest in `~/natkit-verification/9643900-leaf/`, 6 files
+attached to #347. Two boards: leaf (with the BNO08x) on `/dev/ttyACM0`, primary on
+`/dev/ttyACM1`.
+
+**New files:** `main/imu_frame.{hpp,cpp}` (canonical frame encoder),
+`main/espnow_link.{hpp,cpp}` (the whole networking surface), `main/leaf.cpp`
+rewritten, `main/primary.cpp` now a working receiver.
+
+**Measured:** sensor ~360 reports/s with `resets 1` and heap flat at 210108 B;
+**5.0 frames/s** of 524 B (10 samples, 100 Hz declared) = **2.6 KB/s** on air
+against #346's 2.5 KB/s budget; primary sees `gaps 0`, `dupes 5`, `restarts 1`
+(a reflash) over 347 frames.
+
+**Primary-outage test passes.** `outage.py` holds the primary's EN low for 30s
+(its power switch is not reachable; the radio cannot tell the difference). Frames
+built kept climbing at 5.0/s, the sensor held ~360 reports/s, sends froze, and the
+link **recovered unaided**.
+
+**⚠️ Design changed BY that measurement:** three-attempt retry burned **322 retries**
+in a 30s outage (~16s of radio time on a peer known to be gone — airtime other nodes
+need). After 5 consecutive failures the leaf now presumes the hub absent and sends
+once per frame: **322 → 10 retries**.
+
+**⚠️ `dropped 0` in an outage is NOT evidence the queue works.** At 5 frames/s the TX
+task keeps up even while every send fails, so the queue never fills. Proven instead
+with a throwaway build (2000 us interval, 1 sample/frame, depth 2, deleted after):
+`built 6013 @ 221.8/s, sent 5984, dropped 47` — overflowed, dropped the oldest, loop
+undisturbed. Also shows ~222 small frames/s ≈ 17 KB/s.
+
+**⚠️ TWO COUNTER BUGS, one self-inflicted, both the probe's shape again.** (1) The
+primary reported `restarts 315` against 320 frames because splitting "duplicate" out
+of `else if (seq <= last)` left the ordinary `seq == last + 1` falling into the final
+else — the expected case is now spelled out first and does nothing. (2) Leaf link
+counters were named `frames_*` while counting packets of every type, so "frames built
+271, sent 307" read as sending more than were built; renamed `packets_*`.
+**Before quoting a counter, check what it counts.**
+
+**⚠️ THREE THINGS THE NEXT SLICES MUST NOT GET WRONG:**
+- **Leaf timestamps are MONOTONIC SINCE BOOT, not wall clock** (no NTP by design).
+  A gateway publishing them unmodified would advertise 1970-era timestamps. #340's
+  job; the frames are honest about carrying device-relative time.
+- **`imu_frame.cpp` is a SECOND implementation of libnatkit-core's Binary encoding**
+  (a leaf linking a C++ schema library is not the lean node being tested). Pinned by
+  static_asserts and verified on the wire, but it CAN drift — if libnatkit-core's
+  encoding changes, this changes with it and the frame version moves.
+- **`dupes 5` of 347 (~1.4%) are real** — the retry path re-sends a frame whose send
+  callback was late but which had landed. The primary counts and does NOT dedupe;
+  dedupe by seqNo belongs on #348 where the sequence is already tracked.
+
+`primary.cpp` is a working receiver but explicitly NOT #348: no persistence, no
+MAC-to-stream-id mapping, no serial mux, no backpressure. Its 1s beacon is what
+#340's timing broadcast should REPLACE rather than sit alongside.
+
 ## Also done 2026-08-12 — #346 (TEC-NATKIT-23) loss run: ZERO LOSS, 95%, Verification
 
 Zach connected a **second board** (its power switch had been off — that is why it
