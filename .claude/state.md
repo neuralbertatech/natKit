@@ -128,9 +128,53 @@ resets the board and streams its console in ONE process — two readers splice t
 byte stream into plausible-looking interleaved lines and cost three captures last
 session.
 
-## Prior Task — #346 (TEC-NATKIT-23) frame format: DECIDED, 75%, still BLOCKED
+## Also done 2026-08-12 — #346 (TEC-NATKIT-23) loss run: ZERO LOSS, 95%, Verification
 
-**#346 is 75% and the epic's "biggest unknown" is dead** (`e7894ca`). Both numbers
+Zach connected a **second board** (its power switch had been off — that is why it
+enumerated a USB-serial bridge while the ESP32 behind it never answered esptool).
+`6a2c123`; evidence + manifest in `~/natkit-verification/6a2c123-espnow/`, 3 files
+attached to #346.
+
+**⚠️ THE INSTRUMENT WAS WRONG FIRST, and this is the part worth not re-learning.**
+The first run reported **3051 sequence gaps from 243 packets**, which reads as
+catastrophic loss. It was not loss — it was three defects in the probe:
+1. `measureSendRate` used the loop index as the sequence, so each run restarted at
+   0 and the runs were indistinguishable to the receiver.
+2. **That index advanced even when `esp_now_send` REJECTED the frame.** Flat out,
+   340 of 500 are refused at the API, so the receiver saw seq jump 12 → 393 and
+   counted ~380 "gaps" for frames never transmitted — **back-pressure reported as
+   packet loss**, in the one run where loss is the question.
+3. The sweep wrote the payload SIZE into the sequence slot ("harmless here" — it is
+   not, once a receiver is listening).
+Fixed: one monotonic sequence per run advanced ONLY on acceptance; the receiver
+counts **sender restarts** (sequence going backwards); the sender prints the
+expected receive count so loss is a subtraction, not an inference.
+
+**`espnow-probe-receiver` is now a first-class build target**
+(`./build-role.sh espnow-probe-receiver esp32`), NOT a hand-edited sdkconfig —
+ESP-IDF reads the defaults only when the generated sdkconfig does not exist yet, so
+flipping that switch by hand silently gives a second SENDER, and two senders with no
+receiver look exactly like total loss.
+
+**The numbers, two PICO-V3-02 on channel 1:** sweep 1→**1470** all accepted,
+**1471** → `ESP_ERR_ESPNOW_ARG` (ceiling now confirmed on a SECOND, independent
+board); at IMU rate 50 × 524 B in 10.20s = 4.9 frames/s, **2.5 KB/s**; flat out 160
+of 500 accepted (340 refused at the API), 180.9 frames/s, **92.6 KB/s**; receiver
+**219 of 219, `seq gaps 0`, last seq 218**. Both boards report ESP-NOW **version 2**.
+
+**Both boards are ESP32-PICO-V3-02 rev v3.0** (`0c:8b:95:96:b9:f4` = 13793649670644,
+`0c:8b:95:96:bc:4c` = 13793649671244) — two for two, which is evidence for #343's
+open "is the fleet uniformly V3-02?" question.
+
+**Left on #346, neither blocking the decision:** `esp_now_get_version()` on a **C3**
+(neither board is one; significance dropped since the worry was a **v1** primary and
+both boards we have are v2 — it only matters again if a C3 becomes a leaf/primary),
+and **contention between several SENDING nodes**, which needs N+1 boards and belongs
+on **#348** since it is about hub capacity, not frame format.
+
+## Background — #346's earlier measurement (`e7894ca`)
+
+**The epic's "biggest unknown" was already dead at 75%.** Both numbers
 the epic reasoned from were wrong, and measuring them removed the problem:
 - **The frame is 524 bytes, not ~5 KB.** `NatImuBulkDataSchema` Binary encodes
   `24 + 50 * sampleCount`; the running firmware sends 10 samples, and the live
