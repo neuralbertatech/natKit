@@ -4,7 +4,33 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #349 (TEC-NATKIT-26) GATEWAY: SHIPPED, 85%, Verification
+## ✅ #365 RESOLVED — IT WAS THE BRIDGE, NOT THE BACKEND (2026-08-12)
+
+Re-ran #365's exact API sequence after restarting `natkit-v0-bridge`:
+**`sample_count` 340 then 350 where it saw 0**, and `get_accuracies` populated
+where it was `null`. Nothing in `NatKitBackend.cpp` was touched —
+`recording_thread_func` was consuming an empty Kafka topic and reporting it
+honestly. #365 is at 90% in Verification.
+
+**⚠️ THE UNDERLYING DEFECT IS NOT FIXED, only restarted. Filed as #375
+(TEC-NATKIT-31).** The bridge stops forwarding with no log, no error, and a
+healthy container. Seen twice today.
+
+**THE ONE-MINUTE DIAGNOSTIC, worth reaching for before reading backend source:**
+`kafka-get-offsets --bootstrap-server localhost:9092 --topic <topic>` twice,
+20 s apart, against `mosquitto_sub` on the same topic. That separates "device not
+sending" / "bridge not forwarding" / "backend not consuming".
+
+**So the FORK is verified end to end**: leaf → ESP-NOW → primary → serial →
+gateway → MQTT → bridge → Kafka → **the backend's own recording API**. Still
+unverified for either firmware: **Parquet export** (#350's bar), the **viewer**,
+two streams at once, and the physical UART wire.
+
+**⚠️ The CURRENT firmware (`embeded`) has NOT been re-tested since the bridge
+restart** — it is on no board (all three run the fork). Its #365 blocker was
+infrastructure rather than firmware, so it should work, but that is untested.
+
+## Prior Task — #349 (TEC-NATKIT-26) GATEWAY: SHIPPED, 85%, Verification
 
 **`cea0421` on natKit-IMU trunk, pin bumped (`eac4b1e`).** Evidence in
 `~/natkit-verification/cea0421-gateway/`, 5 files attached to #349.
