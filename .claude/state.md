@@ -4,6 +4,40 @@
 
 **Last updated:** 2026-08-12
 
+## ✅ CHOPPY LIVE VIEW DIAGNOSED AND FIXED — `0fb6d57` (pin `0f1f773`)
+
+Zach reported the frontend choppier than the current firmware and guessed radio
+multiplexing. **NOTHING MULTIPLEXES** — leaf and primary are ESP-NOW only and
+never associate, the gateway is WiFi only and never inits ESP-NOW, and the
+primary→gateway hop is a **host relay over USB** (both boards are on this
+laptop; `relay.py` IS the wire). It was two defects in the gateway, both mine:
+
+1. **WiFi power save left at the `WIFI_PS_MIN_MODEM` default**, so the gateway
+   slept between AP beacons and publishes went out in bursts at beacon
+   boundaries. Leaf/primary already set `WIFI_PS_NONE` (from #340) — which is
+   exactly why they measured clean and it did not.
+2. **`uart_read_bytes` with a 50 ms timeout in the reader.** `room` is most of
+   the scan buffer so it never fills — **the timeout IS the batching interval**.
+   Now 5 ms.
+
+**Frame inter-arrival sd (200 ms nominal), before → after:**
+primary 33 → 33 | relay input 88 → 89 | **broker 253 → 116 ms**.
+Bursts <50 ms **34 → 0** (min gap 3 → 87 ms); stalls >400 ms **28 → 5**.
+
+**⚠️ EVERY COUNTER SAID HEALTHY THROUGHOUT.** Reconciled frames, ~zero drops,
+0 CRC failures, 0 uplink gaps. **The fault was LATENCY, never loss** — no drop
+counter could have found it. Took timestamping arrivals at three points.
+Tools: `~/natkit-verification/cea0421-gateway/{jitter_probe,relay_timed}.py`.
+
+**Dominant remaining contributor is the HOST RELAY** (33 → 89 ms; loop period
+median 46 ms, p90 123 ms). **Two jumper wires on GPIO 26/25 + common ground**
+remove it and close the untested-UART gap on #348 AND #349.
+
+**Filed #377 (TEC-NATKIT-33)** — expose LOGGING_LOG as a stream + frontend health
+view. No such ticket existed. ⚠️ Its stated purpose was drop detection; **drops
+are already ~zero and counted at every hop**, so if it is meant to explain
+choppiness it must carry **per-hop timing**, not counts.
+
 ## ✅ THE FORK'S LIVE STREAM RENDERS IN THE FRONTEND (2026-08-12)
 
 7 screenshots + manifest attached to #349 (`~/natkit-verification/cea0421-gateway/shots/`).
