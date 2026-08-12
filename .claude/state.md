@@ -4,7 +4,85 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #345 (TEC-NATKIT-22) BNO08x port: STREAMING at 85%
+## Current Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: SHIPPED, 90%
+
+**`6c60cec` on natKit-IMU trunk, pin bumped (`9667d9a`).** The primary is the
+clock master; a leaf fits its clock to the primary's and the shift is applied by
+the consumer. Evidence + manifest in `~/natkit-verification/6c60cec-timing/`,
+3 files attached to #340. **Needs the bucket move to Verification** (the CLI
+exposes no bucket info).
+
+**New files:** `main/time_sync.{hpp,cpp}` (the rolling least-squares fit).
+`espnow_link.{hpp,cpp}` gained the wire types and both roles' halves of the
+protocol; the fork's README gained a Timing section and a corrected status table.
+
+**Measured, two boards, 5.5-minute soak:** 327 beacons, **0 missed, 0 orphaned,
+0 outliers**; fit residual **25 µs rms**; locked **10.4 s** after boot; heap flat.
+Sync error, measured BY THE PRIMARY: **bias −168 µs, sd 32 µs, p5–p95 spanning
+98 µs**, 3 excursions of ~2 ms in ~302.
+
+**⚠️ THE TICKET'S FIRST RECOMMENDED APPROACH IS DEAD, and this was checked before
+any code was written.** `esp_wifi_get_tsf_time()` returns **0** on a station that
+is not associated (documented in `esp_wifi.h`, then confirmed on hardware), and no
+node in this architecture ever associates. TSF would need the primary to be a
+SoftAP, which re-introduces the association the epic exists to remove.
+
+**⚠️ THE MAC RECEIVE STAMP IS REAL BUT UNUSABLE — the opposite of what was
+expected.** `rx_ctrl->timestamp` IS a hardware stamp taken below FreeRTOS, but
+against `esp_timer` it scatters by **20–57 ms**, three orders of magnitude WORSE
+than simply reading `esp_timer` in the receive callback (25 µs). It is kept as a
+logged diagnostic; the estimator uses the software read. Do not "fix" this by
+switching to the MAC stamp without re-measuring.
+
+**The transmit side is solved by protocol, not hardware — two-step, as PTP does.**
+Beacon goes out; the primary reads its clock INSIDE the send callback for that
+packet; a follow-up carries that stamp. The queue delay this removes measured
+**1.4–13.8 ms**, varying packet to packet — 40× to 400× the scatter we ended up
+with. Reading the clock before `esp_now_send` measures the transmit queue.
+
+**Protocol version is now 2.** `kPrimaryHere` is RETIRED (its number left burnt);
+`kTimeBeacon` carries discovery too, so there is one 1 Hz broadcast, not two.
+Both boards must be reflashed together.
+
+**The leaf does NOT rewrite its timestamps.** It sends a `SyncState`; frames stay
+in raw device-monotonic time and the consumer shifts. A correction baked into
+stored samples cannot be undone or improved; a leaf that steps its clock emits
+non-monotonic sample times mid-frame; and #318 needs the quality to travel
+alongside the stream. Chain of custody: leaf time → primary time (#340) → wall
+clock (#349). `TimeBeacon.wall_us` is **0 today** and is the seam #349 fills.
+
+**⚠️ TWO INSTRUMENTS WERE WRONG FIRST, again.**
+1. **The first soak's RMS read 240 µs for data whose every percentile said ~50 µs**
+   — two millisecond excursions in 301 samples dominated a sum of squares. Now the
+   tail is counted separately and the scatter is an **sd about the measured bias**,
+   not an RMS about zero. Bias and scatter are different animals: the bias is
+   common-mode and cancels between two leaves; the scatter does not.
+2. **The "done when" I proposed (raw frame delta walks, corrected stays flat) DOES
+   NOT WORK and cannot.** The leaf batches 10 samples spanning 200 ms and that span
+   jitters, putting a **~74 ms range** on both columns, while the actual drift over
+   the window is ~1 ms — three orders of magnitude too coarse for its own
+   hypothesis. The frame timestamp is ms-quantised by the encoder as well. That
+   line is now labelled "NOT an accuracy figure"; **the probe path replaced it.**
+
+**Cross-check, because one number is not a measurement:** the primary also scores
+each probe against a naive "sync once at startup" model. That error reached
+**−745 µs over 329 s**, implying **−2.26 ppm** of crystal skew against the
+regression's **−2.56 ppm** — two independent estimates agreeing to ~12%.
+
+**⚠️ ONE HYPOTHESIS RAISED AND NOT CONFIRMED.** The excursions were expected to be
+`ESP_LOGI` blocking the receive callback. The primary now measures its own console:
+**it blocks its task ~87 ms every second, 111 ms worst.** At 1 probe/s that predicts
+~26 collisions in 300; **3 were seen** — so the higher-priority WiFi task is largely
+protecting the callback and the cause is NOT established. The 87 ms is a real
+constraint on #348's serial mux regardless.
+
+**Next, and it needs hardware we do not have: a THIRD board.** Node-to-node
+coherence — what #315 actually wants — is currently *inferred* from one
+leaf-to-primary figure plus the argument that the bias cancels. Two leaves on one
+primary would measure it. Also untested by time: the MAC stamp's 32-bit
+microsecond counter wraps at ~72 minutes.
+
+## Prior Task — #345 (TEC-NATKIT-22) BNO08x port: STREAMING at 85%
 
 **FIXED. `ceb8150` on natKit-IMU trunk, pin bumped (`2a00ce3`).** The port now
 streams; what was left of the ticket needs hands on the board rather than more
