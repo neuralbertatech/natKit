@@ -4,13 +4,72 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: SHIPPED, 90%
+## Current Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: SHIPPED, 90%, Verification
+
+**`87a6830` on natKit-IMU trunk, pin bumped (`aaa5eec`).** Evidence + manifest in
+`~/natkit-verification/87a6830-coherence/`, 6 files attached to #315.
+
+**⚠️ THERE ARE THREE BOARDS NOW.** Zach added one this session; it is on
+`/dev/ttyACM2`, MAC `4c:75:25:a4:45:3c` = device `84066026407228`, and **it HAS a
+BNO08x** (it reads a real gravity vector). So the bench is **two full sensor
+leaves + one primary**. Its MAC is a different OUI from the other two — relevant
+to #343's open "is the fleet uniformly V3-02?" question.
+
+**⚠️ BUCKETS ARE EXPOSED AS OF assistant v0.11.0.** `assistant task <id>` prints a
+`bucket` line and `task update <id> -bucket "Verification"` moves one. The old
+"the CLI has no bucket info" note is STALE. (Not in the list view.) #340 and #315
+are both in Verification now.
+
+**The measurement:** the primary broadcasts a `SyncMarker` every 5th beacon; both
+leaves receive the SAME wavefront, each converts its own rx time with its own fit,
+and the difference between their answers is the node-to-node error. **The marker
+is HELD OUT of every fit** — a leaf scored on packets it estimated its clock from
+would be marking its own exam.
+
+**Result, 5.5-minute soak, 57 paired markers:**
+
+| | A vs primary | B vs primary | **A vs B** |
+|---|---|---|---|
+| bias | −139 µs | −133 µs | **+0 µs** |
+| sd | 35 µs | 32 µs | **16 µs** |
+| excursions | 1 | 4 | **0** |
+
+Metric: **typical 17 µs, bound 50 µs, worst 37 µs**, locked, MEASURED.
+
+**Both of #340's predictions held, and two are worth remembering:**
+1. **The bias IS common-mode and cancels** (+0 µs between leaves). Was a modelled
+   claim; now an observation.
+2. **Node-to-node is BETTER than either node vs the primary** (16 vs 32/35 µs),
+   which combining two measurements normally would not be — the marker path never
+   touches the primary's rx callback or a leaf's tx callback, only the two leaves'
+   rx callbacks, same code on same silicon at the same instant.
+3. **The excursions localise to the PROBE path, not the clocks** (1 and 4 there,
+   0 in 57 markers). That closes #340's open thread about where they live.
+
+**⚠️ THIS MEASURES RELATIVE AGREEMENT ONLY.** An error common to BOTH leaves is
+invisible to it — correct for node-to-node, wrong for server-to-node. There is no
+wall clock anywhere on this rig; #349's gateway is the only device that will ever
+have NTP, and `TimeBeacon.wall_us` (0 today) is the seam. So two of #315's three
+relationships are not merely unmeasured, they are not yet definable.
+
+**⚠️ QEMU CAN NO LONGER BOOT ANY ROLE THAT STARTS THE RADIO.** `esp_phy_enable`
+asserts (`phy_module_has_clock_bits`) — no PHY — and it reboots in a loop. **Not a
+regression:** the primary, which has no sensor code, fails identically (control log
+attached). It went unnoticed at TEC-NATKIT-21 because every role was then a stub
+that never touched the radio. **state.md's old "all six images booted under QEMU"
+is STALE.** QEMU is still good up to `espNowLinkStart()`.
+
+**Side change, standing on its own: a leaf whose sensor failed now JOINS THE
+RADIO** instead of idling forever, so the failure is visible to the primary rather
+than only over USB. Written expecting board 3 to be sensorless; it isn't, so this
+path is exercised only under QEMU and **has not run on silicon**.
+
+## Prior Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: SHIPPED, 90%, Verification
 
 **`6c60cec` on natKit-IMU trunk, pin bumped (`9667d9a`).** The primary is the
 clock master; a leaf fits its clock to the primary's and the shift is applied by
 the consumer. Evidence + manifest in `~/natkit-verification/6c60cec-timing/`,
-3 files attached to #340. **Needs the bucket move to Verification** (the CLI
-exposes no bucket info).
+3 files attached to #340. Moved to Verification.
 
 **New files:** `main/time_sync.{hpp,cpp}` (the rolling least-squares fit).
 `espnow_link.{hpp,cpp}` gained the wire types and both roles' halves of the
@@ -461,8 +520,9 @@ brought back `natKit-IMU v0.5.0` / `Unique ID: 13793649670644`, NTP synced and
 Evidence + a full 4 MB pre-flash dump: `~/natkit-verification/598a800/`
 (`MANIFEST.md`; 4 files attached to #344).
 
-**QEMU works now — Zach installed `libslirp` mid-session, so ALL SIX images have
-been booted, not just built.** leaf/esp32 on silicon; primary/esp32,
+**QEMU worked at TEC-NATKIT-21 — Zach installed `libslirp` mid-session, so all six
+STUB images had been booted, not just built. ⚠️ NO LONGER TRUE for any role that
+starts the radio; see the #315 section above.** leaf/esp32 on silicon; primary/esp32,
 gateway/esp32 and leaf/esp32c3 under QEMU (`./build-role.sh <role> <target>
 qemu`). The C3 reports `rev 0.3, 1 core(s)`, confirming the packed-`MXX`
 revision handling on a second target. Caveats, all in the fork's README:
