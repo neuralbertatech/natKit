@@ -4,7 +4,53 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: SHIPPED, 90%, Verification
+## Current Task — #348 (TEC-NATKIT-25) PRIMARY UPLINK: SHIPPED, 85%, Verification
+
+**`d660556` on natKit-IMU trunk, pin bumped (`ef4e114`).** Evidence + manifest in
+`~/natkit-verification/d660556-uplink/`, 5 files attached to #348.
+
+**New files:** `main/uplink.{hpp,cpp}` (framed serial protocol, queue, drain task),
+`main/registry.{hpp,cpp}` (NVS roster + seal), `tools/read_uplink.py` (the
+host-side reader, committed).
+
+**Measured, three boards, 3-minute soak:** 2004 frames, **0 uplink seq gaps, 0
+radio seq gaps on both streams**, 339 KB of interleaved console text resynced past
+with no false frames. Reconcile over an agreed window: sent 1992 / parsed 1997.
+Backpressure: **22 drops at startup then FROZEN at 22 across 4318 more queued**,
+0 write timeouts, heap flat. Node outage: leaf B in reset 20 s, **leaf A kept 453
+frames with 0 gaps**. Registry: persists across reboot, sealed-with-empty-roster
+rejects both known-good leaves by MAC, reopened it re-learns both.
+
+**⚠️ THE PHYSICAL SECOND UART IS UNTESTED.** No USB-to-TTL adapter on the bench, so
+everything ran in bring-up mode (`CONFIG_NATKIT_UPLINK_UART_NUM=0`: frames
+interleaved into the USB console, host resyncs past log text). That exercises
+framing/CRC/resync/registry/backpressure but **NOT** `uart_write_bytes` on UART1,
+GPIO 26/25, or 921600 baud. Committed default is UART1. #349 closes this for free.
+
+**⚠️ CONSOLE-SHARED MODE CORRUPTS BINARY WITHOUT THE LINE-ENDING FIX.**
+`CONFIG_LIBC_STDOUT_LINE_ENDING_CRLF` expands every `0x0A` written to stdout into
+`0x0D 0x0A`. Symptom was **"only the small frames work"** (0 data, 134 status) —
+reads like a length bug, is a translation bug. Fixed with
+`uart_vfs_dev_port_set_tx_line_endings(..., ESP_LINE_ENDINGS_LF)`.
+
+**⚠️ AN UNSET `bool` KCONFIG EMITS NO SYMBOL** — cannot be read as a value; breaks
+the build when off. Same shape as the `CONFIG_NATKIT_ESPNOW_CHANNEL` break. Use
+`#ifdef` into a `constexpr`.
+
+**⚠️ FOURTH COUNTER IN THIS EPIC TO MEASURE THE WRONG THING:** the reader first
+compared the primary's CUMULATIVE counters against a windowed parse count, making
+a healthy link look like it lost 3/4 of its traffic. Now reconciles between two
+status frames. **Treat "read what the counter counts" as a standing check.**
+
+**Design decisions:** two sequence numbers per frame (uplink's own vs the radio's
+— they answer different questions); data frames forwarded **VERBATIM** with the
+clock fit travelling separately in the node-status frame; registry open by default
+(self-configuring), sealed to freeze a rig.
+
+**Reassembly is DELETED, not deferred** — #346's one-frame-one-packet decision
+means there is no fragment buffer to time out.
+
+## Prior Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: SHIPPED, 90%, Verification
 
 **`87a6830` on natKit-IMU trunk, pin bumped (`aaa5eec`).** Evidence + manifest in
 `~/natkit-verification/87a6830-coherence/`, 6 files attached to #315.
