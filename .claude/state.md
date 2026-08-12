@@ -4,6 +4,31 @@
 
 **Last updated:** 2026-08-12
 
+## ✅ THE FORK'S LIVE STREAM RENDERS IN THE FRONTEND (2026-08-12)
+
+7 screenshots + manifest attached to #349 (`~/natkit-verification/cea0421-gateway/shots/`).
+Stream Viewer shows `IMU / LIVE / 600 samples buffered / 4.7 per s`, a Rolling Trace of
+three live accel traces, `ACCEL -0.26, 5.70, 7.86` (**|a| 9.71 m/s²**), and the
+Orientation tab rendering the BNO08x fusion quaternion (`ROLL 36.2 PITCH 1.7 YAW
+126.8`). **No server-side or frontend change.** No console errors, no dialogs.
+
+**TO SEE IT LIVE YOURSELF:** the host relay must be running (there is no wire
+between primary and gateway) —
+`python ~/natkit-verification/cea0421-gateway/relay.py 600` — then localhost:8080
+→ Stream Viewer → tick `Stream 13793649670644` → **click the `+` to expand the
+card**.
+
+**⚠️ THE CARD RENDERS COLLAPSED.** It reports `LIVE, N samples buffered, 4.7/s`
+with NO trace drawn until expanded. The text alone is misleading evidence — this
+is the [[feedback_verify_ui_visually]] lesson landing again, and both shots are
+attached so the difference is visible.
+
+**⚠️ Schema Inspector reads `Unavailable` for all 9 fields** while the traces
+work. NOT firmware-related: the descriptor path is `accel_x.{index}` and the
+resolver in `frontend/src/StreamViewer/schemaDescriptor.ts` (~line 123) handles
+only numeric indices or object keys, so the `{index}` placeholder is never
+expanded. Filed as **#376 (TEC-NATKIT-32)**.
+
 ## ✅ #365 RESOLVED — IT WAS THE BRIDGE, NOT THE BACKEND (2026-08-12)
 
 Re-ran #365's exact API sequence after restarting `natkit-v0-bridge`:
