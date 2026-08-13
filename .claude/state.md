@@ -4,7 +4,34 @@
 
 **Last updated:** 2026-08-12
 
-## ✅ #380 (TEC-NATKIT-35) — **101 samples/s REACHES KAFKA**. 90%, Verification.
+## Current — #380 transport hunt: 97 samples/s, but delivery is ACCIDENTAL
+
+**`a91f943` (pin bumped).** Delivery holds at **97–101 samples/s at Kafka**.
+
+**✅ FIXED: the leaf abandoned a primary it was successfully feeding.** Rescan
+triggered on consecutive SEND FAILURES — but a "failure" is just no MAC ACK, and
+that happens constantly **while frames arrive** (399 failures against a hub
+forwarding ~10/s to Kafka). The leaf gave up its channel and hopped for up to
+**17 s**, which IS the 3–11 frames/s swing. **Now rescans on BEACON SILENCE**
+(15 s), the authoritative signal — broadcasts need no ACK, so hearing them proves
+the hub is there.
+
+**❌ REJECTED (do not re-run): the weak −78 dBm second leaf is NOT stealing
+airtime.** Held it in reset: **97 samples/s either way.**
+
+**⚠️⚠️ THE REAL FAULT — THE LEAF'S LINK VIEW IS DISCONNECTED FROM REALITY.**
+Over 65 s it reported **`primary known` ZERO times** (48 PRESUMED GONE, 15
+SEARCHING), **52% beacons missed, 610 tx failures**, while **Kafka got a steady
+97 samples/s the whole time**. Both RSSIs healthy (−21 hub, −24..−32 leaf), so
+NOT path loss.
+
+**➡️ Isolated to the UNICAST ACK PATH from the S3.** Broadcasts get through, and
+when the leaf gives up on unicast it falls back to broadcast — which is very
+likely why delivery survives at all. **The system works by accident.**
+
+**NEXT STEP (two lines):** have the primary log whether each data frame arrived
+**unicast or broadcast** — `des_addr` in `esp_now_recv_info_t` distinguishes them.
+That settles whether delivery is riding the broadcast fallback.
 
 **`3e6a5d5` (pin bumped).** Measured at the REAL consumer: 305 records in 30 s on
 the Kafka topic the backend reads.
