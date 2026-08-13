@@ -4,7 +4,46 @@
 
 **Last updated:** 2026-08-12
 
-## Current — frontend frame rate: 4.2/s IS CORRECT. Residual ~2/s loss found.
+## Current Task — #380 (TEC-NATKIT-35) 100 Hz: SOURCE FIXED, DELIVERY WORSE. 45%.
+
+**`4d79918` (pin bumped).** Zach: "we should be hitting 100 samples per second".
+He is right, and the header always said so.
+
+**⚠️ BOTH FIRMWARES DECLARED 100 Hz WHILE SAMPLING AT 50.**
+`embeded/include/BoardConfig.hpp:31` `DELAY_BETWEEN_SAMPLES 20000` vs
+`kafkaTopic.hpp:32` `IMU_SAMPLE_RATE_HZ 100`. The fork copied BOTH as
+"compatibility" — which was preserving a bug. **Every natKit IMU recording ever
+made is 50 Hz with a header claiming 100.**
+
+**✅ FIXED AT THE SOURCE:** sample interval **20000 → 10000 µs**, hub report
+interval **18000 → 10000** with it. Hub honours it: **412 reports/s (~103 Hz
+each)**; leaf builds **8–9 frames/s = 80–90 samples/s**.
+
+**⚠️ END TO END IT IS WORSE.** Measured by decoding broker frames and counting
+**DISTINCT seqNo** (a duplicate looks like extra data otherwise):
+
+| | 50 Hz | 100 Hz |
+|---|---|---|
+| unique frames/s at broker | 4.2 | **3.0** |
+| samples/s delivered | ~42 | **30** |
+
+**Two faults, neither the sample rate:**
+1. **DUPLICATES ~50%.** Primary receives ~18/s from a leaf building ~9. The leaf
+   reports `tx failures` / `PRESUMED GONE` **while its frames plainly arrive** —
+   ACKs are not getting back and **the 802.11 MAC is retransmitting BELOW
+   ESP-NOW**, invisible to the leaf. Primary now DROPS `seq == last_seq` dupes,
+   but **duplicates still reach the broker**, so that test is too narrow —
+   **needs a WINDOW of recent seqNos**, not one value.
+2. **LOSS primary → broker**: ~9 unique/s in, 3.0 published. `NOT PUBLISHED`
+   counters show **`rewrite refused` climbing** = `syncStateToPrimary` declining
+   frames while a leaf's fit is momentarily unsynced.
+
+**➡️ NEXT, in order:** widen the dedupe window; **chase the fit instability**
+(leaves report **+36..+39 ppm** against this S3 hub vs **−2.5 ppm** between two
+ESP32s, windows refilling from ~7 pts — every reset refuses frames); then
+re-measure distinct-seqNo rate. **Target 10 unique frames/s = 100 samples/s.**
+
+## Superseded — frontend frame rate at 50 Hz: 4.2/s was correct then
 
 **`1626c42` (pin bumped).** Zach saw 1.7–4.7 frames/s and thought it low.
 
