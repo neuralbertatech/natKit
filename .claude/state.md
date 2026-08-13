@@ -4,7 +4,49 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #373 (TEC-NATKIT-30) ONE CHIP, BOTH RADIOS: 75%, answer is "use two"
+## Current Task — ETHERNET ON AN ESP32-S3 (2026-08-13). BLOCKED on hardware details.
+
+**Zach replaced a node with an ESP32-S3 + Ethernet daughterboard.** This is a
+better answer than either architecture measured so far: **Ethernet is OFF THE
+RADIO ENTIRELY**, so ESP-NOW keeps a channel we choose on a radio nobody else is
+using, with no second chip bridged over serial.
+
+**Bench is now:** ttyACM0 = ESP32 leaf **with BNO08x**; ttyACM1 = ESP32 (was the
+primary, no sensor); **ttyACM2 = ESP32-S3, MAC `b8:f8:62:62:f7:3c`, device id
+`203376942053180`, rev 0.2, 2 MB PSRAM**.
+
+**Done — `5fc5fe9` (pin `9e1cbfd`): the S3 target builds and boots** as an
+ESP-NOW primary/timing master on channel 1, heap flat at 321 KB, no panics.
+
+**⚠️ THREE S3 TRAPS, each a build or boot failure rather than a note:**
+1. **NO INTERNAL ETHERNET MAC.** The epic's "which PHY?" question does not apply
+   — an S3 with Ethernet is necessarily an **SPI module** (W5500 / DM9051 /
+   ENC28J60). Do not reach for LAN8720 on this board.
+2. **Console is the native USB Serial/JTAG**, so
+   **`CONFIG_ESP_CONSOLE_UART_BAUDRATE` DOES NOT EXIST** — it broke uplink.cpp
+   and uplink_reader.cpp. An absent Kconfig symbol is a compile error, not a 0.
+3. **The uplink pin defaults were FATAL.** The S3 has **no GPIO 22–25**, so
+   `uart_set_pin` aborted with `rx_io_num error` in a reboot loop — and **GPIO
+   26–32 are SPI flash/PSRAM there**, so the working half of the 26/25 pair
+   would have been worse than the failing half. Now per-target: **17/18** on S3,
+   clear of the native USB pins (19/20).
+
+**⚠️ BLOCKED: need the daughterboard's chip and pinout.** Cannot be guessed —
+wrong SPI pins either do nothing or drive flash lines. Need: chip
+(W5500/DM9051/ENC28J60), MOSI/MISO/SCLK/CS, INT, RST.
+
+**The remaining work is small once that lands**, because the hard parts exist:
+`gatewayServicesStart()` (SNTP + MQTT) and `rewriteFrameTimestamps` are
+netif-agnostic and already proven. Only `gatewayWifiStart()` needs an Ethernet
+sibling.
+
+**⚠️ ALSO FOUND: the esp32c3 target has not built since `b42d763`** (BNO08x port)
+— `board_config.hpp` pins GPIO_NUM_32, which a C3 does not have. So the epic's
+"all six images build" claim has been false for five slices. Filed as **#379
+(TEC-NATKIT-34)**; not fixable without a C3's real wiring. **Sweep targets on
+handoff:** `for t in esp32 esp32c3 esp32s3; do for r in leaf primary gateway; ...`
+
+## Prior Task — #373 (TEC-NATKIT-30) ONE CHIP, BOTH RADIOS: 75%, answer is "use two"
 
 **`b681fec` on natKit-IMU trunk, pin bumped (`1d65a5e`).** Evidence in
 `~/natkit-verification/b681fec-onechip/`, 2 logs attached to #373.
