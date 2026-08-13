@@ -4,7 +4,37 @@
 
 **Last updated:** 2026-08-12
 
-## Current — THE PRIMARY NOW PICKS ITS OWN CHANNEL AT BOOT (Zach's idea)
+## Current — ⚠️ RIG IS NOT DELIVERING. Leaf healthy, primary publishes nothing.
+
+**`f458a98` (pin bumped).** Survey **OFF by default**, channel **pinned to 3**.
+
+**⚠️⚠️ THE ESP32-S3 RESETS EVERY TIME ITS USB CONSOLE IS OPENED.** Proven: two
+opens 3 s apart both report uptime ~3.3 s. It is the **native USB Serial/JTAG**,
+so leaving DTR/RTS alone (what `monitor.py` does, enough on a classic ESP32) does
+NOT help. **Every "no nodes yet" / "0 samples/s" reading taken WHILE monitoring
+the S3 was self-inflicted** — freshly booted, mid-survey, NTP unsynced, leaf not
+re-found. **Observe the S3 through what it PUBLISHES, not its console.**
+➡️ It currently publishes only kData; making it publish its status frames would
+give a way to watch it without rebooting it. **That is the next thing to build.**
+
+**✅ FIXED: the survey queued IN FRONT of the NTP window** instead of overlapping
+it (first publish ~33 s → ~60 s). SNTP/MQTT now start **before** the radio:
+survey 0.4–26.4 s, clock synced **32.5 s**. Genuinely free now.
+
+**⚠️ SURVEY NOW DEFAULT OFF — IT SCORES THE WRONG SIGNAL.** It measures other
+networks' 802.11 traffic; the interference that matters here is **non-802.11**
+(the Thread BR board's clocks) and is invisible to a promiscuous receiver.
+**Observed: it picked a channel quiet by its own table on which the leaf could not
+be heard at all** (leaf: beacons at −29 dBm, clock locked; hub: "no nodes yet").
+**Measuring the ACTUAL LINK works** — sweeping hub-RSSI-of-a-real-leaf gave −22 dBm
+and full rate on **3 and 10**, vs −61..−83 and nothing on 9/11/13. **That is what
+the survey should become.** Kept in-tree (its table correctly found Zach's two AP
+clusters); the sweep is right, the scoring is wrong.
+
+**➡️ STATE AS COMMITTED: NOT DELIVERING.** Leaf is healthy — `primary known`,
+9 frames/s built, hub heard at −24 dBm — while the primary publishes **nothing at
+all** (no natKit MQTT traffic on any topic). Diagnosing needs S3 visibility that
+does not reboot it.
 
 **`740ee0a` (pin bumped).** The ~33 s NTP window was dead time anyway (frames are
 refused, not published with 1970 stamps), so the primary spends it surveying:
