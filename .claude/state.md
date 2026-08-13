@@ -4,7 +4,35 @@
 
 **Last updated:** 2026-08-12
 
-## Current — ⚠️ THE LEAF LEFT POWERED ON IS THE BAD ONE. Swap boards.
+## Current — single leaf. Two fixes; the S3's RECEIVE is the remaining fault.
+
+**`7352169` (pin bumped).** Rig: **leaf …0644 on ttyACM0**, S3 primary on ttyACM2,
+…1244 powered off.
+
+**✅ FIXED — THE LEAF'S MAIN LOOP WAS A BUSY SPIN (mine).** When sampling moved to
+its own task, the loop kept a deadline-aware delay computed from
+`next_sample_us`, which nothing advances any more → `remaining` always 0 →
+`imu.service()` called as fast as the CPU allowed, hammering SPI. **Cost 81% of
+received beacons at −22 dBm** — read as a radio fault, wasn't one. **81% → 10%.**
+
+**✅ FIXED — ESP-NOW WAS ON THE HOUSE AP'S CHANNEL.** Ch 1 is jammed by the Thread
+BR board; we moved to **11, which IS the AP's channel** (measured in #373, then
+forgotten). **11 → 6 took the hub's view of a leaf from −83 dBm to −21 dBm.**
+Default is now **6**, with both exclusions in the Kconfig help.
+
+**❌ REJECTED:** delivery is NOT a broadcast fallback — **49 unicast, 0 broadcast**
+via `des_addr`.
+
+**⚠️⚠️ UNRESOLVED — THE S3's RECEIVE SENSITIVITY FLUCTUATES BY TENS OF dB.** Same
+leaf, same bench, steady 19.5 dBm TX, measured at the hub at **−16, −21, −57 and
+−83 dBm** across one session, while the leaf's view of the hub stays a steady
+**−21..−28**. **Reciprocity says a passive path cannot do that** — so it is the
+S3's receive chain, or something intermittently jamming it.
+
+**Delivery tracks it directly:** 97–101 samples/s when the hub reads −16..−21;
+single digits at −57 or worse. **The firmware is not the limit at that point.**
+**Diagnostic of choice: compare the two directions' RSSI** — it has now found
+three separate RF faults this session.
 
 **`3bbe775` (pin bumped).** Zach powered one leaf down to focus on a single node —
 but the one still running is the impaired board.
