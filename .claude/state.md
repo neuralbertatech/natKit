@@ -4,7 +4,33 @@
 
 **Last updated:** 2026-08-12
 
-## ✅ SOLVED — FULL POWER WAS THE BUG. 96 samples/s delivered.
+## ✅ THE LEAF NOW FINDS ITS OWN TRANSMIT POWER. 97 samples/s.
+
+**`1225506` (pin bumped).** Zach's follow-up to the overload finding: sweep power
+at startup, keep the **lowest level that gets acknowledged**. No hand-set power,
+and it adapts to whatever spacing the rig has.
+
+```
+  2.0 dBm: 22/22 (100%)  <- chosen      14.0 dBm: 22/22 (100%)
+  5.0 dBm: 18/18 (100%)                 17.0 dBm: 19/19 (100%)
+  8.5 dBm: 23/23 (100%)                 19.5 dBm: 22/22 (100%)
+ 11.0 dBm: 19/19 (100%)
+```
+
+Scores **OUR link** on the real path (ESP-NOW unicast succeeds only on a MAC ACK),
+using data frames already being sent — unlike the channel survey, which scores
+strangers and is defaulted off.
+
+**⚠️ BE PRECISE ABOUT THE METRIC.** `esp_now_send` reports success when the far
+MAC acknowledged, **possibly after its own internal retries** — so a link degraded
+by saturation can still read 100%, which is why every level looks identical above.
+**The metric guards only the WEAK end.** The overload end is avoided by the
+**policy** (sweep up, keep the first that works ⇒ lands below saturation by
+construction), not by detection. Right answer, but not for the reason the table
+suggests. Seeing overload would need the **hub's received-frame rate fed back to
+the leaf**, which needs a downward path this architecture lacks.
+
+## ✅ AND WHY IT MATTERED — FULL POWER WAS THE BUG. 96 samples/s.
 
 **`6904064` (pin bumped).** Turning both radios **DOWN from 19.5 dBm to 2 dBm**
 took the hub from **0.4 → 8.5 received frames/s** and delivery to **96 samples/s**.
