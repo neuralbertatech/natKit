@@ -4,6 +4,43 @@
 
 **Last updated:** 2026-08-12
 
+## Current Task — #373 (TEC-NATKIT-30) ONE CHIP, BOTH RADIOS: 75%, answer is "use two"
+
+**`b681fec` on natKit-IMU trunk, pin bumped (`1d65a5e`).** Evidence in
+`~/natkit-verification/b681fec-onechip/`, 2 logs attached to #373.
+`CONFIG_NATKIT_PRIMARY_WIFI_UPLINK=y` = primary associates + publishes itself.
+
+**⚠️ THIS AP IS ON CHANNEL 11.** Associating drags the hub off channel 1, exactly
+as predicted. So: the primary no longer calls `esp_wifi_set_channel` when the
+uplink is on, **peers are now ALWAYS added on channel 0** ("follow the
+interface") and **a leaf that has no hub HOPS channels** until it finds one. A
+peer pinned to a channel the interface is not on is a SILENT failure — sends
+succeed locally, nothing is received. The hunt works: both leaves found ch 11
+unaided.
+
+**THE RESULT — same bench, same leaves:**
+
+| | seq gaps | per-leaf rate |
+|---|---|---|
+| two boards | **0** | 5.0/s |
+| **one board** | **216 vs 39 received** | 0–2/s, silent 1–3.5 s |
+
+**The leaves stay HEALTHY** (`built 213 @ 5.0/s, sent 364, dropped 0, tx
+failures 0`), and unicast ESP-NOW success means a **MAC-layer ACK** — so the
+primary's radio received the frames and dropped them **above the MAC**, on a WiFi
+task busy servicing the association.
+
+**⚠️ CONFOUND NOT ELIMINATED: rssi −79..−87.** A weak association means retries
+and low rates, which could itself starve the receive path. **NTP never synced at
+this signal, so `published 0`** — the publish half is built but unproven.
+**RETEST NEAR THE AP before calling one chip impossible.** (The gateway board ran
+−72..−75 and published fine — but it was only doing WiFi.)
+
+**Either way the one-chip design inherits the site's channel, signal and
+airtime**, which the two-board split does not. That is now a measured argument
+for #350 rather than a design instinct. Keep it behind the Kconfig flag
+regardless — it is a useful no-wire bench mode.
+
 ## ✅ CHOPPY LIVE VIEW DIAGNOSED AND FIXED — `0fb6d57` (pin `0f1f773`)
 
 Zach reported the frontend choppier than the current firmware and guessed radio
