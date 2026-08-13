@@ -4,6 +4,30 @@
 
 **Last updated:** 2026-08-12
 
+## Current — frontend frame rate: 4.2/s IS CORRECT. Residual ~2/s loss found.
+
+**`1626c42` (pin bumped).** Zach saw 1.7–4.7 frames/s and thought it low.
+
+**⚠️ FRAMES ARE NOT SAMPLES.** 10 samples per frame at a 20 ms interval, so
+**5 frames/s = 50 samples/s IS THE DESIGN**, and the current firmware does the
+same. Measured warm: **126 frames in 30 s = 4.2/s** at the broker. The frontend
+reports FRAMES; "600 samples buffered" is the honest number.
+
+**⚠️ FRAMES WERE BEING DROPPED WITH NO COUNTER AT ALL** between reception and the
+uplink queue — a branch that did nothing when its preconditions failed. Now
+counted three ways: `publish_no_sync`, `publish_no_time`, `publish_no_shift`.
+**The wired uplink also had NO console output** (that block was gated on the WiFi
+flag), so the Ethernet path was invisible.
+
+**What it showed:** no-leaf-fit 1/5 FROZEN (startup); no-wall-clock 21/17 FROZEN
+(**NTP synced only at t=33 s**, and frames before that are refused rather than
+published with 1970 stamps); **rewrite-refused STILL CLIMBING ~2/s**.
+
+**➡️ NEXT: the leaves' fits keep resetting on this hub.** They report **+36..+39
+ppm** skew against **−2.5 ppm** measured between two classic ESP32s, and their
+windows keep refilling from ~7 points. While a fit is unsynced,
+`syncStateToPrimary` refuses the frame. That is the residual loss.
+
 ## ✅ SOLVED — CHANNEL 1 WAS JAMMING THE S3. THE ONE-CHIP WIRED RIG WORKS.
 
 **`204a62f` (pin `2ea9ab0`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
