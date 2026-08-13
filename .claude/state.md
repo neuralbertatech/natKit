@@ -2,33 +2,64 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-13
 
-## ✅ THE LEAF NOW FINDS ITS OWN TRANSMIT POWER. 97 samples/s.
+## ✅ TWO LEAVES, ~100 samples/s EACH, 0 GAPS. And the power sweep was broken.
 
-**`1225506` (pin bumped).** Zach's follow-up to the overload finding: sweep power
-at startup, keep the **lowest level that gets acknowledged**. No hand-set power,
-and it adapts to whatever spacing the rig has.
+**`030493b` (pin bumped).** Zach reconnected the second leaf to check the rate
+holds with more than one node. It does — **10.8 and 10.5 frames/s at the hub, 0
+sequence gaps and 0 duplicates each, ~105 and ~100 samples/s through to Kafka,
+~200 total.** But getting there found two real faults.
+
+### ⚠️ THE SWEEP'S ACCEPTANCE BAR HAD NEVER ONCE BEEN MET
+
+The previous entry here claimed the sweep picks "the lowest level that gets
+acknowledged" and showed a table of 100% at every level. **That table was from a
+differently-behaving bench.** The real one, measured now:
 
 ```
-  2.0 dBm: 22/22 (100%)  <- chosen      14.0 dBm: 22/22 (100%)
-  5.0 dBm: 18/18 (100%)                 17.0 dBm: 19/19 (100%)
-  8.5 dBm: 23/23 (100%)                 19.5 dBm: 22/22 (100%)
- 11.0 dBm: 19/19 (100%)
+  2.0 dBm: 2 acked of 15 (13%)      11.0 dBm: 0 of 18 (0%)
+  5.0 dBm: 0 acked of 23 ( 0%)      14.0 dBm: 0 of 18 (0%)
+  8.5 dBm: 0 acked of 20 ( 0%)      17.0 dBm: 0 of 19 (0%)
+                                    19.5 dBm: 0 of 20 (0%)
 ```
 
-Scores **OUR link** on the real path (ESP-NOW unicast succeeds only on a MAC ACK),
-using data frames already being sent — unlike the channel survey, which scores
-strangers and is defaulted off.
+Nothing clears a 90% bar, so **the sweep fell through to its fallback on every
+boot, for weeks.** It went unnoticed because the fallback was the floor — which
+is also the correct answer at this spacing. **It looked like a working sweep
+because it agreed with a working answer.** What exposed it was changing the
+fallback to full power while attempting something else; both leaves went to
+19.5 dBm and collapsed to 2.6 and 6.2 frames/s.
 
-**⚠️ BE PRECISE ABOUT THE METRIC.** `esp_now_send` reports success when the far
-MAC acknowledged, **possibly after its own internal retries** — so a link degraded
-by saturation can still read 100%, which is why every level looks identical above.
-**The metric guards only the WEAK end.** The overload end is avoided by the
-**policy** (sweep up, keep the first that works ⇒ lands below saturation by
-construction), not by detection. Right answer, but not for the reason the table
-suggests. Seeing overload would need the **hub's received-frame rate fed back to
-the leaf**, which needs a downward path this architecture lacks.
+Now **argmax on the acknowledgement rate, ties to the lower level** — no bar, so
+no silent fallback. A leaf with a clean table reads 2.0 dBm 90%, 5.0 dBm 85%,
+8.5 dBm 21%, 11.0 dBm 52%, 14.0 dBm 72%: overload, ranked correctly.
+
+**⚠️ AND THE PERCENTAGE IS A RANKING, NOT A HEALTH FIGURE.** 13% acked coincided
+with 10.6 frames/s at the hub and **zero** gaps. The ACK is a MAC-layer reply the
+busy hub often fails to return in time; the data frame lands regardless.
+
+### ⚠️ NEAR-FAR IS REAL, NOT FIXED, AND INVISIBLE TO THE LEAF
+
+At equal power the closer leaf arrives 15-25 dB stronger (−24 dBm vs −36..−51)
+and captures the hub. The far leaf delivered **0.3 frames/s against the near
+one's 10.6 while reporting `tx failures 0`** — only the hub's gap count showed
+it. Raising both by two steps to give the far node headroom made it **WORSE**
+(10.6 each → 2.6 and 6.2): a margin applied to everyone cancels out and only
+adds saturation. Avoided at this spacing, not solved. **Equalising received
+power needs the hub to say what it is hearing** — the same missing feedback path
+noted below.
+
+### ⚠️ FOUR MEASUREMENT-TOOL ARTEFACTS IN ONE SESSION
+
+`capture.py` resets the board; `mosquitto_sub` at QoS 0 drops; **opening the
+S3's USB console resets it**; and now **`kafka-console-consumer` reads zero from
+a topic that is actively being appended to** — it reported 0 bytes over 30 s
+while `kafka-get-offsets` showed the offset advancing 220 in 20 s. That one
+nearly got the MQTT→Kafka bridge blamed and needlessly restarted. **Use
+`kafka-get-offsets` for rates.** Also note the CLI lives at `/usr/bin/kafka-*`,
+not `/opt/kafka/bin/*.sh`, and the wrong path fails *loudly* only if stderr is
+kept — piped to `wc -l` it reads as a clean zero.
 
 ## ✅ AND WHY IT MATTERED — FULL POWER WAS THE BUG. 96 samples/s.
 
