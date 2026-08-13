@@ -4,7 +4,41 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #380 (TEC-NATKIT-35) 100 Hz: SOURCE FIXED, DELIVERY WORSE. 45%.
+## Current Task — #380 (TEC-NATKIT-35) 100 Hz: **92 samples/s DELIVERED**. 75%.
+
+**`f11e4d3` (pin bumped).** Measured by decoding broker frames and counting
+**DISTINCT seqNo** (a duplicate otherwise looks like extra data):
+
+| stage | delivered |
+|---|---|
+| 50 Hz baseline | ~42 samples/s |
+| after the 100 Hz change | **30** (regression) |
+| after the dedupe fix | 78 |
+| **after the deadline fix** | **92 samples/s** |
+
+Leaf produces **10.1 frames/s = 101 samples/s**; broker gets **9.2/s, 0 dupes**.
+
+**⚠️ TWO BUGS, BOTH MINE, BOTH BETWEEN SENSOR AND BROKER:**
+1. **The dedupe was DECORATIVE** — the seq-tracking block sat AFTER the
+   shift-and-publish, so its `return` fired once the frame had already gone to
+   MQTT. Exposed by the broker showing the same seqNo **2–4× ADJACENTLY** (159 of
+   362). Moved ahead of the publish → **159 → 0 duplicates**.
+2. **The sample deadline drifted slow.** `next_sample_us = now + interval` folds
+   overshoot into the next period, so it runs at (interval + pass time). ~22% at
+   10 ms → 78 samples/s **with ZERO packet loss to explain it** — the shortfall
+   that gets blamed on the radio. Now advances by a fixed interval with a
+   resync-not-sprint guard. Spacing after: mean ~9.4 ms, spread 3–18 ms.
+
+**⚠️ MEASURE THE LINK BEFORE TRUSTING A RATE.** The leaf↔S3 link was marginal for
+part of this (tx failures, PRESUMED GONE, 50% beacons missed) then healed to
+**0 gaps / 0 dupes / 0 retries at −23 dBm**. Source duplicates were the 802.11 MAC
+retransmitting because ACKs were not returning — not a frame-path bug.
+
+**➡️ STILL OPEN:** ~9% of frames never reach the broker (27 of 304); **NTP takes
+~33 s after a primary reset and every frame in that window is REFUSED** (correct
+— better than a 1970 stamp — but ~33 s of data lost per restart, worth buffering
+or shortening); and **`../embeded` still samples 50 Hz while declaring 100** —
+decide whether to fix it there too (affects #350's bench).
 
 **`4d79918` (pin bumped).** Zach: "we should be hitting 100 samples per second".
 He is right, and the header always said so.
