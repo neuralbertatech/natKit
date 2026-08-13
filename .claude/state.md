@@ -4,7 +4,35 @@
 
 **Last updated:** 2026-08-12
 
-## Current — single leaf on CHANNEL 3. Radio solved; ~24% publish-side loss left.
+## Current — THE PRIMARY NOW PICKS ITS OWN CHANNEL AT BOOT (Zach's idea)
+
+**`740ee0a` (pin bumped).** The ~33 s NTP window was dead time anyway (frames are
+refused, not published with 1970 stamps), so the primary spends it surveying:
+**13 channels x 2 s = 26 s**, promiscuous, scoring **ENERGY** (10^(rssi/10)) not
+frame count — one loud neighbour ruins a channel that a hundred distant beacons
+would not. **Leaves need no config: they already hop until they find a hub.**
+
+**VALIDATED:** the table matches Zach's UniFi scan (its AP clusters on 6 and 11
+are the scan's two clusters), and its pick (**ch 10**) measured **96 samples/s**
+into Kafka.
+
+**⚠️ FLAW FOUND BY READING THE FIRST TABLE: it was scoring OUR OWN NODES.** A
+searching leaf hops, spraying ~−20 dBm across the band from centimetres away —
+louder than any AP. Ch 12/13 scored **560M and 1.2B** vs a real AP's 4M, purely
+from where the hop landed, so the choice would have been **effectively random**.
+Now ignores frames whose transmitter is on the registry; those fell to ~900K.
+
+**⚠️ LIMIT: it finds CROWDED channels, not NOISY ones.** Non-802.11 interference
+is invisible to a promiscuous receiver — which is exactly what ruins ch 1 on this
+board (its own clocks). **It complements the reciprocity check (compare the two
+directions' RSSI), which found three RF faults this session.**
+
+**Channel history on this bench:** 1 = board-jammed (−82); 6, 11 = the house APs;
+3 and 10 both good (−22/−23 dBm, ~10 frames/s). `NATKIT_CHANNEL_SURVEY=y` by
+default; pin `NATKIT_ESPNOW_CHANNEL` and turn the survey off to override.
+
+**➡️ REMAINING: ~24% lost AFTER the radio** — dupes (MAC retransmission, ACKs not
+returning) and the NTP boot window. **The radio is no longer the limit.**
 
 **`3f6caf7` (pin bumped).** Rig: leaf …0644 (ttyACM0), S3 primary (ttyACM2),
 …1244 powered OFF.
