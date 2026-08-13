@@ -4,7 +4,42 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — #380 (TEC-NATKIT-35) 100 Hz: **92 samples/s DELIVERED**. 75%.
+## ✅ #380 (TEC-NATKIT-35) — **101 samples/s REACHES KAFKA**. 90%, Verification.
+
+**`3e6a5d5` (pin bumped).** Measured at the REAL consumer: 305 records in 30 s on
+the Kafka topic the backend reads.
+
+| stage | delivered |
+|---|---|
+| 50 Hz baseline | ~42 samples/s |
+| 100 Hz first attempt | 30 (regression) |
+| after dedupe fix | 78 |
+| after deadline fix | 92 |
+| **after the sampling task** | **101 samples/s** |
+
+**⚠️ THE DOMINANT LOSS WAS THE LEAF'S SAMPLE LOOP — NOT THE RADIO.** Sampling
+shared a loop with `imu.service()`; an overrunning service call cost a sample.
+**15.2% of slots lost (592 of 3903) WHILE THE PRIMARY REPORTED ZERO GAPS** — the
+shape of loss that gets blamed on a radio. A deadline-aware delay did NOT help
+(the overrun is inside `service()`). **Sampling now has its own task** at prio 6
+paced by `xTaskDelayUntil`, snapshotting already-decoded readings — no SPI, no
+blocking. **Missed slots 15.2% → 0.7%.** The snapshot races service() on purpose:
+a torn read mixes report axes, which is what a merged snapshot already is, and a
+lock would put SPI latency back into the cadence.
+
+**⚠️ THREE MEASUREMENT FAULTS, ALL MINE:**
+1. The missed-slot counter only fired when TWO periods behind → reported **1.0%
+   against an actual 15.2%**.
+2. **`mosquitto_sub` UNDERSTATES delivery** — QoS 0 subscriber, broker drops for
+   a slow one: showed 7.3% loss where Kafka showed 4.4%. **Measure at Kafka.**
+3. **`capture.py` RESETS THE BOARD on open**, so any rate measured beside it
+   starts at t=0 — inside the ~33 s NTP window where frames are refused. Most of
+   the 3.3/6.8/7.8/9.2 readings were that. **Use
+   `~/natkit-verification/monitor.py`** (no DTR/RTS) to watch a running board.
+
+**Remaining:** NTP ~33 s after a primary reset (Zach: nice-to-have); the leaf↔S3
+link still flaps occasionally but recovers; **`../embeded`'s own 50 Hz is #381
+(TEC-NATKIT-36), explicitly only if we roll back.**
 
 **`f11e4d3` (pin bumped).** Measured by decoding broker frames and counting
 **DISTINCT seqNo** (a duplicate otherwise looks like extra data):
