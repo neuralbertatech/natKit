@@ -4,7 +4,47 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — ETHERNET ON AN ESP32-S3 (2026-08-13). BLOCKED on hardware details.
+## Current Task — ETHERNET ON THE ESP32-S3: WORKS. ⚠️ BLOCKED ON THE S3's ANTENNA.
+
+**`0b5f303` (pin `bff967f`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
+5 logs attached to #373 (85%).
+
+**✅ THE WIRED UPLINK WORKS.** One chip = ESP-NOW hub + timing master + W5500.
+**Link up 2.3 s after boot, DHCP `10.26.0.31` at 3.3 s, ESP-NOW on channel 1 —
+OURS**, no association to inherit one from, clean boot, heap 309 KB. New
+`main/ethernet_net.{hpp,cpp}`; SNTP/MQTT/timestamp-rewrite reused UNCHANGED
+because #349 split `gatewayWifiStart` from `gatewayServicesStart`.
+
+**Pins are KNOWN-GOOD, not derived** — from Espressif's own
+`basic_thread_border_router` in **`~/code/esp-thread-br`**, which Zach confirmed
+working on this board: **W5500, spi host 2, sclk 21, mosi 45, miso 38, cs 41,
+int 39, rst 40, 36 MHz**. Same file gives the pins to AVOID: **7/8 = H2 reset and
+boot, 17/18 = H2 UART**, 19/20 = native USB, 26–32 = flash/PSRAM.
+
+**⚠️ THE S3 BARELY RECEIVES, AND IT IS NOT ETHERNET.** 4–8 data frames against
+seq in the hundreds. Three hypotheses, two KILLED BY TEST:
+| hypothesis | test | result |
+|---|---|---|
+| W5500 / SPI | disabled the Ethernet uplink | **no change** |
+| ESP32-H2 co-processor (802.15.4, mm away) | held in reset on GPIO 7 | **no change** |
+| the RF path | **measured RSSI** | **−77..−87 dBm** |
+
+**−77..−87 dBm from leaves on the same bench** (healthy close range is −30..−50),
+so the receiver is **~40 dB down**. Explains the asymmetry: the S3 is HEARD fine
+(leaf clocks lock, 25 µs residual) while leaf unicasts are unacknowledged
+(`sent 9, tx failures 220`) — a loud transmitter and a deaf receiver.
+
+**➡️ ASK ZACH TO CHECK THE S3's WiFi ANTENNA** (the board has two radios; the H2's
+802.15.4 antenna is a different one). Everything else is ready to stream.
+
+**⚠️ FOUR TRAPS:** `esp_event_loop_create_default()` → `ESP_ERR_INVALID_STATE` is
+NORMAL once an uplink made the netif (ESP_ERROR_CHECK on it = reboot loop);
+**W5500 needs `gpio_install_isr_service()` first or the link never comes up
+without failing loudly**; **the W5500 has NO MAC of its own** (derived from
+`ESP_MAC_ETH`); SPI-Ethernet Kconfig must live in the **shared** defaults, since
+every source compiles into every image.
+
+## Superseded — earlier note: BLOCKED on hardware details.
 
 **Zach replaced a node with an ESP32-S3 + Ethernet daughterboard.** This is a
 better answer than either architecture measured so far: **Ethernet is OFF THE
