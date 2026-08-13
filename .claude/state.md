@@ -4,7 +4,41 @@
 
 **Last updated:** 2026-08-12
 
-## Current — ⚠️ RIG IS NOT DELIVERING. Leaf healthy, primary publishes nothing.
+## ✅ SOLVED — FULL POWER WAS THE BUG. 96 samples/s delivered.
+
+**`6904064` (pin bumped).** Turning both radios **DOWN from 19.5 dBm to 2 dBm**
+took the hub from **0.4 → 8.5 received frames/s** and delivery to **96 samples/s**.
+A **20× improvement from transmitting LESS**, which is why it took so long.
+
+**⚠️⚠️ THE PHYSICS: at a few cm, free-space loss is only ~10 dB**, so 19.5 dBm
+arrives at **~+9 dBm** — far above any 2.4 GHz receiver's linear range. The front
+end compresses, the AGC mis-reports, packets are lost, **and the RSSI reads like a
+distant transmitter**.
+
+**IT EXPLAINS EVERY SYMPTOM CHASED SEPARATELY THIS SESSION:**
+- **The apparent reciprocity violation** (hub −83 dBm, leaf −24, same instant).
+  The reasoning "a passive path can't be asymmetric, so it's a receiver" was
+  RIGHT — the receiver was **saturated, not broken**. Was blamed in turn on an
+  antenna, a suspect board, and the S3's receive chain.
+- **RSSI jumping −16..−83 with nothing moved.**
+- **~50% duplicates** — ACKs not returning, so the 802.11 MAC retransmitted below
+  ESP-NOW. At 2 dBm: **dupes 0**.
+- **Much of the channel sensitivity** — adjacent-channel rejection differs, so an
+  overloaded front end fails differently per channel. Channel 1's 66 dB was real;
+  6/11 vs 3/10 was mostly this.
+
+**`NATKIT_TX_POWER_QUARTER_DBM`** — default 0 (leave IDF alone), **set to 8
+(2 dBm) for this bench**. ⚠️ **Deployments want FULL power** (nodes metres apart);
+this is a BENCH setting.
+
+**⚠️ AND THE THING THAT MADE IT DIAGNOSABLE: the primary now PUBLISHES its status
+frames** instead of discarding them in the Ethernet path. **Opening the S3's USB
+console RESETS it**, so the hub could not be watched while misbehaving. It now
+reports per-node counters, sync state and uplink figures over MQTT
+(`natKit/sending/Log-<id>-Binary-NatKitPrimaryStatusV1` / `...NodeStatusV1`).
+
+**❌ Rejected by measurement:** the W5500's 36 MHz SPI — dropping to 8 MHz made
+reception **worse** (0.1 frames/s). Restored to 36.
 
 **`f458a98` (pin bumped).** Survey **OFF by default**, channel **pinned to 3**.
 
