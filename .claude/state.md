@@ -4,7 +4,31 @@
 
 **Last updated:** 2026-08-12
 
-## Current — #380 transport hunt: 97 samples/s, but delivery is ACCIDENTAL
+## Current — ⚠️ THE LEAF LEFT POWERED ON IS THE BAD ONE. Swap boards.
+
+**`3bbe775` (pin bumped).** Zach powered one leaf down to focus on a single node —
+but the one still running is the impaired board.
+
+**❌ REJECTED: the broadcast-fallback theory.** Added unicast/broadcast counting
+via `des_addr` (the only place ESP-NOW preserves the distinction — both go to one
+callback). **Measured 49 unicast, 0 broadcast.** Delivery is NOT riding a
+fallback. Cheap to re-check now rather than argue about.
+
+**⚠️ THE REMAINING LEAF `0c:8b:95:96:bc:4c` (…1244) HAS A ~50 dB TRANSMIT
+DEFICIT.** It hears the primary at **−28 dBm** while the primary hears it at
+**−78 dBm**, same distance, same instant, with its own radio reporting a full
+**19.5 dBm (query ESP_OK** — a real reading, not an uninitialised counter).
+**A passive RF path is RECIPROCAL**, so this is not distance, orientation or the
+hub — the hub hears the OTHER leaf at **−21 dBm** from the same bench.
+
+That also explains what looked like a state-machine bug: it latches, cannot get
+unicasts acknowledged because they arrive 50 dB weak, and falls back to searching
+— **three latch-and-lose cycles in 35 s**.
+
+**➡️ USE `0c:8b:95:96:b9:f4` (…0644, ttyACM0) as the single leaf** — the one the
+hub hears at −21 dBm. Treat …1244 as suspect hardware until its transmit path is
+explained. **This is the second time reciprocity has identified a bad RF path**
+(the first was channel 1 jamming the S3) — it is the reliable tool here.
 
 **`a91f943` (pin bumped).** Delivery holds at **97–101 samples/s at Kafka**.
 
