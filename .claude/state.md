@@ -4,7 +4,50 @@
 
 **Last updated:** 2026-08-12
 
-## Current Task — ETHERNET ON THE ESP32-S3: WORKS. ⚠️ BLOCKED ON THE S3's ANTENNA.
+## ✅ SOLVED — CHANNEL 1 WAS JAMMING THE S3. THE ONE-CHIP WIRED RIG WORKS.
+
+**`204a62f` (pin `2ea9ab0`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
+8 logs on #373 (95%).
+
+**⚠️⚠️ THE ESP-NOW DEFAULT CHANNEL IS NOW 11, NOT 1, AND IT IS WORTH 66 dB.**
+Same boards, cm apart, only the channel changed:
+
+| | ch 1 | ch 11 |
+|---|---|---|
+| RSSI at the hub | −82 dBm | **−16 dBm** |
+| data frames | 4–8 | **285 @ full 5/s** |
+| seq gaps | hundreds | **12** |
+
+Channel 1 = 2401–2423 MHz, where a 25 MHz crystal's 96th/97th harmonics land.
+
+**✅ ONE CHIP DOES IT ALL:** ESP32-S3 = ESP-NOW hub + timing master + W5500 wired
+uplink, both leaves publishing on the existing MQTT contract. No serial bridge,
+no second ESP32, no radio contention.
+
+**⚠️ THE DIAGNOSTIC LESSON, worth more than the fix.** The symptom was
+ASYMMETRIC — leaves heard the hub at −25 dBm, the hub heard them at −82. **An
+antenna cannot do that: a passive path is RECIPROCAL.** That is what proved it
+was not the antenna. Then both TX powers were MEASURED (19.5 / 20.0 dBm, both
+`ESP_OK`), leaving only "the receiver is being jammed". **MOVE CHANNEL BEFORE
+SUSPECTING THE RADIO.**
+
+Ruled out by test, not argument: W5500 (disabled it — no change), H2
+co-processor (held in reset on GPIO 7 — no change; also unpowered), stale PHY
+calibration (full flash erase — no change), antenna (reciprocity + Zach checked).
+
+**⚠️ TWO BUGS THIS EXPOSED, both fixed:**
+1. **A leaf that found a hub could NEVER rescan.** Moving the primary's channel
+   stranded both leaves forever. Now a long failure run returns the channel to
+   the search (threshold far above the retry-policy one).
+2. **`esp_wifi_get_max_tx_power`'s return was ignored**, printing **"0.0 dBm"** —
+   reads as a dead radio, was a failed query. Nearly derailed the diagnosis.
+
+**#373's question is answered twice:** one chip + associated WiFi = ~85% loss;
+one chip + wired Ethernet = full rate. **#348/#349 are NOT wasted** — they proved
+the frame format, registry, backpressure and topic contract, and are the fallback
+where there is no Ethernet. **#350 now has THREE options**, not two.
+
+## Superseded — earlier note: BLOCKED ON THE S3's ANTENNA
 
 **`0b5f303` (pin `bff967f`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
 5 logs attached to #373 (85%).
