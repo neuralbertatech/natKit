@@ -4,7 +4,39 @@
 
 **Last updated:** 2026-08-12
 
-## Current — single leaf. Two fixes; the S3's RECEIVE is the remaining fault.
+## Current — single leaf on CHANNEL 3. Radio solved; ~24% publish-side loss left.
+
+**`3f6caf7` (pin bumped).** Rig: leaf …0644 (ttyACM0), S3 primary (ttyACM2),
+…1244 powered OFF.
+
+**⚠️⚠️ CHANNEL 3, AND THIS IS THE HEADLINE.** Zach's UniFi survey showed **APs
+centred on 6 and 11**, only a weak wide signal on 1–5. Swept the hub's own RSSI:
+
+| ch | hub hears leaf | delivered |
+|---|---|---|
+| **3** | **−22 dBm** | **10 frames/s** ✅ |
+| 6 | −21..−57 | varies |
+| 9 | −61 | 0 |
+| 11 | −83 | 0 |
+| 13 | nothing | 0 |
+| 1 | −82 | jammed by the Thread BR board |
+
+**1 is unusable for a BOARD reason, 6 and 11 for a SITE reason.** None of this is
+a firmware property — **re-survey and re-sweep on a new site.**
+
+**⚠️ `NATKIT_PRIMARY_ETH_UPLINK` NOW DEFAULTS ON FOR ESP32-S3.** Losing it is
+SILENT: the primary comes up with **no uplink at all**, no Ethernet/MQTT console
+lines, while uplink counters report frames "sent" down a UART nobody reads. Cost a
+cycle **twice**, both times after `rm`-ing a generated sdkconfig.
+
+**✅ Also fixed this round:** the leaf's main loop was a **busy spin** (orphaned
+`next_sample_us` after sampling moved to its own task) — cost **81% of beacons**;
+now 10%. And the broadcast-fallback theory is **dead** (49 unicast, 0 broadcast).
+
+**➡️ REMAINING: hub receives the full 10 frames/s at −23 dBm; Kafka gets 76
+samples/s.** So ~24% is lost AFTER the radio. Visible contributors: **dupes 63 of
+180** (MAC retransmission — ACKs still not returning reliably) and the **NTP boot
+window** (`no wall clock` 114, cumulative). **The radio is no longer the limit.**
 
 **`7352169` (pin bumped).** Rig: **leaf …0644 on ttyACM0**, S3 primary on ttyACM2,
 …1244 powered off.
