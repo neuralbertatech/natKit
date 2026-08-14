@@ -8,6 +8,7 @@
     import EmgTransforms from "./EmgTransforms.svelte";
     import MuseViewer from "./MuseViewer.svelte";
     import ImuViewer from "./ImuViewer.svelte";
+    import ReportToggles from "./ReportToggles.svelte";
     import ClassificationViewer from "./ClassificationViewer.svelte";
     import MarkerViewer from "./MarkerViewer.svelte";
     import SchemaDescriptorInspector from "./SchemaDescriptorInspector.svelte";
@@ -117,6 +118,31 @@
     let lastEmgTransformRefreshAtMs = $state(0);
 
     let wsManager: StreamViewerWebSocket | null = null;
+
+    // The last device answer per stream, which is the ONLY source of truth about
+    // what a node is collecting -- the samples cannot distinguish a disabled
+    // sensor from one that has not reported yet.
+    let deviceAnswers = $state<
+        Record<string, { command: string; ok: boolean; message: string }>
+    >({});
+
+    function sendDeviceCommand(
+        streamId: string,
+        command: string,
+        args?: Record<string, unknown>,
+    ): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            return false;
+        }
+        wsManager.send({
+            action: "send_device_command",
+            request_id: `device-command:${command}:${Date.now()}`,
+            stream_id: streamId,
+            command,
+            ...(args ? { args } : {}),
+        });
+        return true;
+    }
     let stalenessTimer: ReturnType<typeof setInterval> | null = null;
 
     onMount(() => {
@@ -269,6 +295,27 @@
                 const nextMap = new Map(transformProvenanceByStream);
                 nextMap.set(String(message.stream_id), message);
                 transformProvenanceByStream = nextMap;
+            },
+            onDeviceCommandResult: (message) => {
+                // The device's own words, already correlated by the backend. A
+                // refusal still carries the device's CURRENT state in its
+                // message, so failures are stored the same way successes are
+                // rather than discarded -- that is what keeps the toggles
+                // showing what the node is really doing after a refused change.
+                const record = message.records?.[message.records.length - 1];
+                deviceAnswers = {
+                    ...deviceAnswers,
+                    [String(message.stream_id)]: {
+                        command: message.command,
+                        ok: message.ok,
+                        message:
+                            record?.message ??
+                            message.error ??
+                            (message.timed_out
+                                ? "The device did not answer in time"
+                                : "No answer"),
+                    },
+                };
             },
             onError: (message: ErrorMessage) => {
                 lastError = message.message;
@@ -1157,6 +1204,13 @@
                                                 <ImuViewer
                                                     samples={imuBuffer}
                                                     {formatNumber}
+                                                />
+                                                <ReportToggles
+                                                    streamId={String(streamId)}
+                                                    sendCommand={sendDeviceCommand}
+                                                    lastAnswer={deviceAnswers[
+                                                        String(streamId)
+                                                    ] ?? null}
                                                 />
                                             </div>
                                         {:else}
