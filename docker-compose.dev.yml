@@ -19,22 +19,7 @@ services:
       dockerfile: Dockerfile_natkit_backend
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
-    restart: always
-    ports:
-      # Not needed by the browser -- it talks to the frontend, which proxies to
-      # this service by its network alias -- but published because every direct
-      # probe of the backend during development goes here.
-      - "7409:7409"
     environment:
-      # ⚠️ WITHOUT THESE THE BACKEND CANNOT REACH KAFKA AND THIS FILE BRINGS UP A
-      # BROKEN STACK. They were missing entirely: rdkafka falls back to
-      # localhost:29093, which is nothing, and the log fills with "1/1 brokers are
-      # down" while everything else looks like it started fine. The container that
-      # had been running for three days had them set, so it was created from
-      # something other than this file -- which is exactly how a compose file rots
-      # without anyone noticing.
-      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
-      LIBNATKIT_KAFKA_BROKER_PORT: "9092"
       # Dev-only: bypass authentication so the panel/WebSocket need no login in
       # the local dev stack. NEVER set this in prod (see docker-compose.portainer.yml).
       NATKIT_AUTH_DISABLED: "true"
@@ -148,17 +133,6 @@ services:
       - natkit-v0-kafka-network
     depends_on:
       - natkit-v0-backend
-
-# ⚠️ DECLARED, not just referenced. Every service names this network but nothing
-# defined it, so podman-compose refused the whole file with "missing networks"
-# while the running stack -- created by something more forgiving -- carried on
-# working. Compose requires a service's networks to be declared here too, so the
-# file was incomplete rather than the tool being wrong.
-#
-# The name podman actually creates is project-prefixed (natkit_natkit-v0-kafka-
-# network), the same prefixing that catches hand-made volumes.
-networks:
-  natkit-v0-kafka-network:
 
 volumes:
   natkit-v0-instances:
