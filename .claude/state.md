@@ -4,6 +4,58 @@
 
 **Last updated:** 2026-08-13
 
+## ✅ THE MAGNETOMETER IS ON THE WIRE. Frame version 2.
+
+**libnatkit-core `4481d51`, libnatkit `34db438`, natKit-IMU `5f94346`,
+superproject `b23a0aa`** — branch `zach/383-magnetometer-on-the-wire` in all four.
+Ticket #383 / TEC-NATKIT-38, in Verification.
+
+13 floats instead of 10 (mag x/y/z at 10-12, uT), a sample 62 bytes instead of
+50, a frame 644 instead of 524 — still one ESP-NOW packet. `accuracies` bits 7-6
+and `has_data` bit 3 were already spare. **Verified end to end at 100-107
+samples/s** with the primary reporting `rejected=0`.
+
+The sensor was never the obstacle: it has been enabled and arriving at ~91 Hz all
+along, costing ~2 Hz of the other reports.
+
+### ⚠️ THE VERSION BRANCH WAS THE WHOLE JOB, not the extra floats
+
+`decodeBinary` validated length against one hard-coded `50`, so widening the
+sample would have **rejected every recording ever made**, silently. `schemaVersion`
+was already on the wire and round-tripped, but nothing had ever branched on it.
+
+- `binarySampleSize(version)` derives the layout; v1 decodes into the wider record
+  with floats 10-12 zeroed
+- **v1's spare bits are MASKED OFF, not trusted.** Writers left `has_data` bit 3
+  and `accuracies` bits 7-6 unused and some set them — untouched, every old
+  recording claims a magnetometer reading of (0,0,0) at high accuracy
+- an unknown version is refused, not parsed at whatever size is compiled in
+- the encoder stamped the DECODED version, so a round trip put a v1 header in
+  front of a v2 body
+
+`tests/imu_frame_version_test.cpp` pins all of it; the v1 fixture is hand-built,
+not encoder-built, so it cannot follow the encoder wherever it goes.
+
+### ⚠️ TWO TRAPS FOR WHOEVER TOUCHES THIS NEXT
+
+**The Arduino firmware does not build against the sibling submodule.**
+`embeded/platformio.ini:55` pins libnatkit-core to a GitHub commit, so it links a
+ten-float schema and a build "succeeds" while silently dropping the magnetometer.
+Passing 13 floats to it also trips its `assert`. The count is clamped so the
+source is correct against both cores — **but the pin still needs bumping once the
+core lands on trunk.**
+
+**Parquet cannot say "absent".** `natimu_motion_v1` IS the column list, and it is
+fixed, so a file exported from a v1 recording has three columns of ZEROES. Only
+the JSON path carries `has_data.magnetometer`.
+
+### Leaf …0644 is not delivering, and it is NOT this change
+
+It sits at 0-22 samples/s while …1244 holds 100. Flashed back to **v1 frames it
+still delivered 0** against the other node's 100 — same open-loop power/near-far
+problem as #382. Its transmits fail (200+ tx failures) while it hears the primary
+at −40 dBm. ⚠️ Both leaves are currently PINNED at 8.5 dBm with the sweep OFF.
+
 ## ✅ TWO LEAVES, ~100 samples/s EACH, 0 GAPS. And the power sweep was broken.
 
 **`030493b` (pin bumped).** Zach reconnected the second leaf to check the rate
