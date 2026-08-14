@@ -262,18 +262,27 @@ export interface ImuData {
   accel: ImuVector3;
   gyro: ImuVector3;
   quat: ImuQuaternion;
+  // Frame version 2 onwards. The backend always emits this key, so it is not
+  // optional -- but for a version 1 stream (anything recorded before 2026-08)
+  // the values are zero and has_data.magnetometer is false. ⚠️ CHECK has_data,
+  // not the numbers: (0,0,0) is a legitimate magnetic field reading in
+  // principle, so a zero test cannot tell absent from measured.
+  mag: ImuVector3;
 }
 
 export interface ImuAccuracies {
   accelerometer: number;
   gyroscope: number;
   rotation: number;
+  magnetometer: number;
 }
 
 export interface ImuHasData {
   accelerometer: boolean;
   gyroscope: boolean;
   rotation: boolean;
+  // False for every version 1 frame. See ImuData.mag.
+  magnetometer: boolean;
 }
 
 export interface EncodingInfo {
