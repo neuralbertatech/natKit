@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit Runtime-Configurable IMU Reports Plan</title>
+<style>
+  :root {
+    --bg: #f5f7f6;
+    --panel: #ffffff;
+    --ink: #16211c;
+    --muted: #57655f;
+    --line: #d9e1dc;
+    --accent: #0b7a53;
+    --accent-soft: #e1f2ea;
+    --warn: #9b5c12;
+    --warn-soft: #f7ecd9;
+    --risk: #9a3324;
+    --risk-soft: #f6e3df;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 var(--sans);
+  }
+  header, main, footer {
+    width: min(1080px, calc(100vw - 32px));
+    margin: 0 auto;
+  }
+  header { padding: 32px 0 16px; }
+  main { padding: 8px 0 56px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; }
+  p + p, ul, table, pre, .grid { margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin: 18px 0;
+  }
+  .eyebrow, .meta, .status, code, pre {
+    font-family: var(--mono);
+  }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+  }
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    max-width: 920px;
+  }
+  .meta {
+    color: var(--muted);
+    margin-top: 8px;
+    font-size: 12px;
+  }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+  .risk {
+    border-left-color: var(--risk);
+    background: var(--risk-soft);
+  }
+  .status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+    background: #fcfdfc;
+  }
+  ul {
+    margin: 10px 0 0 20px;
+    padding: 0;
+  }
+  li { margin: 8px 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  code {
+    background: #edf3ef;
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+    font-size: 12px;
+  }
+  pre {
+    background: #132019;
+    color: #d7eee2;
+    padding: 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  footer {
+    padding: 0 0 40px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit &middot; plan</div>
+  <h1>Runtime-configurable IMU reports</h1>
+  <p class="meta">TEC-NATKIT-40 &middot; drafted 2026-08-14 &middot; depends on TEC-NATKIT-39</p>
+</header>
+<main>
+
+<section>
+  <h2>The ask</h2>
+  <p>Expose the four BNO08x reports &mdash; accelerometer, gyroscope, magnetometer,
+  rotation vector &mdash; as toggles in the frontend, carried to the device over the
+  EXECUTION_COMMAND channel, so which sensors a node collects becomes a runtime
+  decision rather than a rebuild.</p>
+  <p>The motivation is TEC-NATKIT-35's measured result: the hub will not deliver all
+  four at 100 Hz, and getting gyro or rotation genuinely past 100 Hz requires giving
+  one of them up. That trade is currently a Kconfig edit and a reflash. It should be
+  a switch.</p>
+</section>
+
+<section class="warn">
+  <h2>&#9888; The encoding change is not required, and separating it makes this much smaller</h2>
+  <p>The ask assumed the wire format needs to become configurable. It does not, and
+  this was checked rather than assumed.</p>
+  <p><code>sampleFromReadings()</code> already gates every sensor on
+  <code>readings.X.has_data</code>, which is only set when a report actually
+  arrives. A disabled report never arrives, so its <code>has_data</code> bit stays
+  clear and its floats stay zero &mdash; which is exactly the "absent, not zero"
+  distinction the schema already carries and every decoder already honours.
+  <strong>Turning a report off today produces a correct frame with no format change
+  at all.</strong></p>
+  <p>What a variable-length encoding would buy is <em>airtime</em>: a frame carrying
+  only accelerometer and gyroscope could be 34 bytes per sample instead of 62. That
+  is worth having eventually &mdash; airtime is shared across nodes, so smaller frames
+  mean more nodes per channel &mdash; but it is not what makes the feature work, and it
+  is measurably not the current constraint: leaf B delivered 100 samples/s at 524
+  bytes and again at 644 bytes. Deferred to its own ticket.</p>
+</section>
+
+<section class="risk">
+  <h2>&#9888; Two real gaps, neither of them the encoding</h2>
+  <h3>1. <code>has_data</code> is sticky, so a runtime disable leaves a stale value forever</h3>
+  <p><code>SensorReading::has_data</code> is documented as "false until the first
+  report arrives" and is never cleared. Disable a report at runtime and the last
+  value it produced keeps being copied into every subsequent sample, marked present,
+  indefinitely. <strong>This is the one change the data path genuinely needs</strong>
+  &mdash; disabling must clear the reading, not just stop refreshing it. It is a small
+  fix, but nothing in the current code does it, because nothing could disable a
+  report while running.</p>
+  <h3>2. The leaf has no network at all</h3>
+  <p>The old firmware's command channel worked because every node was a full
+  MQTT client. In the current architecture a leaf has zero IP connectivity &mdash;
+  <code>grep mqtt leaf.cpp</code> returns nothing. Commands arrive at the
+  <em>primary</em> over MQTT and must be relayed to the leaf over ESP-NOW.</p>
+  <p>The transport for that already exists: the primary already sends
+  <code>TimeBeacon</code>, <code>TimeFollowUp</code>, <code>SyncState</code> and
+  <code>SyncMarker</code> downstream, so this is a new frame type on an established
+  path rather than a new path. But the <em>plumbing</em> &mdash; correlating a
+  command id, routing to one node by MAC, carrying the answer back up &mdash; does not
+  exist.</p>
+  <p class="note"><strong>This downlink is a shared enabler.</strong> TEC-NATKIT-37
+  (hub-feedback transmit power) is blocked on exactly the same missing capability:
+  the hub knows a leaf is failing and has no way to tell it. Building the command
+  relay unblocks both.</p>
+</section>
+
+<section>
+  <h2>What already exists, and is correct</h2>
+  <ul>
+    <li><strong>Backend</strong> &mdash; <code>handleSendDeviceCommand</code> in
+    <code>StreamViewerWebSocket.cpp</code>: topic naming, command id generation,
+    <code>args</code> pass-through as raw JSON, a reply thread with a clamped
+    timeout, and correlation against the device log topic. Untouched by the
+    migration and still right.</li>
+    <li><strong>Frontend</strong> &mdash; the Visual Programming command buttons,
+    verified on hardware 2026-08-05.</li>
+    <li><strong>Device protocol shape</strong> &mdash; <code>CommandRequest</code> in
+    the old firmware carries <code>command_id</code>, <code>command</code> and
+    <code>args</code> as raw JSON, with fixed-size buffers and a two-queue design
+    that keeps MQTT I/O off the sensor task. Worth porting as a design, not as
+    code: the constraint it solved (PubSubClient thread-safety) does not exist in
+    ESP-IDF, but the shape still fits.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Slices</h2>
+  <table>
+    <tr><th>#</th><th>Slice</th><th>Why it is separable</th></tr>
+    <tr><td>1</td><td><strong>Command relay: server &rarr; primary &rarr; leaf, and the
+    answer back.</strong> New ESP-NOW frame types for command and log; the primary
+    subscribes per known node and routes by MAC. TEC-NATKIT-39.</td>
+    <td>Ends with an existing command (an echo or a status dump) working end to end
+    from the frontend. No IMU involvement, and it unblocks TEC-NATKIT-37.</td></tr>
+
+    <tr><td>2</td><td><strong>Runtime report configuration on the leaf.</strong> An
+    NVS-persisted enable mask that <code>enableReports()</code> reads instead of the
+    Kconfig defaults, plus clearing the sticky <code>SensorReading</code> on disable.
+    </td>
+    <td>Testable entirely over the console with no command channel, by writing NVS
+    directly. Also the slice that must survive a hub reset &mdash;
+    <code>enableReports()</code> is already re-called there and must pick up runtime
+    state, not compiled-in state.</td></tr>
+
+    <tr><td>3</td><td><strong><code>get_reports</code> / <code>set_reports</code>
+    commands.</strong> <code>args</code> carries the four booleans; the reply carries
+    the resulting configuration, which is what the frontend renders.</td>
+    <td>The enabled set is <em>configuration</em>, so it is read back over the command
+    channel rather than repeated in every data frame at 10 Hz. That is why no header
+    field is needed for it.</td></tr>
+
+    <tr><td>4</td><td><strong>Frontend toggles.</strong> Four switches, populated by
+    <code>get_reports</code>, written by <code>set_reports</code>, with the disabled
+    sensors visibly disabled rather than silently flat.</td>
+    <td>&#9888; A disabled sensor and a sensor that has not reported yet look
+    identical in the data. Only the command reply distinguishes them, so the UI must
+    take its truth from there and not from <code>has_data</code>.</td></tr>
+
+    <tr><td>5</td><td><strong>Deferred: variable-length encoding.</strong> A presence
+    mask in the frame header, sample size from its popcount.</td>
+    <td>Buys airtime, not function. Costs a frame version and a decoder change
+    everywhere. See the open decision below &mdash; it makes the recording problem
+    strictly worse.</td></tr>
+  </table>
+</section>
+
+<section class="risk">
+  <h2>&#9888; The open decision: what a toggle does to a recording</h2>
+  <p>Parquet has one column set per file. If reports can be toggled while a recording
+  is running, a file's schema changes halfway through, and this is true <em>whatever
+  the wire encoding does</em> &mdash; it is a property of the feature, not of slice 5.</p>
+  <p>Three options, and this needs Zach rather than a default:</p>
+  <ul>
+    <li><strong>Refuse toggles while recording.</strong> Simplest and most honest;
+    the command returns an error. Costs the ability to change mid-session.</li>
+    <li><strong>Keep every column, mark the disabled spans.</strong> Nothing breaks
+    and files stay comparable, but a column of zeroes needs something alongside it
+    saying "not collected" &mdash; and the transform mapping that drives Parquet
+    columns has no way to express that today.</li>
+    <li><strong>A config change rolls a new file.</strong> Clean schemas, but a
+    session becomes several files and everything downstream must join them.</li>
+  </ul>
+  <p class="note">Related and already true: a Parquet export from a frame-version-1
+  recording carries three magnetometer columns of zeroes with nothing flagging them
+  (TEC-NATKIT-38). Whatever is chosen here should cover that case too.</p>
+</section>
+
+<section>
+  <h2>Risks worth naming</h2>
+  <ul>
+    <li><strong>Disabling everything.</strong> <code>sampleFromReadings()</code>
+    emits nothing unless accelerometer, gyroscope or rotation has data, so a node
+    with only the magnetometer enabled goes silent &mdash; correctly, but it will look
+    like a fault. <code>set_reports</code> should refuse it.</li>
+    <li><strong>Configuration drift across nodes.</strong> Once this is per-node and
+    persistent, two leaves in one session can be collecting different things. The
+    recording metadata needs to say what each node was configured for.</li>
+    <li><strong>A command that arrives and is never answered.</strong> The backend
+    already clamps a timeout, but over ESP-NOW a command can be lost silently &mdash;
+    the same near-far problem that has leaf <code>&hellip;0644</code> at 0 samples/s
+    (TEC-NATKIT-37). The relay needs its own acknowledgement, not just the
+    application-level reply.</li>
+  </ul>
+</section>
+
+</main>
+<footer>
+  <p class="meta">Measured tables behind the motivation: <code>bno08x.cpp</code>
+  <code>enableReports()</code>, reproducible with
+  <code>tools/sweep_report_rates.sh</code>.</p>
+</footer>
+</body>
+</html>
