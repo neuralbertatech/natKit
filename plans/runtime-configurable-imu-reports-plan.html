@@ -179,15 +179,31 @@
 </section>
 
 <section class="risk">
+  <h2>&#9888; Measured since drafting: the rate motive is gone</h2>
+  <p>This plan's motivation was TEC-NATKIT-35's result that you cannot have all four
+  reports at 100 Hz, so the trade should be a switch. <strong>That motive no longer
+  holds.</strong></p>
+  <p>Making <code>has_data</code> per-sample (commit <code>207dfc3</code>) showed the
+  hub delivers its reports in <em>bursts at ~88 Hz</em> rather than at their
+  individual rates: sample-visible freshness is identical across all four sensors at
+  ~88%, and asking the gyroscope for double the reports leaves it unchanged at 88%.
+  <strong>Dropping a report to fund another buys nothing that reaches a sample</strong>
+  (TEC-NATKIT-41).</p>
+  <p>The feature is still worth building &mdash; airtime, power, and simply not wanting
+  a channel are all real reasons to turn a sensor off, and a runtime switch beats a
+  reflash for all of them. But it should not be sold as a way to get more rate, and
+  the frontend should not imply that it is.</p>
+</section>
+
+<section class="risk">
   <h2>&#9888; Two real gaps, neither of them the encoding</h2>
-  <h3>1. <code>has_data</code> is sticky, so a runtime disable leaves a stale value forever</h3>
-  <p><code>SensorReading::has_data</code> is documented as "false until the first
-  report arrives" and is never cleared. Disable a report at runtime and the last
-  value it produced keeps being copied into every subsequent sample, marked present,
-  indefinitely. <strong>This is the one change the data path genuinely needs</strong>
-  &mdash; disabling must clear the reading, not just stop refreshing it. It is a small
-  fix, but nothing in the current code does it, because nothing could disable a
-  report while running.</p>
+  <h3>1. <code>has_data</code> is sticky &mdash; <span class="status">DONE, commit 207dfc3</span></h3>
+  <p>It was "false until the first report arrives" and never cleared, so a runtime
+  disable would have left that sensor's last value copied into every subsequent
+  sample, marked present, forever. It now means "a fresh report arrived for this
+  sample", which fixes the disable case as a side effect and, more importantly, makes
+  the sensors' real cadence visible in the data &mdash; which is what found the 88 Hz
+  burst above.</p>
   <h3>2. The leaf has no network at all</h3>
   <p>The old firmware's command channel worked because every node was a full
   MQTT client. In the current architecture a leaf has zero IP connectivity &mdash;
@@ -265,22 +281,20 @@
   </table>
 </section>
 
-<section class="risk">
-  <h2>&#9888; The open decision: what a toggle does to a recording</h2>
-  <p>Parquet has one column set per file. If reports can be toggled while a recording
-  is running, a file's schema changes halfway through, and this is true <em>whatever
-  the wire encoding does</em> &mdash; it is a property of the feature, not of slice 5.</p>
-  <p>Three options, and this needs Zach rather than a default:</p>
-  <ul>
-    <li><strong>Refuse toggles while recording.</strong> Simplest and most honest;
-    the command returns an error. Costs the ability to change mid-session.</li>
-    <li><strong>Keep every column, mark the disabled spans.</strong> Nothing breaks
-    and files stay comparable, but a column of zeroes needs something alongside it
-    saying "not collected" &mdash; and the transform mapping that drives Parquet
-    columns has no way to express that today.</li>
-    <li><strong>A config change rolls a new file.</strong> Clean schemas, but a
-    session becomes several files and everything downstream must join them.</li>
-  </ul>
+<section>
+  <h2>Decided: a toggle is refused while recording</h2>
+  <p>Parquet has one column set per file, so toggling mid-recording would change a
+  file's schema halfway through &mdash; true <em>whatever the wire encoding does</em>.
+  Zach's call (2026-08-14): <strong>refuse the toggle while a recording is
+  running</strong> and return an error, rather than keeping every column and marking
+  disabled spans, or rolling a new file per change.</p>
+  <p>So <code>set_reports</code> needs to know whether a recording is active. That is
+  backend state, not device state, which puts the check in
+  <code>handleSendDeviceCommand</code>'s caller rather than on the leaf &mdash; the
+  device cannot know, and should not be the thing that refuses.</p>
+  <p class="note">Still true and unaddressed by this decision: a Parquet export from
+  a frame-version-1 recording carries three magnetometer columns of zeroes with
+  nothing flagging them (TEC-NATKIT-38).</p>
   <p class="note">Related and already true: a Parquet export from a frame-version-1
   recording carries three magnetometer columns of zeroes with nothing flagging them
   (TEC-NATKIT-38). Whatever is chosen here should cover that case too.</p>
