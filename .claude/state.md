@@ -29,6 +29,61 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ⚠️ THE BENCH RADIO CONFIG WAS NEVER IN GIT, AND I LOST IT
+
+`sdkconfig` is generated and **gitignored**. "Both leaves at 8.5 dBm, sweep OFF"
+lived only there, so TEC-NATKIT-49's `rm build/*/sdkconfig` -- which
+`build-role.sh` itself instructs -- silently reverted the radio to sweep-on/full
+power. Only one leaf was reflashed, so **the two boards ran different radio
+configurations for an hour** while the difference between them was being measured.
+
+**Fixed** (natKit-IMU `0eccce7`): `firmware-idf/profiles/bench.defaults` is in git,
+`NATKIT_PROFILE=bench ./build-role.sh ...` applies it, and **every build now prints
+the radio it produced**:
+`radio for esp32-leaf: tx 8.5 dBm pinned | sweep off | channel 3 | survey off`,
+with a warning when the sweep is on.
+
+⚠️⚠️ **THE PROFILE IS FOR LEAVES. DO NOT PIN THE PRIMARY.** Measured minutes apart:
+primary pinned to 8.5 dBm → **both** leaves degraded (14.4% and 8.1% loss, ~40% of
+beacons missed each); primary at full power → a leaf at **0 gaps, 99.1 fresh/s**.
+Beacons are BROADCAST -- no ack, no retry -- so turning the hub down starves every
+leaf's clock fit at once. The "lower is better at bench distances" lesson is about a
+LEAF overloading the HUB's receiver and does not run in reverse.
+
+## ✅ THE LEAF'S HALF OF THE RECIPROCITY CHECK IS PUBLISHED (#382)
+
+`LinkStats` always held how loudly a leaf hears the hub and what power it actually
+runs at; neither ever left the node, so every link was diagnosed from the primary's
+number alone. Both now travel in bytes `Heartbeat` and `UplinkNodeStatus` already
+reserved -- **neither struct changed size**, so an unflashed leaf still parses, and
+**0 means UNKNOWN** rather than measured-zero (an old leaf zero-fills them).
+
+⚠️ **It paid for itself on the first reading: both leaves are pinned to 8.5 dBm and
+one actually transmits at 6.5**, because `esp_wifi_set_max_tx_power` snaps to what
+the chip supports. Identical config, 2 dB apart, and nothing on the wire had said so.
+
+### ➡️ AND IT POINTS AWAY FROM POWER. The discriminator is MISSED BEACONS.
+
+Settled, both leaves hearing the hub at **the same −46 dBm**:
+
+| | beacons missed | send failures | delivery |
+|---|---|---|---|
+| …1244 | 263 of 1093 (24%) | 3096 | **0 gaps, 99.1 fresh/s** |
+| …7228 | **563 of 1094 (51%)** | **4485** | 14.6% loss, 689 gaps |
+
+Reciprocity gaps are **8 dB and 2 dB** at steady state, so the antenna/receiver-fault
+family is RULED OUT. (An early reading of 31 dB was 58 s after boot and did not
+survive settling -- ⚠️ do not quote RSSI from an unsettled rig.)
+
+**Hypothesis: a half-duplex airtime spiral.** A radio cannot receive while it
+transmits. More send failures → more retries → more airtime → more beacons missed →
+clock fit starves → and the two leaves compete, so whoever falls behind first
+spirals. Fits everything: one sick node at a time, which one changes on a primary
+reset, healthy RSSI throughout, and "raise both powers" making it worse.
+⚠️ **Hypothesis, not a finding.** The cheap test: cut the leaf's retry count or frame
+rate and see whether beacon loss falls with it. If it does, the fix is airtime
+discipline and #382's title ("hub-feedback transmit power") is wrong.
+
 ## ⚠️ THE TWO LEAVES SWAP WHICH ONE WORKS, AND IT IS NOT A BAD BOARD (#382)
 
 Reopened TEC-NATKIT-37 with the evidence its own closing note asked for. One
