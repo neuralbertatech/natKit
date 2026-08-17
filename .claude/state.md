@@ -2,7 +2,109 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-14
+
+## ✅ EVERY SAMPLE NOW CARRIES ALL FOUR SENSORS, FRESH, AT 100 Hz
+
+**natKit-IMU `bbf1454`, superproject `9b91428` + follow-ups.** Two long-standing
+faults were found in one session and BOTH were ours, not the hardware's.
+
+### ⚠️ The "~88 Hz burst cadence" was our own console logging
+
+`502e226`. Sampling had its own task; **`imu.service()` did not** and shared the
+main loop with the 1 Hz logging, so the console stalled the thing that INGESTS
+reports while the sampler took samples on time with nothing new in them.
+
+```
+1 Hz logging   accel gap avg 8.7 ms, max 160 ms, 87% of samples fresh
+10 s logging   accel gap avg 7.9 ms, max 110 ms, 92-99% fresh
+```
+
+Ingestion now has its own task (priority 5: above the main loop so logging cannot
+block it, below sampling so a slow SPI read cannot push a slot late).
+
+```
+before   accel 116, gyro 93, mag 90, quat 93 Hz
+after    accel 128, gyro 100, mag 100, quat 100 Hz -- 100% of samples fresh
+```
+
+⚠️ **This retracts a lot of earlier analysis**: there is no ~475 reports/s ceiling
+at these rates, no reason you cannot have all four at 100 Hz, and dropping a report
+to fund another buys nothing. Every table that said otherwise was measuring our
+firmware. The magnetometer defaults to a **9 ms** request purely for PHASE -- at
+exactly 10 ms it beats against the sampler (100.0 Hz delivered, 82% fresh); at 9 ms
+it is 99.9 Hz and 100% fresh.
+
+### ⚠️ The 33-second freeze was an unsigned underflow in the clock fit
+
+`bbf1454`. `refit()` used `sWindow[0]` as its least-squares origin. **sWindow is a
+RING BUFFER** -- on the wrap, at exactly `kSyncWindow`=32 samples (32 s at one
+beacon/s), `sWindow[0]` becomes the NEWEST sample and every other entry is older.
+
+```c
+sum_x += (double)(sWindow[i].local_us  - x0);            // unsigned -> underflows
+sum_y += (double)(int64_t)(sWindow[i].primary_us - y0);  // signed -> immune
+```
+
+~1.8e19 instead of a negative number, destroying the slope, tripping the
+implausible-skew guard, resetting the window. **10.0 msg/s exactly, zero stalls.**
+
+⚠️ **The guard was right; the silence was the bug.** The leaf reported kUnsynced for
+the ~2 s rebuild and the primary SILENTLY DROPS frames it cannot timestamp-shift,
+into `publish_no_shift` which was never published. ~20 frames per leaf per 32 s
+vanished with `seq_gaps` 0, `frames_dropped` 0, and the primary's own status
+publishing normally. **Only timestamping arrivals at the broker ever showed it.**
+
+⚠️ I claimed this fixed once already and was wrong -- on ONE clean two-minute
+window that fell between failures. One window is not a measurement of a 33 s period.
+
+## ✅ RUNTIME-CONFIGURABLE REPORTS, AND THE COMMAND CHANNEL IS BACK
+
+TEC-NATKIT-40 (#385), slices 1-4 done. The EXECUTION_COMMAND channel had been lost
+in the ESP-IDF migration (#384) -- the backend and VP buttons were untouched and
+still correct, only the device half was missing, because **a leaf has no IP at all**.
+Commands land at the primary and are relayed over ESP-NOW as a fixed-size POD; the
+leaf never links a JSON parser.
+
+- ⚠️ **Delivered != relayed.** Commands are held until ACKed, retried 6x/400 ms, and
+  explicitly failed otherwise. "No ack" means no CONFIRMATION, not no effect -- a
+  command whose ack was lost still ran, and reading it the other way already caused
+  one wrong conclusion.
+- `get_reports` / `set_reports` + frontend toggles (#387); NVS-persisted mask (#386)
+- Refuse-while-recording is **server-side**: a leaf cannot know it is being recorded
+  and a browser check is a suggestion.
+
+## ✅ MAGNETOMETER ON THE WIRE (frame v2) AND A VIEWER FOR IT
+
+#383. 13 floats, 62-byte samples, 644-byte frames. `decodeBinary` now branches on
+`schemaVersion`; v1's spare `has_data`/accuracy bits are **masked off** rather than
+trusted, or every old recording would claim a (0,0,0) reading. Hand-built v1 test
+fixture in `tests/imu_frame_version_test.cpp`.
+
+Viewer (`52a6163`): the raw x/y/z trace is three flat lines at rest, so the tab
+shows **heading (tilt-compensated), field strength and dip** instead. Validated
+against physics -- 58.8 µT and +60° dip against Edmonton's ~57 µT and ~+73°.
+
+⚠️ **Parquet cannot express "absent"**: a v1 recording exports three magnetometer
+columns of zeroes with nothing flagging them.
+
+## ⚠️ BENCH STATE AND TRAPS
+
+- Both leaves **pinned at 8.5 dBm, sweep OFF**. Re-enabling the sweep risks it
+  choosing wildly different powers per node -- that produced the "near-far problem"
+  which does NOT exist (both heard at −26/−27 dBm, #382 closed on that).
+- **Leaf …0644 drops out irregularly** for up to 18 s, no periodicity (#391). Leaf
+  …1244 is clean at 10.0/s. Separate from the 33 s bug.
+- ⚠️ **Opening a leaf's console disturbs it** badly enough to change what you are
+  measuring, and it may not recover for minutes. Diagnose from published counters.
+- ⚠️ **The S3 primary's console cannot be read at all** -- it resets AND
+  re-enumerates, so capture.py returns an empty file. `esp_reset_reason` is
+  published for this reason and immediately caught a PANIC.
+- ⚠️ **`docker-compose.dev.yml` is an OVERLAY.** Run it as
+  `-f docker-compose.yml -f docker-compose.dev.yml`. Reading it alone and concluding
+  it had rotted was wrong, and "fixing" it broke the real invocation.
+- ⚠️ **`assistant task ... -description -` silently writes a literal dash.** Use
+  `-description-file -`. Ten tickets were filed empty before this was noticed.
 
 ## ✅ THE MAGNETOMETER IS ON THE WIRE. Frame version 2.
 
