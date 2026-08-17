@@ -4,9 +4,15 @@
 
 **Last updated:** 2026-08-17
 
-## ✅ THE TWO FIRMWARES ARE BENCHED. #350 / TEC-NATKIT-27, recommendation: ADOPT
+## ✅ THE FORK IS ADOPTED. #350 / TEC-NATKIT-27 decided and greenlit, 2026-08-17
 
-Branch `zach/350-bench-the-fork` (natKit-IMU `0e86a05`, superproject follow-up).
+**Zach greenlit adoption on 2026-08-17.** `firmware-idf/` is the node firmware;
+`embeded/` is a rollback path with a **review date of 2026-09-15** (reminder set) and
+a standing condition: it must be flashed onto a board and MEASURED once per cycle,
+because today was the first time in months and it turned out to be incapable of two
+nodes. Branch `zach/350-bench-the-fork`, superproject `65b3657` / natKit-IMU
+`558f96c`. ⚠️ **Not merged to trunk** — the branch also carries the #383 magnetometer
+work and is ~95 commits ahead.
 Both firmwares measured on the SAME two boards, the same broker, the same day,
 alternating within three hours. Evidence and scripts in
 `~/natkit-verification/350-bench/` (probe.py, status.py, timeline.py, failures.sh,
