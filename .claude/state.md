@@ -2,9 +2,1914 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-17
 
-## Active Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
+## ✅ THE FORK IS ADOPTED. #350 / TEC-NATKIT-27 decided and greenlit, 2026-08-17
+
+**Zach greenlit adoption on 2026-08-17.** `firmware-idf/` is the node firmware;
+`embeded/` is a rollback path with a **review date of 2026-09-15** (reminder set) and
+a standing condition: it must be flashed onto a board and MEASURED once per cycle,
+because today was the first time in months and it turned out to be incapable of two
+nodes. Branch `zach/350-bench-the-fork`, superproject `65b3657` / natKit-IMU
+`558f96c`. ⚠️ **Not merged to trunk** — the branch also carries the #383 magnetometer
+work and is ~95 commits ahead.
+Both firmwares measured on the SAME two boards, the same broker, the same day,
+alternating within three hours. Evidence and scripts in
+`~/natkit-verification/350-bench/` (probe.py, status.py, timeline.py, failures.sh,
+plus a JSON per run). Four comments on #350 carry the full tables.
+
+### The result, two nodes, 300 s each
+
+| per node | `embeded` (quiet, + the fix below) | **fork** |
+|---|---|---|
+| frame loss to Kafka | 0% | **0%** |
+| **fresh samples/s** | 56 and 80 | **98 and 99** |
+| wire bandwidth | 13.1 KB/s | **6.4 KB/s** |
+| inter-arrival sd | 16–19 ms | **1.3–1.5 ms** |
+| node-to-node clock | 2.7–5.5 ms | **0.1–0.2 ms** |
+| magnetometer | no (frame v1) | **yes (v2)** |
+| leaf flash / static RAM | 1.25 MB / 75 KB | **709 KB / 41 KB** |
+
+### ⚠️ A SAMPLE IS NOT A MEASUREMENT — this is the metric the whole thing turns on
+
+`embeded` publishes **235–248 samples/s** against the fork's 100, and is not ahead:
+it polls a cached reading every ~3.7 ms while the cache refreshes every ~10 ms, so
+**58–78% of its samples are byte-identical repeats**. Counting samples that DIFFER
+from their predecessor is the only figure that means the same thing for both.
+`fresh_pct`: fork **97–98%**, `embeded` **22–41%**.
+
+### ⚠️ `embeded` COULD NEVER RUN TWO NODES. One hard-coded string.
+
+All three `connect()` calls passed the literal client id `"natKit-IMU"`. MQTT
+requires a broker to evict an existing session when a second client presents the
+same id, so two nodes took turns kicking each other off — **699 evictions per 60 s,
+41% of frames lost**, `seqNo` advancing over the losses with nothing counting them.
+Invisible because the bench had only ever run one at a time. Fixed in `0e86a05`
+(`natkitMqttClientId()` → `natKit-IMU-<mac>`); re-measured **0 evictions, 0% loss**.
+
+⚠️ This edits `embeded/` against the README's own rule, deliberately — as it stood, a
+rollback would have handed a two-node rig 41% loss.
+
+### ⚠️ AND IT CORRECTS TWO THINGS THIS FILE USED TO SAY
+
+1. **"`embeded` samples at 50 Hz while declaring 100" (#381) was never measured** —
+   it came from reading `BoardConfig.hpp:31 DELAY_BETWEEN_SAMPLES 20000`. That
+   constant does not pace this firmware. It polls at `IMU_DELAY_BETWEEN_POLL_US`
+   (1 ms nominal, ~3.7 ms real) and its sensor cache refreshes at ~10 ms. The old
+   claim lands near the right number for the wrong reason, and the fix it implies
+   would have done nothing.
+2. **`embeded` at ONE node is not behind the fork** — 102.8 fresh samples/s against
+   97.6, 0% loss. My own first comment on #350 said 54 vs 98, because I had compared
+   the fork's quiet build against `embeded`'s `[env:release]`, which prints every
+   frame to the console. **The env names are backwards: `release` is the chatty one,
+   `debug` is quiet.** The console cost it half its service rate.
+
+### ⚠️ THE COSTS OF THE FORK, which the decision has to carry
+
+- **One primary reset = 31 s of outage on EVERY node at once.** `embeded` has no such
+  component; resetting one of its nodes costs 8 s from that node alone.
+- **A fork leaf publishes again 18.7 s after a reset but may not be at full rate for
+  tens of minutes, and sometimes does not get there at all.** …7228 was still at 139
+  gaps and 6.7% loss **40 minutes** after its reset. `embeded` is back at full rate in
+  ~8 s. ⚠️ **"Publishing again" is not "recovered", and a rate measured in between
+  reads as a fault that is not there** — it cost two single-node runs today.
+  ⚠️ **The cause is the RADIO LINK, not the clock** — see the correction below.
+- Three defects filed against the fork from this bench: **#392 / TEC-NATKIT-47**
+  (`residual_rms_ns` saturates at UINT32_MAX and that value is what the 3σ outlier
+  gate uses, so the gate is ~13 s wide and `outliers_rejected` is 0 forever — the
+  guard is provably dead, though ⚠️ **NOT the cause of anything measured**, see
+  below), **TEC-NATKIT-48** (the primary's ABSOLUTE clock wanders
+  ~38 ms against the site's NTP and carries every node with it — `embeded` was
+  *better* on this axis), **TEC-NATKIT-49** (all three fork roles are on the stock
+  1 MB app partition and the primary is at **93.2%** of it, with 3 MB free beside).
+
+### ⚠️ AND I BUILT A CAUSAL STORY ON ONE NODE'S COUNTER, AGAIN
+
+I filed #392 saying the saturated `residual_rms_ns` was the suspected cause of leaf
+…1244's poor delivery. Checked against both nodes four hours later:
+
+| | leaf …1244 | leaf …7228 |
+|---|---|---|
+| `residual_rms_us` | **saturated** | **saturated** |
+| `outliers_rejected` | 0 | 0 |
+| delivery | **0 gaps, 98.2 fresh/s** | 139 gaps, 6.7% loss |
+| **beacons missed** | **22 of 870** | **616 of 913** |
+| **leaf send failures** | **4** | **1800** |
+
+**A node can be fully saturated and delivering perfectly.** The saturation is real
+and the outlier gate really is dead, but what separates a good node from a bad one
+here is the RADIO LINK — beacons missed and send failures — which is the near-far
+family (#382). ⚠️ **`beacons_missed` and `leaf_send_failures` are the two counters to
+read when a node stops delivering**; the clock-fit figures say nothing about it.
+
+### ⚠️ #375 / TEC-NATKIT-31 HAS A REPRODUCTION NOW: restart the broker
+
+`podman stop mosquitto; podman start mosquitto` and the bridge never forwards to
+Kafka again. Container stays `Up`, log stays clean, offsets freeze. Devices reconnect
+within a second, so MQTT looks perfect. It cost one 300 s run that read
+`delivered 0.0%` and looked like total firmware failure. `podman restart
+natkit-v0-bridge` fixes it instantly. **Check offsets are advancing before believing
+any delivery number.**
+
+### ⚠️ FOUR INSTRUMENT FAULTS IN ONE SESSION, all mine
+
+1. **The failure-test recorder ran INSIDE the container the test stops.** It logged
+   `record_end` half a second in and reported every device as NEVER RETURNED — which
+   reads exactly like a firmware that cannot recover. Subscribe from the HOST
+   (mosquitto publishes 1883) and respawn the client; `mosquitto_sub` exits on broker
+   loss rather than retrying.
+2. **Loss from a QoS 0 subscriber's sequence gaps is not loss.** It cannot separate
+   "never sent" from "dropped for me". Kafka offsets must BRACKET the same window.
+3. **`monitor.py` DOES reset a CH340 leaf on open** despite its docstring — a boot
+   banner appeared mid-session. It is only reliable on boards where opening the port
+   does not toggle DTR/RTS.
+4. **A struct format string that totals the right size can still be wrong.** A
+   spurious `4x` in the `UplinkPrimaryStatus` layout came to 144 bytes by coincidence
+   and shifted every field after `bytes_sent`; the size check passed.
+
+### Bench state as left
+
+Both leaves back on `firmware-idf` **leaf**, primary on ttyACM0 untouched, bridge
+restarted, `embeded` NOT on any board. The board/port/serial mapping is now in
+`natKit-IMU/README.md` — **the two CH340 leaves DO have distinct stable USB
+serials**, so they no longer have to be told apart by flashing one.
+
+➡️ **LEAF …7228 IS LEFT WITH A DEGRADED RADIO LINK AND A RESET DID NOT FIX IT.**
+67% of beacons missed, 1800 send failures, 7.9% loss and 165 gaps in a 200 s window,
+unchanged across 40 minutes and one reset. Leaf …1244 on the same bench is clean at
+**98.0 fresh samples/s, 0 gaps**. So it is that board's link, not settling and not
+anything the bench changed — both leaves are still pinned at 8.5 dBm with the sweep
+OFF, and this is the near-far/link family (#382, #391) again.
+
+⚠️ **Do not read a rate off …7228 without checking its `beacons_missed` first**, and
+do not take it as a fork regression: it was delivering 98.6 fresh samples/s with 0
+gaps earlier the same afternoon.
+
+## ✅ EVERY SAMPLE NOW CARRIES ALL FOUR SENSORS, FRESH, AT 100 Hz
+
+**natKit-IMU `bbf1454`, superproject `9b91428` + follow-ups.** Two long-standing
+faults were found in one session and BOTH were ours, not the hardware's.
+
+### ⚠️ The "~88 Hz burst cadence" was our own console logging
+
+`502e226`. Sampling had its own task; **`imu.service()` did not** and shared the
+main loop with the 1 Hz logging, so the console stalled the thing that INGESTS
+reports while the sampler took samples on time with nothing new in them.
+
+```
+1 Hz logging   accel gap avg 8.7 ms, max 160 ms, 87% of samples fresh
+10 s logging   accel gap avg 7.9 ms, max 110 ms, 92-99% fresh
+```
+
+Ingestion now has its own task (priority 5: above the main loop so logging cannot
+block it, below sampling so a slow SPI read cannot push a slot late).
+
+```
+before   accel 116, gyro 93, mag 90, quat 93 Hz
+after    accel 128, gyro 100, mag 100, quat 100 Hz -- 100% of samples fresh
+```
+
+⚠️ **This retracts a lot of earlier analysis**: there is no ~475 reports/s ceiling
+at these rates, no reason you cannot have all four at 100 Hz, and dropping a report
+to fund another buys nothing. Every table that said otherwise was measuring our
+firmware. The magnetometer defaults to a **9 ms** request purely for PHASE -- at
+exactly 10 ms it beats against the sampler (100.0 Hz delivered, 82% fresh); at 9 ms
+it is 99.9 Hz and 100% fresh.
+
+### ⚠️ The 33-second freeze was an unsigned underflow in the clock fit
+
+`bbf1454`. `refit()` used `sWindow[0]` as its least-squares origin. **sWindow is a
+RING BUFFER** -- on the wrap, at exactly `kSyncWindow`=32 samples (32 s at one
+beacon/s), `sWindow[0]` becomes the NEWEST sample and every other entry is older.
+
+```c
+sum_x += (double)(sWindow[i].local_us  - x0);            // unsigned -> underflows
+sum_y += (double)(int64_t)(sWindow[i].primary_us - y0);  // signed -> immune
+```
+
+~1.8e19 instead of a negative number, destroying the slope, tripping the
+implausible-skew guard, resetting the window. **10.0 msg/s exactly, zero stalls.**
+
+⚠️ **The guard was right; the silence was the bug.** The leaf reported kUnsynced for
+the ~2 s rebuild and the primary SILENTLY DROPS frames it cannot timestamp-shift,
+into `publish_no_shift` which was never published. ~20 frames per leaf per 32 s
+vanished with `seq_gaps` 0, `frames_dropped` 0, and the primary's own status
+publishing normally. **Only timestamping arrivals at the broker ever showed it.**
+
+⚠️ I claimed this fixed once already and was wrong -- on ONE clean two-minute
+window that fell between failures. One window is not a measurement of a 33 s period.
+
+## ✅ RUNTIME-CONFIGURABLE REPORTS, AND THE COMMAND CHANNEL IS BACK
+
+TEC-NATKIT-40 (#385), slices 1-4 done. The EXECUTION_COMMAND channel had been lost
+in the ESP-IDF migration (#384) -- the backend and VP buttons were untouched and
+still correct, only the device half was missing, because **a leaf has no IP at all**.
+Commands land at the primary and are relayed over ESP-NOW as a fixed-size POD; the
+leaf never links a JSON parser.
+
+- ⚠️ **Delivered != relayed.** Commands are held until ACKed, retried 6x/400 ms, and
+  explicitly failed otherwise. "No ack" means no CONFIRMATION, not no effect -- a
+  command whose ack was lost still ran, and reading it the other way already caused
+  one wrong conclusion.
+- `get_reports` / `set_reports` + frontend toggles (#387); NVS-persisted mask (#386)
+- Refuse-while-recording is **server-side**: a leaf cannot know it is being recorded
+  and a browser check is a suggestion.
+
+## ✅ MAGNETOMETER ON THE WIRE (frame v2) AND A VIEWER FOR IT
+
+#383. 13 floats, 62-byte samples, 644-byte frames. `decodeBinary` now branches on
+`schemaVersion`; v1's spare `has_data`/accuracy bits are **masked off** rather than
+trusted, or every old recording would claim a (0,0,0) reading. Hand-built v1 test
+fixture in `tests/imu_frame_version_test.cpp`.
+
+Viewer (`52a6163`): the raw x/y/z trace is three flat lines at rest, so the tab
+shows **heading (tilt-compensated), field strength and dip** instead. Validated
+against physics -- 58.8 µT and +60° dip against Edmonton's ~57 µT and ~+73°.
+
+⚠️ **Parquet cannot express "absent"**: a v1 recording exports three magnetometer
+columns of zeroes with nothing flagging them.
+
+## ⚠️ BENCH STATE AND TRAPS
+
+- Both leaves **pinned at 8.5 dBm, sweep OFF**. Re-enabling the sweep risks it
+  choosing wildly different powers per node -- that produced the "near-far problem"
+  which does NOT exist (both heard at −26/−27 dBm, #382 closed on that).
+- **Leaf …0644 drops out irregularly** for up to 18 s, no periodicity (#391). Leaf
+  …1244 is clean at 10.0/s. Separate from the 33 s bug.
+- ⚠️ **Opening a leaf's console disturbs it** badly enough to change what you are
+  measuring, and it may not recover for minutes. Diagnose from published counters.
+- ⚠️ **The S3 primary's console cannot be read at all** -- it resets AND
+  re-enumerates, so capture.py returns an empty file. `esp_reset_reason` is
+  published for this reason and immediately caught a PANIC.
+- ⚠️ **`docker-compose.dev.yml` is an OVERLAY.** Run it as
+  `-f docker-compose.yml -f docker-compose.dev.yml`. Reading it alone and concluding
+  it had rotted was wrong, and "fixing" it broke the real invocation.
+- ⚠️ **`assistant task ... -description -` silently writes a literal dash.** Use
+  `-description-file -`. Ten tickets were filed empty before this was noticed.
+
+## ✅ THE MAGNETOMETER IS ON THE WIRE. Frame version 2.
+
+**libnatkit-core `4481d51`, libnatkit `34db438`, natKit-IMU `5f94346`,
+superproject `b23a0aa`** — branch `zach/383-magnetometer-on-the-wire` in all four.
+Ticket #383 / TEC-NATKIT-38, in Verification.
+
+13 floats instead of 10 (mag x/y/z at 10-12, uT), a sample 62 bytes instead of
+50, a frame 644 instead of 524 — still one ESP-NOW packet. `accuracies` bits 7-6
+and `has_data` bit 3 were already spare. **Verified end to end at 100-107
+samples/s** with the primary reporting `rejected=0`.
+
+The sensor was never the obstacle: it has been enabled and arriving at ~91 Hz all
+along, costing ~2 Hz of the other reports.
+
+### ⚠️ THE VERSION BRANCH WAS THE WHOLE JOB, not the extra floats
+
+`decodeBinary` validated length against one hard-coded `50`, so widening the
+sample would have **rejected every recording ever made**, silently. `schemaVersion`
+was already on the wire and round-tripped, but nothing had ever branched on it.
+
+- `binarySampleSize(version)` derives the layout; v1 decodes into the wider record
+  with floats 10-12 zeroed
+- **v1's spare bits are MASKED OFF, not trusted.** Writers left `has_data` bit 3
+  and `accuracies` bits 7-6 unused and some set them — untouched, every old
+  recording claims a magnetometer reading of (0,0,0) at high accuracy
+- an unknown version is refused, not parsed at whatever size is compiled in
+- the encoder stamped the DECODED version, so a round trip put a v1 header in
+  front of a v2 body
+
+`tests/imu_frame_version_test.cpp` pins all of it; the v1 fixture is hand-built,
+not encoder-built, so it cannot follow the encoder wherever it goes.
+
+### ⚠️ TWO TRAPS FOR WHOEVER TOUCHES THIS NEXT
+
+**The Arduino firmware does not build against the sibling submodule.**
+`embeded/platformio.ini:55` pins libnatkit-core to a GitHub commit, so it links a
+ten-float schema and a build "succeeds" while silently dropping the magnetometer.
+Passing 13 floats to it also trips its `assert`. The count is clamped so the
+source is correct against both cores — **but the pin still needs bumping once the
+core lands on trunk.**
+
+**Parquet cannot say "absent".** `natimu_motion_v1` IS the column list, and it is
+fixed, so a file exported from a v1 recording has three columns of ZEROES. Only
+the JSON path carries `has_data.magnetometer`.
+
+### Leaf …0644 is not delivering, and it is NOT this change
+
+It sits at 0-22 samples/s while …1244 holds 100. Flashed back to **v1 frames it
+still delivered 0** against the other node's 100 — same open-loop power/near-far
+problem as #382. Its transmits fail (200+ tx failures) while it hears the primary
+at −40 dBm. ⚠️ Both leaves are currently PINNED at 8.5 dBm with the sweep OFF.
+
+## ✅ TWO LEAVES, ~100 samples/s EACH, 0 GAPS. And the power sweep was broken.
+
+**`030493b` (pin bumped).** Zach reconnected the second leaf to check the rate
+holds with more than one node. It does — **10.8 and 10.5 frames/s at the hub, 0
+sequence gaps and 0 duplicates each, ~105 and ~100 samples/s through to Kafka,
+~200 total.** But getting there found two real faults.
+
+### ⚠️ THE SWEEP'S ACCEPTANCE BAR HAD NEVER ONCE BEEN MET
+
+The previous entry here claimed the sweep picks "the lowest level that gets
+acknowledged" and showed a table of 100% at every level. **That table was from a
+differently-behaving bench.** The real one, measured now:
+
+```
+  2.0 dBm: 2 acked of 15 (13%)      11.0 dBm: 0 of 18 (0%)
+  5.0 dBm: 0 acked of 23 ( 0%)      14.0 dBm: 0 of 18 (0%)
+  8.5 dBm: 0 acked of 20 ( 0%)      17.0 dBm: 0 of 19 (0%)
+                                    19.5 dBm: 0 of 20 (0%)
+```
+
+Nothing clears a 90% bar, so **the sweep fell through to its fallback on every
+boot, for weeks.** It went unnoticed because the fallback was the floor — which
+is also the correct answer at this spacing. **It looked like a working sweep
+because it agreed with a working answer.** What exposed it was changing the
+fallback to full power while attempting something else; both leaves went to
+19.5 dBm and collapsed to 2.6 and 6.2 frames/s.
+
+Now **argmax on the acknowledgement rate, ties to the lower level** — no bar, so
+no silent fallback. A leaf with a clean table reads 2.0 dBm 90%, 5.0 dBm 85%,
+8.5 dBm 21%, 11.0 dBm 52%, 14.0 dBm 72%: overload, ranked correctly.
+
+**⚠️ AND THE PERCENTAGE IS A RANKING, NOT A HEALTH FIGURE.** 13% acked coincided
+with 10.6 frames/s at the hub and **zero** gaps. The ACK is a MAC-layer reply the
+busy hub often fails to return in time; the data frame lands regardless.
+
+### ⚠️ NEAR-FAR IS REAL, NOT FIXED, AND INVISIBLE TO THE LEAF
+
+At equal power the closer leaf arrives 15-25 dB stronger (−24 dBm vs −36..−51)
+and captures the hub. The far leaf delivered **0.3 frames/s against the near
+one's 10.6 while reporting `tx failures 0`** — only the hub's gap count showed
+it. Raising both by two steps to give the far node headroom made it **WORSE**
+(10.6 each → 2.6 and 6.2): a margin applied to everyone cancels out and only
+adds saturation. Avoided at this spacing, not solved. **Equalising received
+power needs the hub to say what it is hearing** — the same missing feedback path
+noted below.
+
+### ⚠️ FOUR MEASUREMENT-TOOL ARTEFACTS IN ONE SESSION
+
+`capture.py` resets the board; `mosquitto_sub` at QoS 0 drops; **opening the
+S3's USB console resets it**; and now **`kafka-console-consumer` reads zero from
+a topic that is actively being appended to** — it reported 0 bytes over 30 s
+while `kafka-get-offsets` showed the offset advancing 220 in 20 s. That one
+nearly got the MQTT→Kafka bridge blamed and needlessly restarted. **Use
+`kafka-get-offsets` for rates.** Also note the CLI lives at `/usr/bin/kafka-*`,
+not `/opt/kafka/bin/*.sh`, and the wrong path fails *loudly* only if stderr is
+kept — piped to `wc -l` it reads as a clean zero.
+
+## ✅ AND WHY IT MATTERED — FULL POWER WAS THE BUG. 96 samples/s.
+
+**`6904064` (pin bumped).** Turning both radios **DOWN from 19.5 dBm to 2 dBm**
+took the hub from **0.4 → 8.5 received frames/s** and delivery to **96 samples/s**.
+A **20× improvement from transmitting LESS**, which is why it took so long.
+
+**⚠️⚠️ THE PHYSICS: at a few cm, free-space loss is only ~10 dB**, so 19.5 dBm
+arrives at **~+9 dBm** — far above any 2.4 GHz receiver's linear range. The front
+end compresses, the AGC mis-reports, packets are lost, **and the RSSI reads like a
+distant transmitter**.
+
+**IT EXPLAINS EVERY SYMPTOM CHASED SEPARATELY THIS SESSION:**
+- **The apparent reciprocity violation** (hub −83 dBm, leaf −24, same instant).
+  The reasoning "a passive path can't be asymmetric, so it's a receiver" was
+  RIGHT — the receiver was **saturated, not broken**. Was blamed in turn on an
+  antenna, a suspect board, and the S3's receive chain.
+- **RSSI jumping −16..−83 with nothing moved.**
+- **~50% duplicates** — ACKs not returning, so the 802.11 MAC retransmitted below
+  ESP-NOW. At 2 dBm: **dupes 0**.
+- **Much of the channel sensitivity** — adjacent-channel rejection differs, so an
+  overloaded front end fails differently per channel. Channel 1's 66 dB was real;
+  6/11 vs 3/10 was mostly this.
+
+**`NATKIT_TX_POWER_QUARTER_DBM`** — default 0 (leave IDF alone), **set to 8
+(2 dBm) for this bench**. ⚠️ **Deployments want FULL power** (nodes metres apart);
+this is a BENCH setting.
+
+**⚠️ AND THE THING THAT MADE IT DIAGNOSABLE: the primary now PUBLISHES its status
+frames** instead of discarding them in the Ethernet path. **Opening the S3's USB
+console RESETS it**, so the hub could not be watched while misbehaving. It now
+reports per-node counters, sync state and uplink figures over MQTT
+(`natKit/sending/Log-<id>-Binary-NatKitPrimaryStatusV1` / `...NodeStatusV1`).
+
+**❌ Rejected by measurement:** the W5500's 36 MHz SPI — dropping to 8 MHz made
+reception **worse** (0.1 frames/s). Restored to 36.
+
+**`f458a98` (pin bumped).** Survey **OFF by default**, channel **pinned to 3**.
+
+**⚠️⚠️ THE ESP32-S3 RESETS EVERY TIME ITS USB CONSOLE IS OPENED.** Proven: two
+opens 3 s apart both report uptime ~3.3 s. It is the **native USB Serial/JTAG**,
+so leaving DTR/RTS alone (what `monitor.py` does, enough on a classic ESP32) does
+NOT help. **Every "no nodes yet" / "0 samples/s" reading taken WHILE monitoring
+the S3 was self-inflicted** — freshly booted, mid-survey, NTP unsynced, leaf not
+re-found. **Observe the S3 through what it PUBLISHES, not its console.**
+➡️ It currently publishes only kData; making it publish its status frames would
+give a way to watch it without rebooting it. **That is the next thing to build.**
+
+**✅ FIXED: the survey queued IN FRONT of the NTP window** instead of overlapping
+it (first publish ~33 s → ~60 s). SNTP/MQTT now start **before** the radio:
+survey 0.4–26.4 s, clock synced **32.5 s**. Genuinely free now.
+
+**⚠️ SURVEY NOW DEFAULT OFF — IT SCORES THE WRONG SIGNAL.** It measures other
+networks' 802.11 traffic; the interference that matters here is **non-802.11**
+(the Thread BR board's clocks) and is invisible to a promiscuous receiver.
+**Observed: it picked a channel quiet by its own table on which the leaf could not
+be heard at all** (leaf: beacons at −29 dBm, clock locked; hub: "no nodes yet").
+**Measuring the ACTUAL LINK works** — sweeping hub-RSSI-of-a-real-leaf gave −22 dBm
+and full rate on **3 and 10**, vs −61..−83 and nothing on 9/11/13. **That is what
+the survey should become.** Kept in-tree (its table correctly found Zach's two AP
+clusters); the sweep is right, the scoring is wrong.
+
+**➡️ STATE AS COMMITTED: NOT DELIVERING.** Leaf is healthy — `primary known`,
+9 frames/s built, hub heard at −24 dBm — while the primary publishes **nothing at
+all** (no natKit MQTT traffic on any topic). Diagnosing needs S3 visibility that
+does not reboot it.
+
+**`740ee0a` (pin bumped).** The ~33 s NTP window was dead time anyway (frames are
+refused, not published with 1970 stamps), so the primary spends it surveying:
+**13 channels x 2 s = 26 s**, promiscuous, scoring **ENERGY** (10^(rssi/10)) not
+frame count — one loud neighbour ruins a channel that a hundred distant beacons
+would not. **Leaves need no config: they already hop until they find a hub.**
+
+**VALIDATED:** the table matches Zach's UniFi scan (its AP clusters on 6 and 11
+are the scan's two clusters), and its pick (**ch 10**) measured **96 samples/s**
+into Kafka.
+
+**⚠️ FLAW FOUND BY READING THE FIRST TABLE: it was scoring OUR OWN NODES.** A
+searching leaf hops, spraying ~−20 dBm across the band from centimetres away —
+louder than any AP. Ch 12/13 scored **560M and 1.2B** vs a real AP's 4M, purely
+from where the hop landed, so the choice would have been **effectively random**.
+Now ignores frames whose transmitter is on the registry; those fell to ~900K.
+
+**⚠️ LIMIT: it finds CROWDED channels, not NOISY ones.** Non-802.11 interference
+is invisible to a promiscuous receiver — which is exactly what ruins ch 1 on this
+board (its own clocks). **It complements the reciprocity check (compare the two
+directions' RSSI), which found three RF faults this session.**
+
+**Channel history on this bench:** 1 = board-jammed (−82); 6, 11 = the house APs;
+3 and 10 both good (−22/−23 dBm, ~10 frames/s). `NATKIT_CHANNEL_SURVEY=y` by
+default; pin `NATKIT_ESPNOW_CHANNEL` and turn the survey off to override.
+
+**➡️ REMAINING: ~24% lost AFTER the radio** — dupes (MAC retransmission, ACKs not
+returning) and the NTP boot window. **The radio is no longer the limit.**
+
+**`3f6caf7` (pin bumped).** Rig: leaf …0644 (ttyACM0), S3 primary (ttyACM2),
+…1244 powered OFF.
+
+**⚠️⚠️ CHANNEL 3, AND THIS IS THE HEADLINE.** Zach's UniFi survey showed **APs
+centred on 6 and 11**, only a weak wide signal on 1–5. Swept the hub's own RSSI:
+
+| ch | hub hears leaf | delivered |
+|---|---|---|
+| **3** | **−22 dBm** | **10 frames/s** ✅ |
+| 6 | −21..−57 | varies |
+| 9 | −61 | 0 |
+| 11 | −83 | 0 |
+| 13 | nothing | 0 |
+| 1 | −82 | jammed by the Thread BR board |
+
+**1 is unusable for a BOARD reason, 6 and 11 for a SITE reason.** None of this is
+a firmware property — **re-survey and re-sweep on a new site.**
+
+**⚠️ `NATKIT_PRIMARY_ETH_UPLINK` NOW DEFAULTS ON FOR ESP32-S3.** Losing it is
+SILENT: the primary comes up with **no uplink at all**, no Ethernet/MQTT console
+lines, while uplink counters report frames "sent" down a UART nobody reads. Cost a
+cycle **twice**, both times after `rm`-ing a generated sdkconfig.
+
+**✅ Also fixed this round:** the leaf's main loop was a **busy spin** (orphaned
+`next_sample_us` after sampling moved to its own task) — cost **81% of beacons**;
+now 10%. And the broadcast-fallback theory is **dead** (49 unicast, 0 broadcast).
+
+**➡️ REMAINING: hub receives the full 10 frames/s at −23 dBm; Kafka gets 76
+samples/s.** So ~24% is lost AFTER the radio. Visible contributors: **dupes 63 of
+180** (MAC retransmission — ACKs still not returning reliably) and the **NTP boot
+window** (`no wall clock` 114, cumulative). **The radio is no longer the limit.**
+
+**`7352169` (pin bumped).** Rig: **leaf …0644 on ttyACM0**, S3 primary on ttyACM2,
+…1244 powered off.
+
+**✅ FIXED — THE LEAF'S MAIN LOOP WAS A BUSY SPIN (mine).** When sampling moved to
+its own task, the loop kept a deadline-aware delay computed from
+`next_sample_us`, which nothing advances any more → `remaining` always 0 →
+`imu.service()` called as fast as the CPU allowed, hammering SPI. **Cost 81% of
+received beacons at −22 dBm** — read as a radio fault, wasn't one. **81% → 10%.**
+
+**✅ FIXED — ESP-NOW WAS ON THE HOUSE AP'S CHANNEL.** Ch 1 is jammed by the Thread
+BR board; we moved to **11, which IS the AP's channel** (measured in #373, then
+forgotten). **11 → 6 took the hub's view of a leaf from −83 dBm to −21 dBm.**
+Default is now **6**, with both exclusions in the Kconfig help.
+
+**❌ REJECTED:** delivery is NOT a broadcast fallback — **49 unicast, 0 broadcast**
+via `des_addr`.
+
+**⚠️⚠️ UNRESOLVED — THE S3's RECEIVE SENSITIVITY FLUCTUATES BY TENS OF dB.** Same
+leaf, same bench, steady 19.5 dBm TX, measured at the hub at **−16, −21, −57 and
+−83 dBm** across one session, while the leaf's view of the hub stays a steady
+**−21..−28**. **Reciprocity says a passive path cannot do that** — so it is the
+S3's receive chain, or something intermittently jamming it.
+
+**Delivery tracks it directly:** 97–101 samples/s when the hub reads −16..−21;
+single digits at −57 or worse. **The firmware is not the limit at that point.**
+**Diagnostic of choice: compare the two directions' RSSI** — it has now found
+three separate RF faults this session.
+
+**`3bbe775` (pin bumped).** Zach powered one leaf down to focus on a single node —
+but the one still running is the impaired board.
+
+**❌ REJECTED: the broadcast-fallback theory.** Added unicast/broadcast counting
+via `des_addr` (the only place ESP-NOW preserves the distinction — both go to one
+callback). **Measured 49 unicast, 0 broadcast.** Delivery is NOT riding a
+fallback. Cheap to re-check now rather than argue about.
+
+**⚠️ THE REMAINING LEAF `0c:8b:95:96:bc:4c` (…1244) HAS A ~50 dB TRANSMIT
+DEFICIT.** It hears the primary at **−28 dBm** while the primary hears it at
+**−78 dBm**, same distance, same instant, with its own radio reporting a full
+**19.5 dBm (query ESP_OK** — a real reading, not an uninitialised counter).
+**A passive RF path is RECIPROCAL**, so this is not distance, orientation or the
+hub — the hub hears the OTHER leaf at **−21 dBm** from the same bench.
+
+That also explains what looked like a state-machine bug: it latches, cannot get
+unicasts acknowledged because they arrive 50 dB weak, and falls back to searching
+— **three latch-and-lose cycles in 35 s**.
+
+**➡️ USE `0c:8b:95:96:b9:f4` (…0644, ttyACM0) as the single leaf** — the one the
+hub hears at −21 dBm. Treat …1244 as suspect hardware until its transmit path is
+explained. **This is the second time reciprocity has identified a bad RF path**
+(the first was channel 1 jamming the S3) — it is the reliable tool here.
+
+**`a91f943` (pin bumped).** Delivery holds at **97–101 samples/s at Kafka**.
+
+**✅ FIXED: the leaf abandoned a primary it was successfully feeding.** Rescan
+triggered on consecutive SEND FAILURES — but a "failure" is just no MAC ACK, and
+that happens constantly **while frames arrive** (399 failures against a hub
+forwarding ~10/s to Kafka). The leaf gave up its channel and hopped for up to
+**17 s**, which IS the 3–11 frames/s swing. **Now rescans on BEACON SILENCE**
+(15 s), the authoritative signal — broadcasts need no ACK, so hearing them proves
+the hub is there.
+
+**❌ REJECTED (do not re-run): the weak −78 dBm second leaf is NOT stealing
+airtime.** Held it in reset: **97 samples/s either way.**
+
+**⚠️⚠️ THE REAL FAULT — THE LEAF'S LINK VIEW IS DISCONNECTED FROM REALITY.**
+Over 65 s it reported **`primary known` ZERO times** (48 PRESUMED GONE, 15
+SEARCHING), **52% beacons missed, 610 tx failures**, while **Kafka got a steady
+97 samples/s the whole time**. Both RSSIs healthy (−21 hub, −24..−32 leaf), so
+NOT path loss.
+
+**➡️ Isolated to the UNICAST ACK PATH from the S3.** Broadcasts get through, and
+when the leaf gives up on unicast it falls back to broadcast — which is very
+likely why delivery survives at all. **The system works by accident.**
+
+**NEXT STEP (two lines):** have the primary log whether each data frame arrived
+**unicast or broadcast** — `des_addr` in `esp_now_recv_info_t` distinguishes them.
+That settles whether delivery is riding the broadcast fallback.
+
+**`3e6a5d5` (pin bumped).** Measured at the REAL consumer: 305 records in 30 s on
+the Kafka topic the backend reads.
+
+| stage | delivered |
+|---|---|
+| 50 Hz baseline | ~42 samples/s |
+| 100 Hz first attempt | 30 (regression) |
+| after dedupe fix | 78 |
+| after deadline fix | 92 |
+| **after the sampling task** | **101 samples/s** |
+
+**⚠️ THE DOMINANT LOSS WAS THE LEAF'S SAMPLE LOOP — NOT THE RADIO.** Sampling
+shared a loop with `imu.service()`; an overrunning service call cost a sample.
+**15.2% of slots lost (592 of 3903) WHILE THE PRIMARY REPORTED ZERO GAPS** — the
+shape of loss that gets blamed on a radio. A deadline-aware delay did NOT help
+(the overrun is inside `service()`). **Sampling now has its own task** at prio 6
+paced by `xTaskDelayUntil`, snapshotting already-decoded readings — no SPI, no
+blocking. **Missed slots 15.2% → 0.7%.** The snapshot races service() on purpose:
+a torn read mixes report axes, which is what a merged snapshot already is, and a
+lock would put SPI latency back into the cadence.
+
+**⚠️ THREE MEASUREMENT FAULTS, ALL MINE:**
+1. The missed-slot counter only fired when TWO periods behind → reported **1.0%
+   against an actual 15.2%**.
+2. **`mosquitto_sub` UNDERSTATES delivery** — QoS 0 subscriber, broker drops for
+   a slow one: showed 7.3% loss where Kafka showed 4.4%. **Measure at Kafka.**
+3. **`capture.py` RESETS THE BOARD on open**, so any rate measured beside it
+   starts at t=0 — inside the ~33 s NTP window where frames are refused. Most of
+   the 3.3/6.8/7.8/9.2 readings were that. **Use
+   `~/natkit-verification/monitor.py`** (no DTR/RTS) to watch a running board.
+
+**Remaining:** NTP ~33 s after a primary reset (Zach: nice-to-have); the leaf↔S3
+link still flaps occasionally but recovers; **`../embeded`'s own 50 Hz is #381
+(TEC-NATKIT-36), explicitly only if we roll back.**
+
+**`f11e4d3` (pin bumped).** Measured by decoding broker frames and counting
+**DISTINCT seqNo** (a duplicate otherwise looks like extra data):
+
+| stage | delivered |
+|---|---|
+| 50 Hz baseline | ~42 samples/s |
+| after the 100 Hz change | **30** (regression) |
+| after the dedupe fix | 78 |
+| **after the deadline fix** | **92 samples/s** |
+
+Leaf produces **10.1 frames/s = 101 samples/s**; broker gets **9.2/s, 0 dupes**.
+
+**⚠️ TWO BUGS, BOTH MINE, BOTH BETWEEN SENSOR AND BROKER:**
+1. **The dedupe was DECORATIVE** — the seq-tracking block sat AFTER the
+   shift-and-publish, so its `return` fired once the frame had already gone to
+   MQTT. Exposed by the broker showing the same seqNo **2–4× ADJACENTLY** (159 of
+   362). Moved ahead of the publish → **159 → 0 duplicates**.
+2. **The sample deadline drifted slow.** `next_sample_us = now + interval` folds
+   overshoot into the next period, so it runs at (interval + pass time). ~22% at
+   10 ms → 78 samples/s **with ZERO packet loss to explain it** — the shortfall
+   that gets blamed on the radio. Now advances by a fixed interval with a
+   resync-not-sprint guard. Spacing after: mean ~9.4 ms, spread 3–18 ms.
+
+**⚠️ MEASURE THE LINK BEFORE TRUSTING A RATE.** The leaf↔S3 link was marginal for
+part of this (tx failures, PRESUMED GONE, 50% beacons missed) then healed to
+**0 gaps / 0 dupes / 0 retries at −23 dBm**. Source duplicates were the 802.11 MAC
+retransmitting because ACKs were not returning — not a frame-path bug.
+
+**➡️ STILL OPEN:** ~9% of frames never reach the broker (27 of 304); **NTP takes
+~33 s after a primary reset and every frame in that window is REFUSED** (correct
+— better than a 1970 stamp — but ~33 s of data lost per restart, worth buffering
+or shortening); and **`../embeded` still samples 50 Hz while declaring 100** —
+decide whether to fix it there too (affects #350's bench).
+
+**`4d79918` (pin bumped).** Zach: "we should be hitting 100 samples per second".
+He is right, and the header always said so.
+
+**⚠️ BOTH FIRMWARES DECLARED 100 Hz WHILE SAMPLING AT 50.**
+`embeded/include/BoardConfig.hpp:31` `DELAY_BETWEEN_SAMPLES 20000` vs
+`kafkaTopic.hpp:32` `IMU_SAMPLE_RATE_HZ 100`. The fork copied BOTH as
+"compatibility" — which was preserving a bug. **Every natKit IMU recording ever
+made is 50 Hz with a header claiming 100.**
+
+**✅ FIXED AT THE SOURCE:** sample interval **20000 → 10000 µs**, hub report
+interval **18000 → 10000** with it. Hub honours it: **412 reports/s (~103 Hz
+each)**; leaf builds **8–9 frames/s = 80–90 samples/s**.
+
+**⚠️ END TO END IT IS WORSE.** Measured by decoding broker frames and counting
+**DISTINCT seqNo** (a duplicate looks like extra data otherwise):
+
+| | 50 Hz | 100 Hz |
+|---|---|---|
+| unique frames/s at broker | 4.2 | **3.0** |
+| samples/s delivered | ~42 | **30** |
+
+**Two faults, neither the sample rate:**
+1. **DUPLICATES ~50%.** Primary receives ~18/s from a leaf building ~9. The leaf
+   reports `tx failures` / `PRESUMED GONE` **while its frames plainly arrive** —
+   ACKs are not getting back and **the 802.11 MAC is retransmitting BELOW
+   ESP-NOW**, invisible to the leaf. Primary now DROPS `seq == last_seq` dupes,
+   but **duplicates still reach the broker**, so that test is too narrow —
+   **needs a WINDOW of recent seqNos**, not one value.
+2. **LOSS primary → broker**: ~9 unique/s in, 3.0 published. `NOT PUBLISHED`
+   counters show **`rewrite refused` climbing** = `syncStateToPrimary` declining
+   frames while a leaf's fit is momentarily unsynced.
+
+**➡️ NEXT, in order:** widen the dedupe window; **chase the fit instability**
+(leaves report **+36..+39 ppm** against this S3 hub vs **−2.5 ppm** between two
+ESP32s, windows refilling from ~7 pts — every reset refuses frames); then
+re-measure distinct-seqNo rate. **Target 10 unique frames/s = 100 samples/s.**
+
+## Superseded — frontend frame rate at 50 Hz: 4.2/s was correct then
+
+**`1626c42` (pin bumped).** Zach saw 1.7–4.7 frames/s and thought it low.
+
+**⚠️ FRAMES ARE NOT SAMPLES.** 10 samples per frame at a 20 ms interval, so
+**5 frames/s = 50 samples/s IS THE DESIGN**, and the current firmware does the
+same. Measured warm: **126 frames in 30 s = 4.2/s** at the broker. The frontend
+reports FRAMES; "600 samples buffered" is the honest number.
+
+**⚠️ FRAMES WERE BEING DROPPED WITH NO COUNTER AT ALL** between reception and the
+uplink queue — a branch that did nothing when its preconditions failed. Now
+counted three ways: `publish_no_sync`, `publish_no_time`, `publish_no_shift`.
+**The wired uplink also had NO console output** (that block was gated on the WiFi
+flag), so the Ethernet path was invisible.
+
+**What it showed:** no-leaf-fit 1/5 FROZEN (startup); no-wall-clock 21/17 FROZEN
+(**NTP synced only at t=33 s**, and frames before that are refused rather than
+published with 1970 stamps); **rewrite-refused STILL CLIMBING ~2/s**.
+
+**➡️ NEXT: the leaves' fits keep resetting on this hub.** They report **+36..+39
+ppm** skew against **−2.5 ppm** measured between two classic ESP32s, and their
+windows keep refilling from ~7 points. While a fit is unsynced,
+`syncStateToPrimary` refuses the frame. That is the residual loss.
+
+## ✅ SOLVED — CHANNEL 1 WAS JAMMING THE S3. THE ONE-CHIP WIRED RIG WORKS.
+
+**`204a62f` (pin `2ea9ab0`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
+8 logs on #373 (95%).
+
+**⚠️⚠️ THE ESP-NOW DEFAULT CHANNEL IS NOW 11, NOT 1, AND IT IS WORTH 66 dB.**
+Same boards, cm apart, only the channel changed:
+
+| | ch 1 | ch 11 |
+|---|---|---|
+| RSSI at the hub | −82 dBm | **−16 dBm** |
+| data frames | 4–8 | **285 @ full 5/s** |
+| seq gaps | hundreds | **12** |
+
+Channel 1 = 2401–2423 MHz, where a 25 MHz crystal's 96th/97th harmonics land.
+
+**✅ ONE CHIP DOES IT ALL:** ESP32-S3 = ESP-NOW hub + timing master + W5500 wired
+uplink, both leaves publishing on the existing MQTT contract. No serial bridge,
+no second ESP32, no radio contention.
+
+**⚠️ THE DIAGNOSTIC LESSON, worth more than the fix.** The symptom was
+ASYMMETRIC — leaves heard the hub at −25 dBm, the hub heard them at −82. **An
+antenna cannot do that: a passive path is RECIPROCAL.** That is what proved it
+was not the antenna. Then both TX powers were MEASURED (19.5 / 20.0 dBm, both
+`ESP_OK`), leaving only "the receiver is being jammed". **MOVE CHANNEL BEFORE
+SUSPECTING THE RADIO.**
+
+Ruled out by test, not argument: W5500 (disabled it — no change), H2
+co-processor (held in reset on GPIO 7 — no change; also unpowered), stale PHY
+calibration (full flash erase — no change), antenna (reciprocity + Zach checked).
+
+**⚠️ TWO BUGS THIS EXPOSED, both fixed:**
+1. **A leaf that found a hub could NEVER rescan.** Moving the primary's channel
+   stranded both leaves forever. Now a long failure run returns the channel to
+   the search (threshold far above the retry-policy one).
+2. **`esp_wifi_get_max_tx_power`'s return was ignored**, printing **"0.0 dBm"** —
+   reads as a dead radio, was a failed query. Nearly derailed the diagnosis.
+
+**#373's question is answered twice:** one chip + associated WiFi = ~85% loss;
+one chip + wired Ethernet = full rate. **#348/#349 are NOT wasted** — they proved
+the frame format, registry, backpressure and topic contract, and are the fallback
+where there is no Ethernet. **#350 now has THREE options**, not two.
+
+## Superseded — earlier note: BLOCKED ON THE S3's ANTENNA
+
+**`0b5f303` (pin `bff967f`).** Evidence in `~/natkit-verification/0b5f303-ethernet/`,
+5 logs attached to #373 (85%).
+
+**✅ THE WIRED UPLINK WORKS.** One chip = ESP-NOW hub + timing master + W5500.
+**Link up 2.3 s after boot, DHCP `10.26.0.31` at 3.3 s, ESP-NOW on channel 1 —
+OURS**, no association to inherit one from, clean boot, heap 309 KB. New
+`main/ethernet_net.{hpp,cpp}`; SNTP/MQTT/timestamp-rewrite reused UNCHANGED
+because #349 split `gatewayWifiStart` from `gatewayServicesStart`.
+
+**Pins are KNOWN-GOOD, not derived** — from Espressif's own
+`basic_thread_border_router` in **`~/code/esp-thread-br`**, which Zach confirmed
+working on this board: **W5500, spi host 2, sclk 21, mosi 45, miso 38, cs 41,
+int 39, rst 40, 36 MHz**. Same file gives the pins to AVOID: **7/8 = H2 reset and
+boot, 17/18 = H2 UART**, 19/20 = native USB, 26–32 = flash/PSRAM.
+
+**⚠️ THE S3 BARELY RECEIVES, AND IT IS NOT ETHERNET.** 4–8 data frames against
+seq in the hundreds. Three hypotheses, two KILLED BY TEST:
+| hypothesis | test | result |
+|---|---|---|
+| W5500 / SPI | disabled the Ethernet uplink | **no change** |
+| ESP32-H2 co-processor (802.15.4, mm away) | held in reset on GPIO 7 | **no change** |
+| the RF path | **measured RSSI** | **−77..−87 dBm** |
+
+**−77..−87 dBm from leaves on the same bench** (healthy close range is −30..−50),
+so the receiver is **~40 dB down**. Explains the asymmetry: the S3 is HEARD fine
+(leaf clocks lock, 25 µs residual) while leaf unicasts are unacknowledged
+(`sent 9, tx failures 220`) — a loud transmitter and a deaf receiver.
+
+**➡️ ASK ZACH TO CHECK THE S3's WiFi ANTENNA** (the board has two radios; the H2's
+802.15.4 antenna is a different one). Everything else is ready to stream.
+
+**⚠️ FOUR TRAPS:** `esp_event_loop_create_default()` → `ESP_ERR_INVALID_STATE` is
+NORMAL once an uplink made the netif (ESP_ERROR_CHECK on it = reboot loop);
+**W5500 needs `gpio_install_isr_service()` first or the link never comes up
+without failing loudly**; **the W5500 has NO MAC of its own** (derived from
+`ESP_MAC_ETH`); SPI-Ethernet Kconfig must live in the **shared** defaults, since
+every source compiles into every image.
+
+## Superseded — earlier note: BLOCKED on hardware details.
+
+**Zach replaced a node with an ESP32-S3 + Ethernet daughterboard.** This is a
+better answer than either architecture measured so far: **Ethernet is OFF THE
+RADIO ENTIRELY**, so ESP-NOW keeps a channel we choose on a radio nobody else is
+using, with no second chip bridged over serial.
+
+**Bench is now:** ttyACM0 = ESP32 leaf **with BNO08x**; ttyACM1 = ESP32 (was the
+primary, no sensor); **ttyACM2 = ESP32-S3, MAC `b8:f8:62:62:f7:3c`, device id
+`203376942053180`, rev 0.2, 2 MB PSRAM**.
+
+**Done — `5fc5fe9` (pin `9e1cbfd`): the S3 target builds and boots** as an
+ESP-NOW primary/timing master on channel 1, heap flat at 321 KB, no panics.
+
+**⚠️ THREE S3 TRAPS, each a build or boot failure rather than a note:**
+1. **NO INTERNAL ETHERNET MAC.** The epic's "which PHY?" question does not apply
+   — an S3 with Ethernet is necessarily an **SPI module** (W5500 / DM9051 /
+   ENC28J60). Do not reach for LAN8720 on this board.
+2. **Console is the native USB Serial/JTAG**, so
+   **`CONFIG_ESP_CONSOLE_UART_BAUDRATE` DOES NOT EXIST** — it broke uplink.cpp
+   and uplink_reader.cpp. An absent Kconfig symbol is a compile error, not a 0.
+3. **The uplink pin defaults were FATAL.** The S3 has **no GPIO 22–25**, so
+   `uart_set_pin` aborted with `rx_io_num error` in a reboot loop — and **GPIO
+   26–32 are SPI flash/PSRAM there**, so the working half of the 26/25 pair
+   would have been worse than the failing half. Now per-target: **17/18** on S3,
+   clear of the native USB pins (19/20).
+
+**⚠️ BLOCKED: need the daughterboard's chip and pinout.** Cannot be guessed —
+wrong SPI pins either do nothing or drive flash lines. Need: chip
+(W5500/DM9051/ENC28J60), MOSI/MISO/SCLK/CS, INT, RST.
+
+**The remaining work is small once that lands**, because the hard parts exist:
+`gatewayServicesStart()` (SNTP + MQTT) and `rewriteFrameTimestamps` are
+netif-agnostic and already proven. Only `gatewayWifiStart()` needs an Ethernet
+sibling.
+
+**⚠️ ALSO FOUND: the esp32c3 target has not built since `b42d763`** (BNO08x port)
+— `board_config.hpp` pins GPIO_NUM_32, which a C3 does not have. So the epic's
+"all six images build" claim has been false for five slices. Filed as **#379
+(TEC-NATKIT-34)**; not fixable without a C3's real wiring. **Sweep targets on
+handoff:** `for t in esp32 esp32c3 esp32s3; do for r in leaf primary gateway; ...`
+
+## Prior Task — #373 (TEC-NATKIT-30) ONE CHIP, BOTH RADIOS: 75%, answer is "use two"
+
+**`b681fec` on natKit-IMU trunk, pin bumped (`1d65a5e`).** Evidence in
+`~/natkit-verification/b681fec-onechip/`, 2 logs attached to #373.
+`CONFIG_NATKIT_PRIMARY_WIFI_UPLINK=y` = primary associates + publishes itself.
+
+**⚠️ THIS AP IS ON CHANNEL 11.** Associating drags the hub off channel 1, exactly
+as predicted. So: the primary no longer calls `esp_wifi_set_channel` when the
+uplink is on, **peers are now ALWAYS added on channel 0** ("follow the
+interface") and **a leaf that has no hub HOPS channels** until it finds one. A
+peer pinned to a channel the interface is not on is a SILENT failure — sends
+succeed locally, nothing is received. The hunt works: both leaves found ch 11
+unaided.
+
+**THE RESULT — same bench, same leaves:**
+
+| | seq gaps | per-leaf rate |
+|---|---|---|
+| two boards | **0** | 5.0/s |
+| **one board** | **216 vs 39 received** | 0–2/s, silent 1–3.5 s |
+
+**The leaves stay HEALTHY** (`built 213 @ 5.0/s, sent 364, dropped 0, tx
+failures 0`), and unicast ESP-NOW success means a **MAC-layer ACK** — so the
+primary's radio received the frames and dropped them **above the MAC**, on a WiFi
+task busy servicing the association.
+
+**⚠️ CONFOUND NOT ELIMINATED: rssi −79..−87.** A weak association means retries
+and low rates, which could itself starve the receive path. **NTP never synced at
+this signal, so `published 0`** — the publish half is built but unproven.
+**RETEST NEAR THE AP before calling one chip impossible.** (The gateway board ran
+−72..−75 and published fine — but it was only doing WiFi.)
+
+**Either way the one-chip design inherits the site's channel, signal and
+airtime**, which the two-board split does not. That is now a measured argument
+for #350 rather than a design instinct. Keep it behind the Kconfig flag
+regardless — it is a useful no-wire bench mode.
+
+## ✅ CHOPPY LIVE VIEW DIAGNOSED AND FIXED — `0fb6d57` (pin `0f1f773`)
+
+Zach reported the frontend choppier than the current firmware and guessed radio
+multiplexing. **NOTHING MULTIPLEXES** — leaf and primary are ESP-NOW only and
+never associate, the gateway is WiFi only and never inits ESP-NOW, and the
+primary→gateway hop is a **host relay over USB** (both boards are on this
+laptop; `relay.py` IS the wire). It was two defects in the gateway, both mine:
+
+1. **WiFi power save left at the `WIFI_PS_MIN_MODEM` default**, so the gateway
+   slept between AP beacons and publishes went out in bursts at beacon
+   boundaries. Leaf/primary already set `WIFI_PS_NONE` (from #340) — which is
+   exactly why they measured clean and it did not.
+2. **`uart_read_bytes` with a 50 ms timeout in the reader.** `room` is most of
+   the scan buffer so it never fills — **the timeout IS the batching interval**.
+   Now 5 ms.
+
+**Frame inter-arrival sd (200 ms nominal), before → after:**
+primary 33 → 33 | relay input 88 → 89 | **broker 253 → 116 ms**.
+Bursts <50 ms **34 → 0** (min gap 3 → 87 ms); stalls >400 ms **28 → 5**.
+
+**⚠️ EVERY COUNTER SAID HEALTHY THROUGHOUT.** Reconciled frames, ~zero drops,
+0 CRC failures, 0 uplink gaps. **The fault was LATENCY, never loss** — no drop
+counter could have found it. Took timestamping arrivals at three points.
+Tools: `~/natkit-verification/cea0421-gateway/{jitter_probe,relay_timed}.py`.
+
+**Dominant remaining contributor is the HOST RELAY** (33 → 89 ms; loop period
+median 46 ms, p90 123 ms). **Two jumper wires on GPIO 26/25 + common ground**
+remove it and close the untested-UART gap on #348 AND #349.
+
+**Filed #377 (TEC-NATKIT-33)** — expose LOGGING_LOG as a stream + frontend health
+view. No such ticket existed. ⚠️ Its stated purpose was drop detection; **drops
+are already ~zero and counted at every hop**, so if it is meant to explain
+choppiness it must carry **per-hop timing**, not counts.
+
+## ✅ THE FORK'S LIVE STREAM RENDERS IN THE FRONTEND (2026-08-12)
+
+7 screenshots + manifest attached to #349 (`~/natkit-verification/cea0421-gateway/shots/`).
+Stream Viewer shows `IMU / LIVE / 600 samples buffered / 4.7 per s`, a Rolling Trace of
+three live accel traces, `ACCEL -0.26, 5.70, 7.86` (**|a| 9.71 m/s²**), and the
+Orientation tab rendering the BNO08x fusion quaternion (`ROLL 36.2 PITCH 1.7 YAW
+126.8`). **No server-side or frontend change.** No console errors, no dialogs.
+
+**TO SEE IT LIVE YOURSELF:** the host relay must be running (there is no wire
+between primary and gateway) —
+`python ~/natkit-verification/cea0421-gateway/relay.py 600` — then localhost:8080
+→ Stream Viewer → tick `Stream 13793649670644` → **click the `+` to expand the
+card**.
+
+**⚠️ THE CARD RENDERS COLLAPSED.** It reports `LIVE, N samples buffered, 4.7/s`
+with NO trace drawn until expanded. The text alone is misleading evidence — this
+is the [[feedback_verify_ui_visually]] lesson landing again, and both shots are
+attached so the difference is visible.
+
+**⚠️ Schema Inspector reads `Unavailable` for all 9 fields** while the traces
+work. NOT firmware-related: the descriptor path is `accel_x.{index}` and the
+resolver in `frontend/src/StreamViewer/schemaDescriptor.ts` (~line 123) handles
+only numeric indices or object keys, so the `{index}` placeholder is never
+expanded. Filed as **#376 (TEC-NATKIT-32)**.
+
+## ✅ #365 RESOLVED — IT WAS THE BRIDGE, NOT THE BACKEND (2026-08-12)
+
+Re-ran #365's exact API sequence after restarting `natkit-v0-bridge`:
+**`sample_count` 340 then 350 where it saw 0**, and `get_accuracies` populated
+where it was `null`. Nothing in `NatKitBackend.cpp` was touched —
+`recording_thread_func` was consuming an empty Kafka topic and reporting it
+honestly. #365 is at 90% in Verification.
+
+**⚠️ THE UNDERLYING DEFECT IS NOT FIXED, only restarted. Filed as #375
+(TEC-NATKIT-31).** The bridge stops forwarding with no log, no error, and a
+healthy container. Seen twice today.
+
+**THE ONE-MINUTE DIAGNOSTIC, worth reaching for before reading backend source:**
+`kafka-get-offsets --bootstrap-server localhost:9092 --topic <topic>` twice,
+20 s apart, against `mosquitto_sub` on the same topic. That separates "device not
+sending" / "bridge not forwarding" / "backend not consuming".
+
+**So the FORK is verified end to end**: leaf → ESP-NOW → primary → serial →
+gateway → MQTT → bridge → Kafka → **the backend's own recording API**. Still
+unverified for either firmware: **Parquet export** (#350's bar), the **viewer**,
+two streams at once, and the physical UART wire.
+
+**⚠️ The CURRENT firmware (`embeded`) has NOT been re-tested since the bridge
+restart** — it is on no board (all three run the fork). Its #365 blocker was
+infrastructure rather than firmware, so it should work, but that is untested.
+
+## Prior Task — #349 (TEC-NATKIT-26) GATEWAY: SHIPPED, 85%, Verification
+
+**`cea0421` on natKit-IMU trunk, pin bumped (`eac4b1e`).** Evidence in
+`~/natkit-verification/cea0421-gateway/`, 5 files attached to #349.
+
+**✅ THE FORK'S DATA REACHES KAFKA.** leaf → ESP-NOW → primary → framed serial →
+gateway → MQTT → bridge → Kafka, on the existing topic contract, **no server-side
+change**. Decoded OFF THE BROKER: 524 B, schemaVersion 1, sampleCount 10,
+sampleRateHz 100, timestamps **2026-08-12 21:08:23** (real wall clock), samples
+20 ms apart, |accel| 9.72 m/s². Steady state **139 frames in / 135 Kafka records
+per 30 s** (~4.6/s), 0 CRC failures over 838 frames, heap flat ~109 KB.
+
+**New files:** `main/gateway_net.{hpp,cpp}` (WiFi+SNTP+MQTT), `main/uplink_reader.{hpp,cpp}`
+(framed serial in with resync), `gateway.cpp` rewritten, `main/DevConfig.hpp.example`.
+**`main/DevConfig.hpp` is GITIGNORED and holds real credentials** — only the
+gateway reads it.
+
+**⚠️ TESTED WITH A HOST RELAY, NOT A WIRE.** No USB-to-TTL adapter and no jumper
+between boards, so `/tmp/relay.py` (copy in the evidence dir) carries bytes from
+the primary's USB serial into the gateway's. Everything downstream is real. **The
+physical UART1 link (GPIO 26/25 @ 921600) is UNTESTED** — same gap as #348, and
+two jumper wires would close both.
+**Only 3 boards, so leaf B was repurposed as the gateway.** Two streams through a
+gateway is untested.
+
+**⚠️ `esp_mqtt_client_enqueue` LOSES ~78% OF THE STREAM.** It caps at ~ONE MESSAGE
+PER MQTT POLL CYCLE (the outbox is drained by the client's task loop). The gateway
+reported ~5/s "refused 0" while mosquitto got **1.07/s**. **Use
+`esp_mqtt_client_publish`** — QoS 0 has nothing to acknowledge. Fifth counter in
+this epic to measure one step off its name; caught only by checking the rate at
+mosquitto AND Kafka.
+
+**⚠️ THE BRIDGE SILENTLY STOPS FORWARDING — likely #365's cause.** Mosquitto was
+receiving frames while the Kafka offset stayed FROZEN; the bridge had logged
+nothing for ~3 hours. `podman restart natkit-v0-bridge` fixed it instantly.
+**Check the Kafka offset is climbing before blaming the backend's recording path.**
+Cross-posted to #365.
+
+**Design:** a frame that cannot be corrected is **REFUSED, not published raw** (an
+uncorrected frame is indistinguishable downstream and poisons the time axis);
+timestamps patched **in place** (a decode/re-encode would be a THIRD implementation
+of the encoding); ⚠️ header `deviceTsUs` is **µs** while sample time is **ms**.
+
+**Left open:** Ethernet PHY; **the downward command path is NOT built**, so VP
+calibration buttons do not reach a fork node; Parquet export is #350 and depends
+on #365.
+
+## ✅ #340, #315 and #348 ARE CLOSED — Zach approved all three 2026-08-12
+
+All at 100% in Done. **Do not re-verify them**; the evidence is attached to each
+ticket and summarised below. Epic #343 is at 70%: five of seven slices done
+(#344-#348), leaving **#349 gateway** and **#350 bench-and-decide**, plus the
+optional **#373** WiFi-direct stopgap.
+
+**#349 is now DONE too (see above), so the next slice is #350 — bench the fork
+against the current firmware and decide.**
+
+**⚠️ #350's verification depends on the backend recording path, and #365 says that
+path returns 0 samples while frames are on the wire.** Resolve #365 before #350
+rather than during it. It is in the Ice Box and arguably mis-filed.
+
+## Prior Task — #348 (TEC-NATKIT-25) PRIMARY UPLINK: DONE, 100%
+
+**`d660556` on natKit-IMU trunk, pin bumped (`ef4e114`).** Evidence + manifest in
+`~/natkit-verification/d660556-uplink/`, 5 files attached to #348.
+
+**New files:** `main/uplink.{hpp,cpp}` (framed serial protocol, queue, drain task),
+`main/registry.{hpp,cpp}` (NVS roster + seal), `tools/read_uplink.py` (the
+host-side reader, committed).
+
+**Measured, three boards, 3-minute soak:** 2004 frames, **0 uplink seq gaps, 0
+radio seq gaps on both streams**, 339 KB of interleaved console text resynced past
+with no false frames. Reconcile over an agreed window: sent 1992 / parsed 1997.
+Backpressure: **22 drops at startup then FROZEN at 22 across 4318 more queued**,
+0 write timeouts, heap flat. Node outage: leaf B in reset 20 s, **leaf A kept 453
+frames with 0 gaps**. Registry: persists across reboot, sealed-with-empty-roster
+rejects both known-good leaves by MAC, reopened it re-learns both.
+
+**⚠️ THE PHYSICAL SECOND UART IS UNTESTED.** No USB-to-TTL adapter on the bench, so
+everything ran in bring-up mode (`CONFIG_NATKIT_UPLINK_UART_NUM=0`: frames
+interleaved into the USB console, host resyncs past log text). That exercises
+framing/CRC/resync/registry/backpressure but **NOT** `uart_write_bytes` on UART1,
+GPIO 26/25, or 921600 baud. Committed default is UART1. #349 closes this for free.
+
+**⚠️ CONSOLE-SHARED MODE CORRUPTS BINARY WITHOUT THE LINE-ENDING FIX.**
+`CONFIG_LIBC_STDOUT_LINE_ENDING_CRLF` expands every `0x0A` written to stdout into
+`0x0D 0x0A`. Symptom was **"only the small frames work"** (0 data, 134 status) —
+reads like a length bug, is a translation bug. Fixed with
+`uart_vfs_dev_port_set_tx_line_endings(..., ESP_LINE_ENDINGS_LF)`.
+
+**⚠️ AN UNSET `bool` KCONFIG EMITS NO SYMBOL** — cannot be read as a value; breaks
+the build when off. Same shape as the `CONFIG_NATKIT_ESPNOW_CHANNEL` break. Use
+`#ifdef` into a `constexpr`.
+
+**⚠️ FOURTH COUNTER IN THIS EPIC TO MEASURE THE WRONG THING:** the reader first
+compared the primary's CUMULATIVE counters against a windowed parse count, making
+a healthy link look like it lost 3/4 of its traffic. Now reconciles between two
+status frames. **Treat "read what the counter counts" as a standing check.**
+
+**Design decisions:** two sequence numbers per frame (uplink's own vs the radio's
+— they answer different questions); data frames forwarded **VERBATIM** with the
+clock fit travelling separately in the node-status frame; registry open by default
+(self-configuring), sealed to freeze a rig.
+
+**Reassembly is DELETED, not deferred** — #346's one-frame-one-packet decision
+means there is no fragment buffer to time out.
+
+## Prior Task — #315 (TEC-NATKIT-4) COHERENCE METRIC: DONE, 100%
+
+**`87a6830` on natKit-IMU trunk, pin bumped (`aaa5eec`).** Evidence + manifest in
+`~/natkit-verification/87a6830-coherence/`, 6 files attached to #315.
+
+**⚠️ THERE ARE THREE BOARDS NOW.** Zach added one this session; it is on
+`/dev/ttyACM2`, MAC `4c:75:25:a4:45:3c` = device `84066026407228`, and **it HAS a
+BNO08x** (it reads a real gravity vector). So the bench is **two full sensor
+leaves + one primary**. Its MAC is a different OUI from the other two — relevant
+to #343's open "is the fleet uniformly V3-02?" question.
+
+**⚠️ BUCKETS ARE EXPOSED AS OF assistant v0.11.0.** `assistant task <id>` prints a
+`bucket` line and `task update <id> -bucket "Verification"` moves one. The old
+"the CLI has no bucket info" note is STALE. (Not in the list view.) #340 and #315
+are both in Verification now.
+
+**The measurement:** the primary broadcasts a `SyncMarker` every 5th beacon; both
+leaves receive the SAME wavefront, each converts its own rx time with its own fit,
+and the difference between their answers is the node-to-node error. **The marker
+is HELD OUT of every fit** — a leaf scored on packets it estimated its clock from
+would be marking its own exam.
+
+**Result, 5.5-minute soak, 57 paired markers:**
+
+| | A vs primary | B vs primary | **A vs B** |
+|---|---|---|---|
+| bias | −139 µs | −133 µs | **+0 µs** |
+| sd | 35 µs | 32 µs | **16 µs** |
+| excursions | 1 | 4 | **0** |
+
+Metric: **typical 17 µs, bound 50 µs, worst 37 µs**, locked, MEASURED.
+
+**Both of #340's predictions held, and two are worth remembering:**
+1. **The bias IS common-mode and cancels** (+0 µs between leaves). Was a modelled
+   claim; now an observation.
+2. **Node-to-node is BETTER than either node vs the primary** (16 vs 32/35 µs),
+   which combining two measurements normally would not be — the marker path never
+   touches the primary's rx callback or a leaf's tx callback, only the two leaves'
+   rx callbacks, same code on same silicon at the same instant.
+3. **The excursions localise to the PROBE path, not the clocks** (1 and 4 there,
+   0 in 57 markers). That closes #340's open thread about where they live.
+
+**⚠️ THIS MEASURES RELATIVE AGREEMENT ONLY.** An error common to BOTH leaves is
+invisible to it — correct for node-to-node, wrong for server-to-node. There is no
+wall clock anywhere on this rig; #349's gateway is the only device that will ever
+have NTP, and `TimeBeacon.wall_us` (0 today) is the seam. So two of #315's three
+relationships are not merely unmeasured, they are not yet definable.
+
+**⚠️ QEMU CAN NO LONGER BOOT ANY ROLE THAT STARTS THE RADIO.** `esp_phy_enable`
+asserts (`phy_module_has_clock_bits`) — no PHY — and it reboots in a loop. **Not a
+regression:** the primary, which has no sensor code, fails identically (control log
+attached). It went unnoticed at TEC-NATKIT-21 because every role was then a stub
+that never touched the radio. **state.md's old "all six images booted under QEMU"
+is STALE.** QEMU is still good up to `espNowLinkStart()`.
+
+**Side change, standing on its own: a leaf whose sensor failed now JOINS THE
+RADIO** instead of idling forever, so the failure is visible to the primary rather
+than only over USB. Written expecting board 3 to be sensorless; it isn't, so this
+path is exercised only under QEMU and **has not run on silicon**.
+
+## Prior Task — #340 (TEC-NATKIT-17) TIMING BROADCAST: DONE, 100%
+
+**`6c60cec` on natKit-IMU trunk, pin bumped (`9667d9a`).** The primary is the
+clock master; a leaf fits its clock to the primary's and the shift is applied by
+the consumer. Evidence + manifest in `~/natkit-verification/6c60cec-timing/`,
+3 files attached to #340. Moved to Verification.
+
+**New files:** `main/time_sync.{hpp,cpp}` (the rolling least-squares fit).
+`espnow_link.{hpp,cpp}` gained the wire types and both roles' halves of the
+protocol; the fork's README gained a Timing section and a corrected status table.
+
+**Measured, two boards, 5.5-minute soak:** 327 beacons, **0 missed, 0 orphaned,
+0 outliers**; fit residual **25 µs rms**; locked **10.4 s** after boot; heap flat.
+Sync error, measured BY THE PRIMARY: **bias −168 µs, sd 32 µs, p5–p95 spanning
+98 µs**, 3 excursions of ~2 ms in ~302.
+
+**⚠️ THE TICKET'S FIRST RECOMMENDED APPROACH IS DEAD, and this was checked before
+any code was written.** `esp_wifi_get_tsf_time()` returns **0** on a station that
+is not associated (documented in `esp_wifi.h`, then confirmed on hardware), and no
+node in this architecture ever associates. TSF would need the primary to be a
+SoftAP, which re-introduces the association the epic exists to remove.
+
+**⚠️ THE MAC RECEIVE STAMP IS REAL BUT UNUSABLE — the opposite of what was
+expected.** `rx_ctrl->timestamp` IS a hardware stamp taken below FreeRTOS, but
+against `esp_timer` it scatters by **20–57 ms**, three orders of magnitude WORSE
+than simply reading `esp_timer` in the receive callback (25 µs). It is kept as a
+logged diagnostic; the estimator uses the software read. Do not "fix" this by
+switching to the MAC stamp without re-measuring.
+
+**The transmit side is solved by protocol, not hardware — two-step, as PTP does.**
+Beacon goes out; the primary reads its clock INSIDE the send callback for that
+packet; a follow-up carries that stamp. The queue delay this removes measured
+**1.4–13.8 ms**, varying packet to packet — 40× to 400× the scatter we ended up
+with. Reading the clock before `esp_now_send` measures the transmit queue.
+
+**Protocol version is now 2.** `kPrimaryHere` is RETIRED (its number left burnt);
+`kTimeBeacon` carries discovery too, so there is one 1 Hz broadcast, not two.
+Both boards must be reflashed together.
+
+**The leaf does NOT rewrite its timestamps.** It sends a `SyncState`; frames stay
+in raw device-monotonic time and the consumer shifts. A correction baked into
+stored samples cannot be undone or improved; a leaf that steps its clock emits
+non-monotonic sample times mid-frame; and #318 needs the quality to travel
+alongside the stream. Chain of custody: leaf time → primary time (#340) → wall
+clock (#349). `TimeBeacon.wall_us` is **0 today** and is the seam #349 fills.
+
+**⚠️ TWO INSTRUMENTS WERE WRONG FIRST, again.**
+1. **The first soak's RMS read 240 µs for data whose every percentile said ~50 µs**
+   — two millisecond excursions in 301 samples dominated a sum of squares. Now the
+   tail is counted separately and the scatter is an **sd about the measured bias**,
+   not an RMS about zero. Bias and scatter are different animals: the bias is
+   common-mode and cancels between two leaves; the scatter does not.
+2. **The "done when" I proposed (raw frame delta walks, corrected stays flat) DOES
+   NOT WORK and cannot.** The leaf batches 10 samples spanning 200 ms and that span
+   jitters, putting a **~74 ms range** on both columns, while the actual drift over
+   the window is ~1 ms — three orders of magnitude too coarse for its own
+   hypothesis. The frame timestamp is ms-quantised by the encoder as well. That
+   line is now labelled "NOT an accuracy figure"; **the probe path replaced it.**
+
+**Cross-check, because one number is not a measurement:** the primary also scores
+each probe against a naive "sync once at startup" model. That error reached
+**−745 µs over 329 s**, implying **−2.26 ppm** of crystal skew against the
+regression's **−2.56 ppm** — two independent estimates agreeing to ~12%.
+
+**⚠️ ONE HYPOTHESIS RAISED AND NOT CONFIRMED.** The excursions were expected to be
+`ESP_LOGI` blocking the receive callback. The primary now measures its own console:
+**it blocks its task ~87 ms every second, 111 ms worst.** At 1 probe/s that predicts
+~26 collisions in 300; **3 were seen** — so the higher-priority WiFi task is largely
+protecting the callback and the cause is NOT established. The 87 ms is a real
+constraint on #348's serial mux regardless.
+
+**Next, and it needs hardware we do not have: a THIRD board.** Node-to-node
+coherence — what #315 actually wants — is currently *inferred* from one
+leaf-to-primary figure plus the argument that the bias cancels. Two leaves on one
+primary would measure it. Also untested by time: the MAC stamp's 32-bit
+microsecond counter wraps at ~72 minutes.
+
+## Prior Task — #345 (TEC-NATKIT-22) BNO08x port: STREAMING at 85%
+
+**FIXED. `ceb8150` on natKit-IMU trunk, pin bumped (`2a00ce3`).** The port now
+streams; what was left of the ticket needs hands on the board rather than more
+debugging.
+
+**Two differences from `embeded`'s Adafruit stack — found by READING it, not by
+guessing — and both had to go:**
+1. **MOSI was not driven at all.** `Adafruit_SPIDevice::read` memsets the buffer
+   to its sendvalue (0x00) and does a FULL-DUPLEX transfer, so MOSI carries zeros
+   for every clock of every read. The HAL passed `tx_buffer = nullptr`, which in
+   `spi_master` means "no MOSI phase" — the pin is undriven. The BNO08x is full
+   duplex, so whatever sits on MOSI while we clock a read is shifted into the
+   hub's own SHTP receiver: we were feeding it garbage writes. That is what
+   explains real `SH2_RESET` events with ZERO INT timeouts of ours.
+2. **CS was peripheral-driven, not hand-driven.** Adafruit asserts it with
+   `digitalWrite` before its transfers and releases it after (microseconds of
+   setup and hold); `spics_io_num` gives a fraction of a bit-time. Now a plain
+   GPIO around each whole SHTP packet.
+
+Also, because we now do our own transfers: SPI stages through **our own
+word-aligned buffers**, since sh2's rx/tx buffers are library statics with no DMA
+guarantees, and the ESP32's SPI DMA writes whole 32-bit words — so a read whose
+length is not a multiple of 4 can scribble up to 3 bytes past the end, which now
+lands in our slack instead of sh2's state.
+
+**Hypothesis 1 from the last session is DISPROVEN and needed no hardware.** The
+working Arduino path is NOT software SPI: `main.cpp` calls `imuReader.start2()`
+→ `Bno08xDevice2` → `spiClass.begin(5, 21, 19)` + `begin_SPI(cs, int, &spiClass)`,
+and `begin_SPI` builds the HARDWARE-SPI `Adafruit_SPIDevice` on HSPI/SPI2 at 1 MHz
+mode 3. `ImuReader::start()`, with its commented-out `spiClass.begin`, is dead
+code. Do not re-open that line of enquiry.
+
+**Measured, at rest, board undisturbed** (`~/natkit-verification/ceb8150/`,
+3 files attached to #345):
+- **300s soak: 106,475 reports at 357 Hz**, holding from second 3 to the end.
+- **`resets 1`, `INT timeouts 2`, `spi fail 0/0`, `empty 0`, `oversize 1`** —
+  every error counter still at its bring-up value five minutes in.
+- **Heap flat at 290,584 B (min 290,404)**, which is the ticket's soak bar.
+- Gyro calibration reaches **high** at second 8; the deferred `setCalConfig(0x07)`
+  returns 0 with a 0x07 read-back, so that earlier fix carries over intact.
+- Accel `-1.250 +0.797 +9.715` m/s², **magnitude 9.83** — a real gravity vector.
+- Bring-up reads as a real SHTP sequence now: 276-byte advertisement on channel 0,
+  control on 2, the 5-byte executable reset-complete on 1, four hub part numbers,
+  then channel-3 reports with a monotonic sequence. Contrast the previous capture:
+  every packet 15 bytes on channel 0, sequence jumping 198/74/208/88.
+
+**Per-sensor rates are NOT a fork difference.** accel ~64 Hz, gyro/mag/rotation
+~98 Hz against the 18000 us asked for — but `embeded`'s live path enables the same
+four reports at the same `NAT_BNO08X_DELAY_BETWEEN_SAMPLES_US` of 18000, so this is
+the hub's own behaviour and both firmwares get it.
+
+**Zach ran the six-side routine (2026-08-12) and EVERY accuracy the ticket asks for
+is reached:** gyro `high` at 8s, mag `low`→`medium`→**`high`** at 64s, accel
+**`high`** at 71s, rotation **`medium` at 52s and `high` at 61s`**. 199s of handling,
+peak gyro 5.857 rad/s (336 °/s), and the transport counters NEVER moved off their
+bring-up values (`resets 1`, `INT timeouts 2`, `spi fail 0/0`, `empty 0`,
+`oversize 1`), rate holding ~358 Hz.
+
+**ROTATION ACCURACY IS NOT A DEAD FIELD — that year-old question is settled.** The
+standing hypothesis was that the rotation vector's 2-bit status is never populated
+on this hub, so "Rotation: Unreliable" was never a measurement. Disproven: it reads
+`medium` and `high`, its float error estimate tracks it (2.86 rad unconverged →
+0.109 rad calibrated), and it decays back toward `medium` when the board sits still.
+It read `unreliable` because the FUSION had not converged.
+
+**At-rest values match the current firmware exactly.** Board reflashed with
+`embeded` WITHOUT being moved, so it is the same physical orientation:
+
+| | accel (m/s²) | gyro | \|accel\| | quat |
+|---|---|---|---|---|
+| fork | `+0.625 -1.078 +9.727` | `0.000` | 9.806 | `+0.930 -0.040 -0.050 +0.363` |
+| `embeded` | `+0.625 -1.078 +9.727` | `0.000` | 9.806 | `+0.876 -0.032 -0.055 +0.478` |
+
+Accel and gyro identical to three decimals on every axis. The quaternion differs
+only in **heading** — rotation about gravity, which depends on fusion convergence
+and resets when the hub is reflashed; both are unit quaternions and both agree on
+the gravity direction.
+
+**Side effect worth knowing: `embeded` now reports rotation accuracy `medium`, where
+it has historically read 0.** The fork's deferred `sh2_setDcdAutoSave(true)`
+persisted the six-side calibration into the hub's own FLASH, so the shipped
+firmware inherited it with no change to `embeded`.
+
+**#345 is at 95% in Verification.** The only residual is a genuinely *simultaneous*
+under-motion comparison, which one board cannot give (two firmwares cannot run at
+once, and two different motion windows are not the same measurement).
+
+**✅ THE BOARD IS BACK ON THE CURRENT FIRMWARE AND STREAMING AS FOUND** — verified
+after the rollback: 524-byte frames to
+`natKit/sending/Data-13793649670644-Binary-NatImuBulkDataSchema`, `seqNo` advancing.
+Reflash the fork with `./build-role.sh leaf esp32 -p /dev/ttyACM0 flash`; roll back
+with `cd natKit-IMU/embeded && pio run -e release -t upload --upload-port /dev/ttyACM0`
+(~29s incremental; do NOT `fullclean` first, that forces a 25-minute network
+re-fetch). A byte-exact 4 MB pre-flash dump is at `~/natkit-verification/598a800/`.
+
+**⚠️ `--upload-port` is now REQUIRED — two boards are connected.** PlatformIO
+auto-picked `/dev/ttyACM1` (the second node) for the rollback upload. It failed to
+connect rather than flashing the wrong board, but do not rely on that.
+
+**⚠️ NEW DEFECT FILED: #365 (TEC-NATKIT-28).** The backend's own route for reading
+decoded samples — `set_streams` → `start_recording` → `get_session_data` — returns
+**0 samples while frames are visibly flowing on the wire**, and `stop_recording`
+reports `"sample_count":0` with `"status":"success"`. `/api/get_accuracies` was
+`null` throughout, consistent with the same cause. **So do not use that path to
+verify IMU values**; decode off MQTT instead
+(`~/natkit-verification/ceb8150/decode_frame.py`, written from
+`NatImuBulkDataSchema::encodeToBytes`, not guesswork).
+
+**Two hardware-handling traps:**
+- **Handling the board re-enumerates the USB device** and killed a capture outright
+  (the same hazard that wedged `/dev/ttyACM0` in an earlier session). `capture.py`
+  now reopens the port WITHOUT pulsing reset and marks the gap in the log.
+- **A rate measured over serial is only meaningful while the host is draining the
+  UART.** In the aborted run the reported rate fell 360 Hz → flat 63.9 Hz eight
+  seconds before the USB dropped, with every transport counter clean: the console is
+  in the sample loop's critical path, so once the host stops reading, `ESP_LOGI`
+  blocks on a full FIFO and throttles the loop. Not a sensor regression.
+
+**Capture harness:** `~/natkit-verification/ceb8150/capture.py <seconds> [port]`
+resets the board and streams its console in ONE process — two readers splice the
+byte stream into plausible-looking interleaved lines and cost three captures last
+session.
+
+## Also done 2026-08-12 — #347 (TEC-NATKIT-24) LEAF NODE: shipped, 95%, Verification
+
+**`9643900`.** Evidence + manifest in `~/natkit-verification/9643900-leaf/`, 6 files
+attached to #347. Two boards: leaf (with the BNO08x) on `/dev/ttyACM0`, primary on
+`/dev/ttyACM1`.
+
+**New files:** `main/imu_frame.{hpp,cpp}` (canonical frame encoder),
+`main/espnow_link.{hpp,cpp}` (the whole networking surface), `main/leaf.cpp`
+rewritten, `main/primary.cpp` now a working receiver.
+
+**Measured:** sensor ~360 reports/s with `resets 1` and heap flat at 210108 B;
+**5.0 frames/s** of 524 B (10 samples, 100 Hz declared) = **2.6 KB/s** on air
+against #346's 2.5 KB/s budget; primary sees `gaps 0`, `dupes 5`, `restarts 1`
+(a reflash) over 347 frames.
+
+**Primary-outage test passes.** `outage.py` holds the primary's EN low for 30s
+(its power switch is not reachable; the radio cannot tell the difference). Frames
+built kept climbing at 5.0/s, the sensor held ~360 reports/s, sends froze, and the
+link **recovered unaided**.
+
+**⚠️ Design changed BY that measurement:** three-attempt retry burned **322 retries**
+in a 30s outage (~16s of radio time on a peer known to be gone — airtime other nodes
+need). After 5 consecutive failures the leaf now presumes the hub absent and sends
+once per frame: **322 → 10 retries**.
+
+**⚠️ `dropped 0` in an outage is NOT evidence the queue works.** At 5 frames/s the TX
+task keeps up even while every send fails, so the queue never fills. Proven instead
+with a throwaway build (2000 us interval, 1 sample/frame, depth 2, deleted after):
+`built 6013 @ 221.8/s, sent 5984, dropped 47` — overflowed, dropped the oldest, loop
+undisturbed. Also shows ~222 small frames/s ≈ 17 KB/s.
+
+**⚠️ TWO COUNTER BUGS, one self-inflicted, both the probe's shape again.** (1) The
+primary reported `restarts 315` against 320 frames because splitting "duplicate" out
+of `else if (seq <= last)` left the ordinary `seq == last + 1` falling into the final
+else — the expected case is now spelled out first and does nothing. (2) Leaf link
+counters were named `frames_*` while counting packets of every type, so "frames built
+271, sent 307" read as sending more than were built; renamed `packets_*`.
+**Before quoting a counter, check what it counts.**
+
+**⚠️ THREE THINGS THE NEXT SLICES MUST NOT GET WRONG:**
+- **Leaf timestamps are MONOTONIC SINCE BOOT, not wall clock** (no NTP by design).
+  A gateway publishing them unmodified would advertise 1970-era timestamps. #340's
+  job; the frames are honest about carrying device-relative time.
+- **`imu_frame.cpp` is a SECOND implementation of libnatkit-core's Binary encoding**
+  (a leaf linking a C++ schema library is not the lean node being tested). Pinned by
+  static_asserts and verified on the wire, but it CAN drift — if libnatkit-core's
+  encoding changes, this changes with it and the frame version moves.
+- **`dupes 5` of 347 (~1.4%) are real** — the retry path re-sends a frame whose send
+  callback was late but which had landed. The primary counts and does NOT dedupe;
+  dedupe by seqNo belongs on #348 where the sequence is already tracked.
+
+`primary.cpp` is a working receiver but explicitly NOT #348: no persistence, no
+MAC-to-stream-id mapping, no serial mux, no backpressure. Its 1s beacon is what
+#340's timing broadcast should REPLACE rather than sit alongside.
+
+## Also done 2026-08-12 — #346 (TEC-NATKIT-23) loss run: ZERO LOSS, 95%, Verification
+
+Zach connected a **second board** (its power switch had been off — that is why it
+enumerated a USB-serial bridge while the ESP32 behind it never answered esptool).
+`6a2c123`; evidence + manifest in `~/natkit-verification/6a2c123-espnow/`, 3 files
+attached to #346.
+
+**⚠️ THE INSTRUMENT WAS WRONG FIRST, and this is the part worth not re-learning.**
+The first run reported **3051 sequence gaps from 243 packets**, which reads as
+catastrophic loss. It was not loss — it was three defects in the probe:
+1. `measureSendRate` used the loop index as the sequence, so each run restarted at
+   0 and the runs were indistinguishable to the receiver.
+2. **That index advanced even when `esp_now_send` REJECTED the frame.** Flat out,
+   340 of 500 are refused at the API, so the receiver saw seq jump 12 → 393 and
+   counted ~380 "gaps" for frames never transmitted — **back-pressure reported as
+   packet loss**, in the one run where loss is the question.
+3. The sweep wrote the payload SIZE into the sequence slot ("harmless here" — it is
+   not, once a receiver is listening).
+Fixed: one monotonic sequence per run advanced ONLY on acceptance; the receiver
+counts **sender restarts** (sequence going backwards); the sender prints the
+expected receive count so loss is a subtraction, not an inference.
+
+**`espnow-probe-receiver` is now a first-class build target**
+(`./build-role.sh espnow-probe-receiver esp32`), NOT a hand-edited sdkconfig —
+ESP-IDF reads the defaults only when the generated sdkconfig does not exist yet, so
+flipping that switch by hand silently gives a second SENDER, and two senders with no
+receiver look exactly like total loss.
+
+**The numbers, two PICO-V3-02 on channel 1:** sweep 1→**1470** all accepted,
+**1471** → `ESP_ERR_ESPNOW_ARG` (ceiling now confirmed on a SECOND, independent
+board); at IMU rate 50 × 524 B in 10.20s = 4.9 frames/s, **2.5 KB/s**; flat out 160
+of 500 accepted (340 refused at the API), 180.9 frames/s, **92.6 KB/s**; receiver
+**219 of 219, `seq gaps 0`, last seq 218**. Both boards report ESP-NOW **version 2**.
+
+**Both boards are ESP32-PICO-V3-02 rev v3.0** (`0c:8b:95:96:b9:f4` = 13793649670644,
+`0c:8b:95:96:bc:4c` = 13793649671244) — two for two, which is evidence for #343's
+open "is the fleet uniformly V3-02?" question.
+
+**Left on #346, neither blocking the decision:** `esp_now_get_version()` on a **C3**
+(neither board is one; significance dropped since the worry was a **v1** primary and
+both boards we have are v2 — it only matters again if a C3 becomes a leaf/primary),
+and **contention between several SENDING nodes**, which needs N+1 boards and belongs
+on **#348** since it is about hub capacity, not frame format.
+
+## Background — #346's earlier measurement (`e7894ca`)
+
+**The epic's "biggest unknown" was already dead at 75%.** Both numbers
+the epic reasoned from were wrong, and measuring them removed the problem:
+- **The frame is 524 bytes, not ~5 KB.** `NatImuBulkDataSchema` Binary encodes
+  `24 + 50 * sampleCount`; the running firmware sends 10 samples, and the live
+  console prints `Bytes Encoded 524`. The 5 KB figure was the legacy 5000-byte
+  fallback or the 16 KB MQTT buffer.
+- **ESP-NOW on this PICO-D4 is version 2 with a ceiling of exactly 1470 bytes**
+  (1470 confirmed, 1471 → `ESP_ERR_ESPNOW_ARG`). Probed, not read off a header.
+- At the real IMU rate: 50/50 frames confirmed, 0 failures, 2.5 KB/s. Flat out:
+  177.8 frames/s (91 KB/s), excess **refused at the API** — explicit
+  back-pressure, no silent loss. ~35× headroom.
+- **DECIDED and on the ticket: the NODE builds the canonical frame, one frame =
+  one packet.** No fragmentation, no reassembly state on the primary, loss
+  degrades to whole missing frames that `seqNo` already makes detectable.
+- Serial budget also fine: 2.5 KB/s per node vs ~11.5 KB/s at 115200 ≈ 4 nodes
+  (~35 at 921600). natVR's stall was 19 KB/s of JSON — a different regime.
+
+**Still open on #346, both needing hardware I don't have:** `esp_now_get_version()`
+on a **C3** (a v1 primary would break the decision — v1 devices cannot receive v2
+packets >250 B), and the multi-node loss run. **The harness is committed and
+ready:** `./build-role.sh espnow-probe esp32` for the sender, a second board with
+`CONFIG_NATKIT_ESPNOW_PROBE_RECEIVER=y` on the same channel for the receiver,
+which reports **sequence gaps** (4-byte seq in every packet), not just a count.
+
+⚠️ **The probe commit `e7894ca` broke the other three roles' builds; fixed in
+`dd543d6`.** `CONFIG_NATKIT_ESPNOW_CHANNEL` was `depends on NATKIT_ESPNOW_PROBE`,
+so the symbol vanished whenever the probe was not selected — while
+`espnow_probe.cpp` reads it as a VALUE and compiles into every image by design.
+Leaf, primary and gateway all failed with "was not declared in this scope"; only
+the probe role built. Un-gated rather than wrapping the file in `#if`, because
+compiling every source into every image is the invariant that stops a role from
+rotting. All four roles build for esp32 again from a cleared sdkconfig.
+
+⚠️ **`Blocked` is now stale on BOTH #345 and #346 and the CLI still cannot remove
+a label** — `task update -label -Blocked` 401s (adding works). **Both need
+clearing in the web UI.** #347 is correctly labelled.
+
+## Superseded — #345's earlier WIP state (40%, NOT streaming)
+
+Kept because the hypotheses it rules out are still worth not re-testing; the
+fix is in the Current Task section above.
+
+**Committed `b42d763` on natKit-IMU `trunk`, deliberately as WIP.** The board was
+restored to `embeded/` afterwards and verified streaming, so hardware is safe.
+
+**Works on hardware:** the hub answers (4 product ids); `sh2_getCalConfig` reports
+**0x05 (accel=1 gyro=0 mag=1)**, the same value the Arduino firmware sees, so the
+port reads the hub correctly; accelerometer reads `+0.051 -5.371 +8.184` m/s²
+(**magnitude 9.76** = a real gravity vector); **the ticket's calibration fix
+works** — deferred `setCalConfig(0x07)` returns 0 with a 0x07 read-back and gyro
+accuracy reached **high**; heap flat over 40s.
+
+**Does NOT work:** sustained streaming. A few reports arrive, then the hub
+**resets itself ~10× in 40s** (real `SH2_RESET` events, with ZERO INT timeouts of
+ours), and reads return 15-byte SHTP **channel-0** packets instead of the
+**channel-3** sensor reports that were enabled. **The fault is in the transport,
+not the decode.**
+
+**Two findings that contradict #345's "port the fixes verbatim" advice:**
+1. **`setCalConfig` must NOT be called in setup on this fork.** On Arduino it
+   fails there harmlessly (`SH2_ERR_HUB`); here it SUCCEEDS, and a succeeding
+   early call is the documented way to wedge this hub — observed exactly that
+   (returned 0 → hub stopped asserting INT → next op -5 → stream dead after 2
+   reports). Timing, not code: Arduino starts the IMU after WiFi/MQTT, a leaf gets
+   there ~350ms after power-on. The SHTP *pumping* the old note calls
+   "load-bearing" is kept explicitly; the write is deferred to the sample loop.
+2. **The Adafruit two-CS-framed read does not port.** It relies on the hub
+   re-presenting an unread packet after CS deasserts; literally ported it gave a
+   byte-shifted stream (17,593 reads, 0 errors, all "15 bytes, channel 0", seq
+   jumping 198/74/208/88). Now one continuous CS assertion
+   (`spi_device_acquire_bus` + `SPI_TRANS_CS_KEEP_ACTIVE`) covers header + body.
+
+**Next hypotheses, in order:** (1) whether the Arduino build actually drives
+**software** SPI — `platformio.ini`'s pinned-BusIO comment says BusIO 1.17.3/4's
+rewrite "lands in the exact software-SPI transfer path `begin_SPI()` drives",
+which would mean the working timing is not what I reproduced; (2) SPI mode/clock;
+(3) CS-to-clock and inter-transfer setup times, the class of thing the
+two-transaction read was accidentally providing.
+
+**Diagnostics are committed and are what this needs:** `Bno08x::halStats()`
+counts reads, packets, empty/oversize headers, per-phase SPI failures and INT
+timeouts, and records the last packet's length, channel and sequence; the leaf
+prints all of it once a second with the INT level. Captures in
+`~/natkit-verification/b42d763/` (3 attached to #345).
+
+⚠️ **Reflashing the fork takes the IMU node off the air.** Rollback is `cd
+embeded && pio run -e release -t upload` (~29s incremental) and a byte-exact 4 MB
+pre-flash dump is at `~/natkit-verification/598a800/`.
+
+## Prior Task — EPIC #343 slice 0 DONE and hardware-verified (#344 CLOSED)
+
+**#344 (TEC-NATKIT-21) is CLOSED at 100%** — commits `598a800` (scaffold),
+`880a042` (config corrected from what the board reports), `84ed628` + `a4952cb` +
+`59cb34a` (READMEs).
+
+**MERGED TO TRUNK 2026-08-11 (Zach's call — "we are using a separate code
+path").** natKit-IMU `trunk` is now `59cb34a` and **the parent repo's pin is
+bumped to it** (`e32af4e`), so `natKit-IMU/firmware-idf/` is in a default
+checkout — which is what #344 wanted (both firmwares in one checkout). The
+`firmware-idf-fork` branch still exists and is identical to trunk; it is now
+redundant and safe to delete. Nothing is pushed — both repos are local-only.
+
+Why the merge was safe, verified not assumed: `git diff trunk..fork` was **971
+insertions, 0 deletions**, nothing under `embeded/`, and the only file outside
+`firmware-idf/` was natKit-IMU's own README. Re-verified AT trunk after
+merging: `embeded/` builds (`pio run -e release`, SUCCESS) and all three fork
+roles build.
+
+The fork is a sibling directory `natKit-IMU/firmware-idf/` — native `idf.py`, no
+PlatformIO, `natVR/firmware` as the template.
+
+- **Role is a Kconfig choice** (`main/Kconfig.projbuild`:
+  `CONFIG_NATKIT_ROLE_{LEAF,PRIMARY,GATEWAY}`), so it is three images from one
+  tree rather than a hand-edited `#define`. `main.cpp` logs the banner (firmware
+  + version, role, target/rev/cores/IDF, device id + MAC, reset reason, heap),
+  inits NVS, then dispatches to `runLeaf/runPrimary/runGateway`; each stub logs
+  which slice fills it in and falls into `idleStatusLoop` (uptime + free heap
+  every `CONFIG_NATKIT_STATUS_LOG_INTERVAL_S`, default 10s) so an unimplemented
+  role is a visibly-alive board, not an apparently-bricked one.
+- **`./build-role.sh <role> [target] [idf.py args]`** is the reproducible path:
+  each (role, target) gets its own build dir AND its own generated `sdkconfig`
+  (`-D SDKCONFIG=`), because a shared `./sdkconfig` is how one role silently
+  inherits another's config. Plain `idf.py build` still works and gives the leaf.
+- **All three role sources compile into every image** even though one entry
+  point is called — conditional registration would leave two roles never
+  compiled in any given build.
+- `sdkconfig` and `dependencies.lock` are **gitignored** (both bake in the
+  target; the lock rewrites itself on every alternate-target build). The
+  committed truth is `sdkconfig.defaults[.esp32|.esp32c3]` +
+  `roles/*.defaults`.
+- **Device-id compatibility is pinned at compile time.** `packMac` is
+  `constexpr` and `device_id.cpp` static_asserts the real board
+  (`0c:8b:95:96:b9:f4` → `13793649670644`, the number inside every existing
+  topic name). Verified the assert FIRES by sabotaging a shift and rebuilding —
+  an untested guard is decoration.
+
+**Verified — Zach plugged the node in mid-session, so this is on real silicon.**
+All 6 images (3 roles × esp32/esp32c3) build clean, ~`0x2c110` bytes on esp32 /
+~`0x2db40` on esp32c3 against the default 1 MB app partition (83% free); each
+build's generated `sdkconfig` really carries its `CONFIG_NATKIT_ROLE_*` (a
+fragment that failed to apply would still have built). On the board
+(**ESP32-PICO-V3-02 rev v3.0, MAC `0c:8b:95:96:b9:f4`**, `/dev/ttyACM0`) the leaf
+image boots and logs the full banner — `natKit-IMU-idf v0.1.0`, `role: leaf`,
+`target: esp32 rev 3.0, 2 core(s)`, `device id: 13793649670644`, `last reset:
+power-on` — with **heap flat at 297112 B across 40s**.
+
+**The rollback contract is proven, not just documented.** `pio run -e release -t
+fullclean` + rebuild (25m07s, SUCCESS) then `pio run -e release -t upload`
+brought back `natKit-IMU v0.5.0` / `Unique ID: 13793649670644`, NTP synced and
+**streaming** to `natKit/sending/Data-13793649670644-Binary-NatImuBulkDataSchema`.
+**The board was left running the original firmware, streaming as found.**
+Evidence + a full 4 MB pre-flash dump: `~/natkit-verification/598a800/`
+(`MANIFEST.md`; 4 files attached to #344).
+
+**QEMU worked at TEC-NATKIT-21 — Zach installed `libslirp` mid-session, so all six
+STUB images had been booted, not just built. ⚠️ NO LONGER TRUE for any role that
+starts the radio; see the #315 section above.** leaf/esp32 on silicon; primary/esp32,
+gateway/esp32 and leaf/esp32c3 under QEMU (`./build-role.sh <role> <target>
+qemu`). The C3 reports `rev 0.3, 1 core(s)`, confirming the packed-`MXX`
+revision handling on a second target. Caveats, all in the fork's README:
+- Use the **plain `qemu` action, NOT `qemu monitor`** — the monitor refuses to run
+  without a TTY, while `qemu` alone uses `-serial mon:stdio`, so
+  `timeout 40 ./build-role.sh <role> <target> qemu </dev/null` is scriptable.
+- **QEMU's efuse is blank**: MAC `00:00:00:00:00:00`, device id `0`. An emulator
+  artifact — do not "fix" it. The real id is only observable on silicon.
+- No BNO08x, no ESP-NOW peer, no UART peer emulated, so #345/#346 need the bench.
+
+**Traps found while doing it:**
+- ⚠️ **ESP-IDF reads `sdkconfig.defaults*` ONLY when the generated `sdkconfig`
+  does not exist yet.** Editing the defaults after the first build silently does
+  nothing: the build succeeds and the setting is absent from the image. Caught
+  only by reading the generated `sdkconfig` back — a flash option had been
+  "applied" for two builds. `build-role.sh` now warns when a defaults file is
+  newer than the generated `sdkconfig`; fix is `rm build/<target>-<role>/sdkconfig`.
+- ⚠️ **Read the serial port from exactly ONE process.** Two readers split the
+  byte stream into plausible-looking interleaved output (half of one line spliced
+  into another), which reads exactly like a firmware bug. Cost three captures.
+  Reset + read in a single process (`/tmp/esp-boot-capture.py` pattern: pyserial,
+  DTR low / pulse RTS, then read).
+- **The board is NOT the 4 MB PICO-D4 the epic assumes** — it is a PICO-V3-02
+  with 8 MB flash and 2 MB PSRAM. Flash size is still declared 4 MB on purpose
+  (under-declaring wastes space; over-declaring on a real 4 MB part breaks a
+  boot), and the open question "is the fleet uniformly V3-02?" is on #343.
+- Flash is a **Boya** part; it was falling back to the generic driver on every
+  boot until `CONFIG_SPI_FLASH_SUPPORT_BOYA_CHIP=y`.
+- `esp_chip_info_t` has **no `full_revision`** in IDF 5.5.3; `revision` is packed
+  `MXX` (major × 100 + minor), so this PICO-V3-02 reads `301`.
+- **`main` does not get every component's headers implicitly** — `esp_timer.h`
+  was "No such file or directory" until `esp_timer` went into `REQUIRES`.
+- `pio run -t fullclean` on `embeded/` forces a **network re-fetch** of the
+  pinned git deps (libnatkit-core and its nested submodules) plus an
+  Arduino-from-source rebuild: **25m07s measured**. The rollback is one command,
+  but after a fullclean it is a slow one — do not fullclean if rolling back in a
+  hurry, and note that for ~25 min this session the documented rollback was not
+  actually available, which is why the 4 MB flash dump was taken first.
+
+**Two READMEs, deliberately split:** `natKit-IMU/README.md` gained the
+authoritative "there are two firmwares" section — which image is on which board
+(a record to update when you flash, not a measurement), and the one rollback
+command (`cd embeded && pio run -e release -t upload`).
+`natKit-IMU/firmware-idf/README.md` carries the fork's build/config/invariants.
+
+**Rollback is unchanged by the merge** — `embeded/` is byte-identical to what it
+was at `635d86e`, so `cd embeded && pio run -e release -t upload` is still the one
+command, and the epic's "the current firmware must stay flashable" constraint
+still holds with both trees on one branch.
+
+**Next slice: #345 (TEC-NATKIT-22)** — BNO08x on native IDF (`spi_master` + CEVA
+`sh2`), carrying the five hardware-found fixes listed on that ticket. Then #346
+(TEC-NATKIT-23), the on-air frame format, which is the epic's biggest unknown.
+
+## Board — EPIC #343 filed 2026-08-10 (ESP-IDF firmware fork)
+
+**#343 (TEC-NATKIT-20), the board's first EPIC**, with 7 child slices #344–#350:
+a **fork** of the ESP32 node firmware on native ESP-IDF that changes the
+architecture to primary/secondary per the #319 whiteboard — leaf nodes are sensor
++ ESP-NOW only (no WiFi/MQTT/NTP), a primary is the ESP-NOW hub and 1s timing
+master, and it forwards over serial to a gateway ESP32 on WiFi/Ethernet that
+speaks the existing MQTT topic contract.
+
+Zach's constraint, which shapes every slice: **the current firmware must not be
+overwritten** — we may not keep this. So `natKit-IMU/embeded` (`trunk` @
+`635d86e`, Arduino via pioarduino / IDF 5.5.5, board `pico32`) stays buildable and
+flashable throughout, the fork is recommended as a sibling directory
+(`natKit-IMU/firmware-idf/`, native `idf.py`, `natVR/firmware` as the template),
+rollback is one documented command, and #350 is an explicit adopt-or-discard
+decision with measured criteria.
+
+Slice order: #344 scaffold → #345 BNO08x on native IDF (spi_master + CEVA sh2,
+carrying the hardware-found fixes) → #346 **on-air frame format** (the biggest
+unknown: ~5 KB bulk frame vs ESP-NOW's per-packet limit → fragment or shrink;
+measure on our chips) → #347 leaf → #348 primary (registry, reassembly, serial mux,
+backpressure) → #349 gateway (WiFi/Ethernet, esp-mqtt, `esp_netif_sntp`) → #350
+bench vs the current firmware and decide.
+
+Open questions left for Zach, deliberately not decided: primary and gateway as one
+board or two; which chip/PHY for the gateway's Ethernet; and whether the
+`EXECUTION_COMMAND` path is relayed to nodes in the first cut.
+
+**#340** (ESP-NOW timing broadcast) IS this epic's timing slice but is only
+*related* — the CLI's `-parent` is create-only, so it cannot be reparented from
+here. Also note **#339 no longer exists** (404), so #340's `follows #339` gate is
+gone; if the uPTP-vs-ESPNow-vs-NTP evaluation still matters it needs refiling.
+
+## Prior Task — Committed Playwright suite for the VP UI (TEC-NATKIT-15 DONE)
+
+**#338 CLOSED 2026-08-10 — commit `20f2bc2`.** The throwaway `/tmp` verification
+scripts are now a committed suite: `frontend/e2e/`, 23 tests over 7 spec files,
+`npm run test:e2e`, ~1.4 min against the dev stack. `@playwright/test` is a real
+dev dependency (browsers already cached in `~/.cache/ms-playwright`);
+`npm run check` type-checks `tsconfig.e2e.json` too, and **vitest is now scoped
+to `src/`** (`vite.config.ts` `test.include`) or it tries to run browser specs.
+
+Read `frontend/e2e/README.md` first — it carries the paid-for gotchas. The ones
+that cost time THIS session:
+- **A Save clicked before the socket connects is a silent no-op.** Every editor
+  action that talks to the backend returns false and only sets an error string.
+  `VpApp.open` waits for `.conn-pill.connected`; before that, every test failed
+  with "board never reached the backend store".
+- **A new board is a local draft — there is no auto-save for one.** It must be
+  saved explicitly, because `save_experiment` refuses to bind a board the backend
+  has never seen (`persistExperiment` saves it first in the app's own flow).
+- **A repeat group contains its children's fields and actions**, and `± Jitter
+  (s)` exists at both levels — hence `ownField`/`stepAction`, which scope through
+  the card's own `.card-main`. A bare `.locator('button[title=...]')` on a group
+  matches 4 elements.
+- **The canvas replaces the list**, so step rows are not in the DOM to count once
+  Canvas is showing — read counts before switching.
+- **`fill()` only raises `input`**; the comma-separated class list commits on
+  `change` and needs a blur.
+- **A rendered thumbnail is not proof the image loaded** — poll `naturalWidth>0`.
+  (The old `/tmp/qs-images` PNGs were valid; the check was just too early. The
+  committed fixtures are hand-generated 64×64 PNGs.)
+
+Evidence: `~/natkit-verification/<sha>/` (`-dirty` when the tree is not clean),
+`<ticket>-<nn>-<slug>.png` at 1600×1050 @2x + `MANIFEST.md` with a caption per
+shot AND the run health (native dialogs / console errors / stores restored).
+33 shots attached to #313/#314/#335/#336/#337; manifest on #338 (attachment #53
+is current — **`attachment delete` still 401s**, so #52 is a stale duplicate).
+Seeded randomization is proven by **image equality** (seed 1 / 2 / 1 again,
+asserting shots 1 and 3 byte-identical).
+
+**Real defect found by the suite → #342 (TEC-NATKIT-19):** the designer
+re-renders the **last-saved** protocol for the duration of the save round trip,
+because `flushExperimentEdit` clears `pendingExperimentEdit` when it SENDS the
+save, not when the `experiment_saved` echo lands. Measured ~11ms via a
+MutationObserver (410ms after the edit = the 400ms debounce), but it is as long
+as the round trip. It resets the canvas's zoomed-into group (keyed by step id) —
+which is why "open a repeat group right after converting" bounced to the top
+level — and is a plausible source of a transient `recipe.cues`-on-null crash in
+`QuickSetupCard`. `Designer.convertToSteps` waits for the round trip via
+`VpApp.waitForStoredProtocol` instead of racing it; **that settle can be deleted
+once #342 is fixed.**
+
+Not covered (deliberate): recording a session (needs a device + live broker),
+replay/instance review, and the markers-node "Open protocol" portal.
+
+## Prior Task — Experiment authoring UX rework (Phase 1 SHIPPED, Phases 2–5 planned)
+
+Zach flagged the VP experiment-definition panel as "genuinely a bad experience":
+unlabeled fields, cramped 320px strip, no quick setup, and a wish for experiments
+as zoomable/wireable spatial objects. Plan:
+`plans/experiment-authoring-ux-rework-plan.html` — 5 phases, one `StepProtocol`
+shape under every altitude (quick-setup recipe → step list → step detail →
+(later) sequence canvas with zoomable repeat groups → session composition).
+Keeps the experiment-as-entity model and the `markers` node untouched.
+
+**Phase 1 DONE 2026-08-07 (uncommitted, branch `zach/tab-persistence`):**
+- Every step field labeled (Step type / Shown to participant / Class label
+  (trained on) / Hold (s) / Continue-button text / Times / Shuffle each pass /
+  Tutorial (not trained on)). `ExperimentPanel.svelte` step rows restructured
+  into head (type + actions) / labeled fields / flags.
+- **Instructions can hold for input**: `InstructionStep` gained
+  `wait_for_input` + `continue_label` (`experimentSteps.ts`); the toggle swaps
+  Duration for button text. Compiles to the same zero-length barrier a `wait`
+  step emits, so runner/clock-freeze/`resolveScheduleWaits` needed no changes;
+  the standalone `wait` kind survives for existing protocols.
+- Kind color accents (left border), Duplicate-step button (deep-copies repeat
+  groups with fresh ids), and kind changes now carry text/duration/media over
+  (`retypeStep` swapped wholesale via `replaceStep` so old-kind fields don't
+  linger — `patchStep` merges and would leak them).
+- Verified: svelte-check 0 errors, vitest 79/79 (2 new tests), and LIVE
+  headless screenshots against the dev stack (frontend container bind-mounts
+  ./frontend with HMR, so source edits are served immediately). Scratch board +
+  experiment created and fully deleted after — boards back to the original 8.
+  Recipe: playwright-core from `~/.hermes/hermes-agent/node_modules` (import by
+  absolute path — ESM ignores NODE_PATH), Node 22's global WebSocket for the WS
+  protocol, deep-link to /VisualProgramming does NOT route (tinro lands on
+  Home) — click the nav link instead. Auth is open in dev (session endpoint
+  answers authenticated without a cookie).
+
+**Zach signed off (2026-08-07): designer = overlay; recipe hard-detaches on
+customize; Phase 4 canvas will be a view toggle, list stays canonical.**
+
+**Phase 2 DONE 2026-08-07 (uncommitted):** new `ExperimentDesigner.svelte`
+overlay (same idiom as composite-internals: z-60 backdrop, Esc/backdrop close);
+ALL protocol authoring moved there (step editor, legacy fixed form, built-ins,
+media); `ExperimentPanel.svelte` rewritten as the operator status card
+(bind/create, participant/notes, protocol summary card + "Edit protocol",
+Record/Stop, live cue, history). `createExperiment` opens the designer
+immediately. New in the designer: **compiled-timeline strip** (per-class colored
+segments via scheduleForProtocol — works for BOTH protocol shapes; waits render
+as amber ticks since they have no length; tutorial spans hatched; class legend),
+**collapsible repeat groups** (one-line "10 steps · ~60s total" summary),
+**drag-to-reorder** off a grip handle (HTML5 dnd; arrows kept as accessible
+path; repeat groups refuse to nest; drop-into-group appends).
+
+Verified: svelte-check 0/0, vitest 79/79, live headless: designer auto-opens on
+create, convert-to-steps, wait toggle updates strip (tick + chip), collapse,
+reorder AND drop-into persist through the debounced save + echo, Esc closes,
+"Edit protocol" reopens, no console errors, stores restored exactly (8 boards /
+7 experiments — Zach ACTUALLY HAS 7 real experiments now, created since Aug 5;
+state.md's old "0 experiments" is stale — filter cleanups by scratch label,
+never assume the store is empty).
+
+Gotchas learned the hard way:
+- **Playwright's `dragTo` does not drive HTML5 dnd here** — dispatch synthetic
+  DragEvents (`new DataTransfer()` works in Chromium) to test drag paths.
+- **Real bug found by that test:** dragover on the group body bubbled to the
+  group card's own handler, overwriting "into the group" with "after the group
+  card" — every drop-into was silently a no-op reorder. Fixed with
+  stopPropagation in `handleGroupBodyDragOver`.
+- A crashed UI script leaks its scratch experiment AND board; two leaked this
+  session and were cleaned by id/label over the WS protocol
+  (delete_experiment / delete_stream_graph). Verify store counts after every
+  scripted run.
+
+**Phase 2.5 DONE 2026-08-07 — seeded randomization + step-type cleanup
+(uncommitted).** Zach asked for: randomization that is seed-based/recreatable,
+and better step types.
+- `experimentSteps.ts`: `TimedStep` mixin (`duration_s` + optional `jitter_s`)
+  on instruction/cue/rest; `StepProtocol.seed` feeds one mulberry32 stream in
+  `compileStepProtocol` (advanced once per jittered emission) → duration ±
+  jitter, clamped ≥0. Barriers (wait / instruction-holding) never jitter. Same
+  protocol JSON = same schedule; reroll seed = new variation. 4 new tests
+  (83/83).
+- Designer: "± Jitter (s)" on timed steps (0 stored as undefined to keep JSON
+  clean; hides while an instruction holds for input); shuffle Seed + dice on
+  repeat groups (shown when shuffle on); "Timing seed" + dice in the header;
+  legacy fixed form gained its Shuffle seed field.
+- Step-type cleanup: `wait` retired from the add palette and the kind dropdown
+  (option still shown when the step IS one, so old protocols render);
+  `retypeStep` wait→instruction carries `wait_for_input`+`continue_label` so
+  conversion is behaviour-preserving. Add buttons now have kind color dots +
+  "what it's for" tooltips.
+- Verified: svelte-check 0/0, vitest 83/83, live headless (palette without
+  Wait, dropdown without wait option, both dice buttons render, timeline strip
+  visibly recompiles on timing-seed reroll, jitter field hides under the wait
+  toggle, stores restored exactly, no console errors).
+
+**Vikunja board audited 2026-08-10** (project 53 via the `assistant` CLI). This
+work maps onto tickets **#313** (rests) and **#314** (experiment window), whose
+descriptions are the original asks. #314's undone bullets were split into
+**#335** quick setup and **#336** spatial canvas. Findings recorded as ticket
+comments; also corrected #321 (the hardware channel family already exists —
+`HARDWARE_CONFIGURATION` is declared but never used) and anchored #318 to the
+`StreamType` extension seam.
+⚠️ **Vikunja stores descriptions/comments as HTML (tiptap), NOT markdown.** The
+`assistant` CLI DOES convert markdown now (v0.7.0) — the older note here saying
+it does not is wrong — but **do not hard-wrap the markdown you send it**: inside
+a list item a soft line break becomes `</p><p>`, splitting a wrapped sentence
+into two paragraphs, and `**bold**` spanning a newline is not emphasised at all
+(the asterisks show verbatim). One long line per paragraph and per bullet.
+Comment edit works; `comment delete` and `attachment delete` still 401.
+
+**#313 DONE 2026-08-10 — rest interleaving (the other half of the ticket).**
+`RepeatStep.interleave_rest?: InterleavedRest` ({duration_s, jitter_s?, label?,
+text?}); the compiler inserts a rest after EVERY child including the last (that
+trailing rest is what separates consecutive passes), and does so **after
+shuffling** — which is the whole reason it is a compile step and not real rows.
+"Interleave on, 0s" inserts nothing. Jitter composes with the protocol timing
+seed. UI: "Rest between steps" toggle on the group card revealing Rest (s) +
+± Jitter (s); collapsed summary says "5 steps + rests · ~60s total".
+Verified: vitest 8 new tests including **an interleaved group reproducing
+`buildCueSchedule`'s exact phase/gesture sequence and duration**; live run went
+32 segments (10 rows) → 17 (5 cue rows) → 32 segments with only 5 rows.
+
+**#335 DONE 2026-08-10 — quick setup.** New `StreamViewer/quickSetup.ts` (pure,
+20 tests): `QuickSetupRecipe` → steps in the shape get-ready → practice
+(tutorial) → ready gate → main block, built on #313's interleave so the
+generated protocol is N cue rows not 2N. `labelFromFilename` ("Fist Closed.PNG"
+→ `fist_closed`). New `QuickSetupCard.svelte` in the designer replaces the step
+list while a recipe is attached: Images/Class-names toggle, multi-file drop zone
+uploading via `/api/media`, thumbnail tiles with editable labels, knobs, live
+summary. Recipe stored as `protocol.quick_setup` (typed `unknown` on
+StepProtocol + `isQuickSetupRecipe` guard, to avoid a circular import and
+because it is read back from a store).
+**Detach is enforced at the `commitSteps` choke point** — every hand edit funnels
+there, so that is where the recipe is dropped; "Customize steps…" confirms and
+is one-way by design. Live-verified with 3 real uploads incl. thumbnails
+actually rendering, knob→regenerate, backend round-trip, and detach keeping the
+steps while a following hand edit stays detached.
+
+Totals now: svelte-check 0/0, **vitest 110/110**. Board: #313 and #335 closed,
+#314 at 80% (only #336 left).
+
+**Follow-ups after Zach moved #313/#335 to a validation bucket (2026-08-10):**
+
+1. **Interleaving is now the DEFAULT.** `stepsFromLegacyProtocol` emits cues +
+   `interleave_rest` instead of rest rows, so converting ANY legacy protocol
+   (incl. the Finger-counting default) yields 5 rows not 10 with the toggle
+   already on — compiled timeline unchanged (32 segments), which the existing
+   equivalence test pins. `blankStep("repeat")` also defaults to
+   `interleave_rest: {duration_s: 2}`.
+2. **All 20 `window.confirm/alert/prompt` call sites are GONE.** New
+   `VisualProgramming/dialogs.svelte.ts` (await-able `askConfirm`/`askName`/
+   `showAlert`, a queue, and a settle-guard against Enter+click double-resolve)
+   plus `DialogHost.svelte` mounted once in the editor (z-index 80, above the
+   designer's 60). The name dialog **lists existing names and filters as you
+   type** with an "n of m" counter, warns on a case/whitespace-insensitive exact
+   match (does NOT block — ids are generated, so duplicates are legal), and is
+   reused for experiment / profile / composite names.
+   - Functions that now await a dialog became `async`: `selectGraph`,
+     `createGraph`, `loadStarterTemplate`, `createExperiment`, `deleteInstance`,
+     `deleteBoundExperiment`, `convertExperimentNode`,
+     `createCompositeFromSelection`, `saveCurrentAsProfile`, `removeProfile`,
+     `loadProfile`. **The non-dirty path stays synchronous** (no `await` is
+     reached), so callers depending on immediate selection are unaffected.
+   - ⚠️ **CSS trap hit twice, both caught only by screenshotting:** a
+     `display:flex` container turns bare text nodes into flex items (the
+     collision sentence stacked into columns) and strips `list-item` off `<li>`s
+     (bullet markers vanished). Don't flex a text paragraph or a `<ul>`.
+   - Live check **asserts Playwright's `dialog` event never fires**, which is the
+     regression guard for this work.
+
+**#336 DONE 2026-08-10 — spatial protocol canvas (commit `8cd8408`).**
+`ProtocolCanvas.svelte`: List/Canvas toggle; steps as colour-coded nodes in an
+auto-laid-out sequence lane; repeat groups as black-box containers with
+double-click/Open zoom, breadcrumb, and a group-scoped add palette (no nesting);
+selection opens labelled fields. **`StepFields.svelte` extracted (~330 lines out
+of the designer) so the list rows and the canvas inspector render ONE
+definition** — that extraction is what keeps the canvas from being a second copy
+of the fields.
+- The markers-node portal is an **"Open protocol" button, not double-click**:
+  that gesture already opens the participant run surface and repurposing it
+  would break conducting an experiment. Flagged on the ticket for Zach's call.
+- ⚠️ **Class-name collision bug, found only by measuring:** container nodes had
+  ~300px dead space either side because a dependency ships a global
+  `.container { margin: auto }`. Svelte scopes OUR rules but a global rule still
+  matches our element by class name. Renamed to `.is-group`; swept all unscoped
+  rules matching canvas elements (rest are Tailwind resets). **Generic class
+  names are unsafe here even with scoped styles.**
+
+**TEC-NATKIT-3 (#314) is CLOSED** — all five bullets done. Phase 5 (wiring whole
+experiments together as session blocks) deliberately deferred as **#341**, which
+carries the open question: is a block a copy or a reference?
+
+**Board now labelled** (the org had zero labels before): one type label per
+ticket (Feature / Task / EPIC / Maintenance / Testing) plus UI/UX where
+user-facing. Note the list endpoint does NOT return labels — read per ticket.
+
+**Verification screenshots are attached to tickets** via `assistant task attach`
+(v0.7.0). Capture script conventions live in #338; sets are written to
+`~/natkit-verification/<sha>/` with a MANIFEST.md.
+
+⚠️ **Scripted-UI hygiene, learned again:** a script that throws before its
+cleanup leaks a scratch board AND experiment. Wrap cleanup in `finally`. Also
+**do not reload the page and assume the same board is selected** — the VP page
+picks its own, which is how one run ended up reading a different experiment.
+Zach has **8 real experiments** in the store now; filter cleanup by the
+"UX Scratch Test" label and verify counts after every run.
+
+## Prior Task — EXECUTION_COMMAND channel (slice 1 DONE on hardware, slice 2 NEXT)
 
 Bidirectional server<->sensor commands, with command output on the log channel.
 The device subscribes to its own `Command-<id>-Json-NatExecutionCommandV1` topic

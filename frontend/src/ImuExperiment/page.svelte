@@ -12,6 +12,12 @@
         parse_sensor_position_from_string,
     } from "./util";
 
+    // This page stays MOUNTED while you are on another one, so that a recording
+    // in progress is not destroyed by navigating away (see App.svelte). `active`
+    // says whether it is the page actually on screen; polling is skipped while it
+    // is not, rather than fetching twice a second for the whole session.
+    let { active = true }: { active?: boolean } = $props();
+
     const brokerConnectionTab = "broker-connection";
     const streamSelectionTab = "stream-selection";
     const calibrationTab = "calibration";
@@ -55,6 +61,7 @@
     // A fetch that RESOLVES only means the server answered -- a 500 counted as
     // "connected" before, so check response.ok.
     async function pollConnectivity() {
+        if (!active) return;
         try {
             backendConnected = (await fetch("/api/heartbeat")).ok;
         } catch {

@@ -14,6 +14,12 @@
 // Any step (or a whole repeat group) can be marked `tutorial`, which flows onto
 // every cue it produces so a trainer can exclude practice data.
 //
+// Randomization is always seed-based so a schedule can be recreated: a repeat
+// group's shuffle order comes from its own `seed`, and timed steps can carry
+// `jitter_s` (duration randomized ±jitter) drawn from the protocol-level
+// `seed`. Same protocol JSON, same compiled schedule — reroll a seed for a new
+// variation.
+//
 // Everything compiles down to the existing EmgCueEvent[] timeline, so the runner,
 // the marker payloads, the recorded session and the timeline strip all keep
 // working unchanged. The one thing offsets cannot express is a wait, whose length
@@ -53,22 +59,36 @@ interface StepCommon {
     audio_name?: string;
 }
 
-export interface InstructionStep extends StepCommon {
-    kind: "instruction";
-    text: string;
+// Randomize a timed step's duration by up to ± this many seconds, drawn from
+// the protocol's seeded timing stream. Fixed rest lengths let a participant
+// anticipate the next cue; jitter breaks that while staying reproducible — the
+// same protocol (same seed) always compiles to the same schedule.
+interface TimedStep {
     duration_s: number;
+    jitter_s?: number;
 }
 
-export interface CueStep extends StepCommon {
+export interface InstructionStep extends StepCommon, TimedStep {
+    kind: "instruction";
+    text: string;
+    /**
+     * Hold the session at this instruction until someone presses the button,
+     * instead of running for a fixed duration. `duration_s` is ignored while
+     * this is set — the real length is only known once the button is pressed.
+     */
+    wait_for_input?: boolean;
+    /** Button text while holding; defaults to "Continue". */
+    continue_label?: string;
+}
+
+export interface CueStep extends StepCommon, TimedStep {
     kind: "cue";
     /** The class label this cue collects — what a classifier learns. */
     label: string;
-    duration_s: number;
 }
 
-export interface RestStep extends StepCommon {
+export interface RestStep extends StepCommon, TimedStep {
     kind: "rest";
-    duration_s: number;
     /** Defaults to the protocol's rest class. */
     label?: string;
 }
@@ -80,6 +100,24 @@ export interface WaitStep extends StepCommon {
     continue_label?: string;
 }
 
+/**
+ * A rest the compiler inserts after every child of a repeat group, so a cued
+ * block does not have to be authored as alternating cue/rest rows.
+ *
+ * It is applied AFTER shuffling, which is the whole reason this is a compile
+ * step rather than real rows: shuffling a hand-built cue/rest/cue/rest list
+ * would scatter the rests and put two of them next to each other.
+ */
+export interface InterleavedRest {
+    duration_s: number;
+    /** Randomized ±, from the protocol's seeded timing stream, like any step. */
+    jitter_s?: number;
+    /** Defaults to the protocol's rest_class. */
+    label?: string;
+    /** Shown to the participant; defaults to "Rest". */
+    text?: string;
+}
+
 export interface RepeatStep extends StepCommon {
     kind: "repeat";
     times: number;
@@ -87,6 +125,13 @@ export interface RepeatStep extends StepCommon {
     /** Shuffle the child order on each pass (per-pass, seeded, reproducible). */
     shuffle?: boolean;
     seed?: number;
+    /**
+     * Put a rest after each child (including the last, so consecutive passes
+     * are separated too). This mirrors what stepsFromLegacyProtocol() builds by
+     * hand, so an interleaved group reproduces the classic
+     * classes x repetitions timeline exactly.
+     */
+    interleave_rest?: InterleavedRest;
 }
 
 export type ExperimentStep =
@@ -102,6 +147,24 @@ export interface StepProtocol {
     label: string;
     /** Filler class for rest steps that do not name their own. */
     rest_class: string;
+    /**
+     * Base seed for the timing-jitter stream (repeat groups carry their own
+     * shuffle seeds). Everything random in a compiled schedule derives from a
+     * stored seed, so a schedule can always be recreated: same protocol JSON,
+     * same schedule. Defaults to 1.
+     */
+    seed?: number;
+    /**
+     * The quick-setup recipe that GENERATED these steps, when one did.
+     *
+     * Typed opaquely to keep this module free of a dependency on quickSetup.ts
+     * (which imports these types); narrow it with `isQuickSetupRecipe()`. It is
+     * also read back out of a store, so a guard is the honest way to read it.
+     *
+     * Absent once the author edits steps by hand: the recipe is DETACHED at
+     * that point, because regenerating over hand edits would destroy them.
+     */
+    quick_setup?: unknown;
     steps: ExperimentStep[];
 }
 
@@ -164,6 +227,40 @@ function shuffled<T>(items: T[], seed: number): T[] {
 }
 
 /**
+ * Expand a repeat group's `interleave_rest` into real rest steps, one after
+ * every child. Ids are derived from the group + position rather than generated,
+ * so compiling twice produces identical steps (and consumes no randomness).
+ *
+ * A rest with no duration and no jitter would only add empty markers, so it is
+ * skipped — "interleave on, 0s" means nothing rather than a zero-length rest.
+ */
+function withInterleavedRests(
+    children: ExperimentStep[],
+    group: RepeatStep,
+): ExperimentStep[] {
+    const rest = group.interleave_rest;
+    if (!rest) return children;
+    const durationS = rest.duration_s ?? 0;
+    const jitterS = rest.jitter_s ?? 0;
+    if (durationS <= 0 && jitterS <= 0) return children;
+
+    const out: ExperimentStep[] = [];
+    children.forEach((child, index) => {
+        out.push(child);
+        const filler: RestStep = {
+            id: `${group.id}-interleaved-rest-${index}`,
+            kind: "rest",
+            text: rest.text ?? "Rest",
+            duration_s: durationS,
+        };
+        if (jitterS > 0) filler.jitter_s = jitterS;
+        if (rest.label) filler.label = rest.label;
+        out.push(filler);
+    });
+    return out;
+}
+
+/**
  * Flatten a step protocol into the timeline the runner and marker builders use.
  *
  * A `wait` step becomes a zero-length event flagged `wait_for_input`: the author
@@ -173,6 +270,11 @@ function shuffled<T>(items: T[], seed: number): T[] {
 export function compileStepProtocol(protocol: StepProtocol): EmgCueEvent[] {
     const restClass = protocol.rest_class || "rest";
     const schedule: EmgCueEvent[] = [];
+    // One seeded stream for all timing jitter, advanced once per jittered step
+    // emission. Deterministic for a given protocol: the same JSON (including
+    // seeds) always compiles to the same schedule; reroll the seed for a new
+    // variation.
+    const jitterRand = mulberry32((protocol.seed ?? 1) >>> 0);
     let offsetMs = 0;
     let cueId = 0;
     // Advances once per completed pass of a repeat group, so recorded cues keep
@@ -184,10 +286,24 @@ export function compileStepProtocol(protocol: StepProtocol): EmgCueEvent[] {
         tutorial: boolean,
     ) => {
         const phase = PHASE_BY_KIND[step.kind];
-        const durationMs =
-            step.kind === "wait"
-                ? 0
-                : Math.max(0, Math.round((step.duration_s ?? 0) * 1000));
+        // A wait step — and an instruction holding for input — is a barrier:
+        // its length is unknown until released, so its duration (and jitter)
+        // are ignored here and applied by resolveScheduleWaits() from what the
+        // runner measured.
+        let durationMs = 0;
+        if (
+            step.kind !== "wait" &&
+            !(step.kind === "instruction" && step.wait_for_input === true)
+        ) {
+            durationMs = Math.max(0, Math.round((step.duration_s ?? 0) * 1000));
+            const jitterS = step.jitter_s ?? 0;
+            if (jitterS > 0) {
+                const offset = Math.round(
+                    (jitterRand() * 2 - 1) * jitterS * 1000,
+                );
+                durationMs = Math.max(0, durationMs + offset);
+            }
+        }
         const label =
             step.kind === "cue"
                 ? step.label
@@ -206,7 +322,10 @@ export function compileStepProtocol(protocol: StepProtocol): EmgCueEvent[] {
         if (tutorial || step.tutorial === true) {
             event.tutorial = true;
         }
-        if (step.kind === "wait") {
+        if (
+            step.kind === "wait" ||
+            (step.kind === "instruction" && step.wait_for_input === true)
+        ) {
             event.wait_for_input = true;
             event.continue_label = step.continue_label || "Continue";
         }
@@ -228,10 +347,15 @@ export function compileStepProtocol(protocol: StepProtocol): EmgCueEvent[] {
                 const times = Math.max(0, Math.floor(step.times ?? 0));
                 for (let pass = 0; pass < times; pass += 1) {
                     repIndex += 1;
-                    const children = step.shuffle
+                    const shuffledChildren = step.shuffle
                         ? shuffled(step.steps, (step.seed ?? 1) + pass)
                         : step.steps;
-                    walk(children, isTutorial);
+                    // Interleave AFTER shuffling, or the rests would be
+                    // scattered through the pass and could land back to back.
+                    walk(
+                        withInterleavedRests(shuffledChildren, step),
+                        isTutorial,
+                    );
                 }
                 continue;
             }
@@ -333,27 +457,27 @@ export function stepsFromLegacyProtocol(protocol: {
         });
     }
 
-    const pass: ExperimentStep[] = [];
-    for (const label of classes) {
-        pass.push({
-            id: newStepId("cue"),
-            kind: "cue",
-            label,
-            text: label,
-            duration_s: holdS,
-        });
-        if (restS > 0) {
-            pass.push({
-                id: newStepId("rest"),
-                kind: "rest",
-                label: restClass,
-                text: "Rest",
-                duration_s: restS,
-            });
-        }
-    }
+    // Cues only: the inter-cue rests come from the group's `interleave_rest`
+    // rather than a rest row after every cue. Same compiled timeline (asserted
+    // in experimentSteps.test.ts), half the rows to read and edit, and the
+    // rests stay correct when the group is shuffled.
+    const pass: ExperimentStep[] = classes.map((label) => ({
+        id: newStepId("cue"),
+        kind: "cue",
+        label,
+        text: label,
+        duration_s: holdS,
+    }));
     if (pass.length > 0) {
         steps.push({
+            ...(restS > 0
+                ? {
+                      interleave_rest: {
+                          duration_s: restS,
+                          label: restClass,
+                      },
+                  }
+                : {}),
             id: newStepId("reps"),
             kind: "repeat",
             times: Math.max(1, protocol.repetitions ?? 1),

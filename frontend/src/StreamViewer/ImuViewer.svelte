@@ -4,6 +4,7 @@
     import type { Chart as ChartInstance, ChartDataset } from "chart.js";
     import type { ImuSample } from "./types";
     import OrientationView from "./OrientationView.svelte";
+    import MagnetometerView from "./MagnetometerView.svelte";
 
     interface Props {
         samples: ImuSample[];
@@ -20,13 +21,14 @@
 
     let { samples, formatNumber, compact = false }: Props = $props();
 
-    type Group = "accel" | "gyro" | "quat";
+    type Group = "accel" | "gyro" | "quat" | "mag";
     const GROUPS: { key: Group; label: string; unit: string }[] = [
         { key: "accel", label: "Accelerometer", unit: "m/s²" },
         { key: "gyro", label: "Gyroscope", unit: "rad/s" },
         // The quaternion is presented as a 3D orientation (arrow-in-a-sphere +
         // Euler readout) rather than four raw component traces.
         { key: "quat", label: "Orientation", unit: "" },
+        { key: "mag", label: "Magnetometer", unit: "µT" },
     ];
 
     // Below these peak-to-peak spans the sensor is treated as stationary — the
@@ -58,6 +60,13 @@
                 { label: "x", pick: (s) => s.data.gyro.x },
                 { label: "y", pick: (s) => s.data.gyro.y },
                 { label: "z", pick: (s) => s.data.gyro.z },
+            ];
+        }
+        if (group === "mag") {
+            return [
+                { label: "x", pick: (s) => s.data.mag.x },
+                { label: "y", pick: (s) => s.data.mag.y },
+                { label: "z", pick: (s) => s.data.mag.z },
             ];
         }
         return [
@@ -119,9 +128,14 @@
     });
 
     function syncChart(): void {
-        // Orientation is rendered by the OrientationView overlay, not the line
-        // chart — skip the (hidden) chart rebuild while it's selected.
-        if (!chart || selectedGroup === "quat") return;
+        // Orientation and the magnetic field are rendered by their own overlays
+        // rather than the line chart — skip the (hidden) chart rebuild for both.
+        //
+        // ⚠️ The magnetometer's raw x/y/z ARE a valid trace, but at rest they are
+        // three near-constant lines that say nothing: the field only changes when
+        // the sensor turns. What is worth seeing is derived from the vector --
+        // heading, strength, dip -- so the tab shows those instead.
+        if (!chart || selectedGroup === "quat" || selectedGroup === "mag") return;
         const frames = samples;
         const xs = timeAxis(frames);
         const series = seriesForGroup(selectedGroup);
@@ -297,6 +311,16 @@
                     <div class="orientation-overlay">
                         <OrientationView
                             quat={latest.data.quat}
+                            {formatNumber}
+                        />
+                    </div>
+                {/if}
+                {#if selectedGroup === "mag" && latest}
+                    <div class="orientation-overlay">
+                        <MagnetometerView
+                            mag={latest.data.mag}
+                            accel={latest.data.accel}
+                            accuracies={latest.accuracies}
                             {formatNumber}
                         />
                     </div>

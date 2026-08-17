@@ -16,6 +16,11 @@ export default defineConfig(({ mode }) => {
         $lib: path.resolve("./src/lib"),
       },
     },
+    test: {
+      // `e2e/` holds Playwright specs, which vitest cannot run — they need a
+      // browser and the dev stack. `npm run test:e2e` is their entry point.
+      include: ["src/**/*.{test,spec}.{js,ts}"],
+    },
     server: {
       proxy: {
         "/api": {

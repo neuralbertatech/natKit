@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit VP — Experiment Authoring UX Rework</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left: 4px solid var(--risk); background: var(--risk-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit · visual programming · plan · August 7 2026</div>
+  <h1>Experiment Authoring UX Rework</h1>
+  <p class="meta lede">
+    Authoring an experiment currently means fighting a <strong>320px floating strip</strong>
+    full of unlabeled inputs. This plan reworks the experience in layers: fix the fields
+    (done), give authoring a real surface, add a <strong>quick setup</strong> that turns a pile
+    of images into a runnable protocol, and eventually make the protocol <strong>spatial</strong>
+    — steps as nodes, repeat groups as black boxes you zoom into — without undoing the
+    experiment-as-entity model that the history/snapshot work deliberately built.
+  </p>
+  <div class="status">Status: Phases 1–2 SHIPPED · open questions resolved · Phases 3–5 PROPOSED</div>
+</header>
+
+<main>
+
+<section class="callout">
+  <h2>The layered idea</h2>
+<pre>Altitude 0  Quick setup      "here are 5 images, 3 reps, 2s holds"  -> generates steps
+Altitude 1  Step list        ordered, labeled cards; tweak text/timing/media
+Altitude 2  Step detail      media, tutorial flags, wait barriers, seeds
+Altitude 3  (later) Canvas   steps as nodes, repeat groups as zoomable containers</pre>
+  <p>
+    Every altitude reads and writes the <strong>same <code>StepProtocol</code></strong>
+    (<code>experimentSteps.ts</code>). Quick setup is a <em>generator with a saved recipe</em>,
+    the step list is an editor, the canvas is a projection. One runtime shape means the runner,
+    markers, recording, instances and training never care which altitude authored the protocol.
+    This is the same trick <code>stepsFromLegacyProtocol()</code> already plays.
+  </p>
+</section>
+
+<section>
+  <h2>What is wrong today (observed, not guessed)</h2>
+  <ul>
+    <li><strong>The surface is 320px wide.</strong> <code>.graph-experiment-panel</code> is a floating
+      strip on the canvas; each step row wraps 6+ controls onto 2–3 cramped lines. The ADL protocol
+      is 30 rows of this.</li>
+    <li><strong>Fields were anonymous.</strong> Placeholder-only inputs: a filled cue row showed
+      <code>count_1 | count_1</code> twice with nothing saying which is display text and which is the
+      trained class label. <em>(Fixed in Phase 1.)</em></li>
+    <li><strong>One altitude.</strong> Identity, protocol minutiae, built-ins, record controls and
+      history all stack in one scroll column. Record had to become a sticky footer just to stay findable.</li>
+    <li><strong>Structure is invisible.</strong> A shuffled ×3 repeat group is an indented list;
+      the compiled timeline exists only as the text "24 steps · ~96s".</li>
+    <li><strong>Cold start is the full editor.</strong> A new user must understand steps, cues,
+      classes, rest classes and tutorial flags before they can record anything.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Non-negotiables (decisions already locked elsewhere)</h2>
+  <ul>
+    <li><strong>The experiment stays an entity, not a node.</strong> The history-snapshots plan
+      deliberately moved it off the canvas; instances/forks/binding all hang off that. This rework
+      changes <em>where the protocol is authored</em>, never the ownership model.</li>
+    <li><strong>The <code>markers</code> node stays wired data.</strong> Combine's marker lane, the
+      viewer overlay and the export label join depend on it. It becomes the <em>portal</em> to the
+      experiment (Phase 4), not a config surface.</li>
+    <li><strong>Everything compiles to <code>EmgCueEvent[]</code></strong> — runner, markers,
+      <code>resolveScheduleWaits()</code>, instances and training stay untouched by all phases.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Phase 1 — Fix the fields <span class="phase-tag have">SHIPPED 2026-08-07</span></h2>
+  <p>All inside the existing panel; verified with svelte-check (0 errors), vitest (79/79, two new
+     tests), and live headless-browser screenshots against the dev stack (scratch data, cleaned up).</p>
+  <ul>
+    <li><strong>Every step field has a label</strong>: Step type / Shown to participant /
+      Class label (trained on) / Hold (s) / Duration (s) / Continue-button text / Times /
+      Shuffle each pass / Tutorial (not trained on).</li>
+    <li><strong>Instructions can hold for input.</strong> <code>InstructionStep</code> gained
+      <code>wait_for_input</code> + <code>continue_label</code>; the toggle swaps the Duration field
+      for the button text. Compiles to the same zero-length barrier a <code>wait</code> step emits, so
+      the runner, the clock-freeze and marker resolution needed zero changes. The standalone
+      <code>wait</code> kind survives for existing protocols.</li>
+    <li><strong>Kind is visible at a glance</strong>: a colour-coded left border per step kind
+      (instruction blue, cue green, rest slate, wait amber, repeat purple).</li>
+    <li><strong>Duplicate step</strong> (deep-copies repeat groups with fresh ids) — build one
+      cue/rest pair, stamp it.</li>
+    <li><strong>Changing a step's kind no longer wipes it</strong>: text, duration and media carry
+      over where the new kind supports them (<code>retypeStep</code>, swapped wholesale via
+      <code>replaceStep</code> so old-kind fields don't linger).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Phase 2 — A real authoring surface: the Experiment Designer <span class="phase-tag have">SHIPPED 2026-08-07</span></h2>
+  <p>
+    Move protocol authoring out of the strip into a <strong>wide overlay workspace</strong>
+    (same presentation family as the composite-internals modal): open from the experiment pill
+    and from an "Edit protocol" button. The floating panel shrinks to a <em>status card</em> —
+    bound experiment, classes, duration, Record/Stop, live cue, history — which is what an
+    operator actually needs mid-session.
+  </p>
+  <ul>
+    <li><strong>Layout</strong>: compact header (name / participant / notes), the step list as
+      full-width cards in the middle, and a <strong>compiled timeline strip</strong> pinned at the
+      bottom — colored segments per class/phase rendered straight from
+      <code>compileStepProtocol()</code>, with waits as barrier ticks and tutorial spans hatched.
+      Edit a duration, watch the timeline change. (Same idiom as <code>TimelineStrip</code>.)</li>
+    <li><strong>Repeat groups collapse</strong> to a one-line summary ("×3 · shuffled · 4 steps · ~48s").</li>
+    <li><strong>Drag to reorder</strong> steps and drag in/out of repeat groups; keep the arrows as
+      the accessible fallback.</li>
+    <li><strong>Section separation</strong>: protocol authoring no longer shares a scroll column with
+      built-ins and history (built-ins become templates in Phase 3's create flow).</li>
+  </ul>
+  <p class="meta">Size: frontend-only, one new component + panel diet. No model or backend changes.</p>
+</section>
+
+<section>
+  <h2>Phase 2.5 — Seeded randomization + step-type cleanup <span class="phase-tag have">SHIPPED 2026-08-07</span></h2>
+  <p>
+    Everything random in a compiled schedule derives from a <strong>stored seed</strong>, so any
+    schedule can be recreated from the protocol JSON alone — and rerolling a seed is how you get a
+    new variation.
+  </p>
+  <ul>
+    <li><strong>Timing jitter</strong>: timed steps (instruction/cue/rest) gained <code>jitter_s</code>
+      — the duration is randomized ± that many seconds, drawn from a protocol-level
+      <code>seed</code>'s stream at compile time. Fixed rest lengths let participants anticipate the
+      next cue; jitter breaks that, reproducibly. Barrier steps (waits) have no duration to jitter.</li>
+    <li><strong>Seeds are visible</strong>: a shuffled repeat group shows its shuffle seed with a
+      dice-reroll button; the designer header shows the protocol's timing seed with the same. The
+      legacy fixed form also exposes its shuffle seed now.</li>
+    <li><strong>Step types consolidated</strong>: the standalone <code>wait</code> kind left the
+      palette — an instruction with "Wait for input" is the same barrier. Old protocols still load,
+      run and display; retyping a wait to an instruction carries the toggle + button text so the
+      conversion is behaviour-preserving.</li>
+    <li><strong>Palette explains itself</strong>: add-step buttons carry the kind's colour dot and a
+      tooltip saying what the kind is <em>for</em> ("the recorded class — what a classifier learns
+      from"), matching the card accent colours.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Phase 3 — Quick setup: recipe in, protocol out</h2>
+  <p>
+    Flatten the learning curve: a new experiment starts from a <strong>template picker</strong>
+    (Image cues / Gesture list / ADL tasks / Blank) and a <strong>recipe card</strong> with
+    only high-level knobs. The flagship flow is <em>"drop 5 images, press Record"</em>.
+  </p>
+  <ul>
+    <li><strong>Image-cues recipe</strong>: a drop zone; each uploaded image becomes a class
+      (label prefilled from the filename, editable), reusing the existing <code>/api/media</code>
+      upload. Knobs: repetitions, hold s, rest s, lead-in s, shuffle, "practice pass first"
+      (a tutorial repeat group), "wait for ready" (an instruction with <code>wait_for_input</code>).</li>
+    <li><strong>Generator, not a new shape</strong>: the recipe compiles to a plain
+      <code>StepProtocol</code> and is stored alongside it (<code>protocol.quick_setup</code>,
+      opaque to the backend like the rest of the protocol). Reopening a recipe-backed experiment
+      shows the recipe card; "Customize steps…" opens the Phase 2 designer and <strong>detaches the
+      recipe with a confirm</strong> — regenerating over hand edits is the lie we refuse to tell.</li>
+    <li><strong>Built-in protocols move here</strong> as templates in the create flow instead of a
+      section pasted under the step editor.</li>
+  </ul>
+  <p class="meta">Size: frontend-heavy; backend only if image labels want server-side filename metadata (they don't — <code>original_name</code> already comes back from <code>/api/media</code>).</p>
+</section>
+
+<section>
+  <h2>Phase 4 — Spatial protocol canvas: zoom into the black boxes</h2>
+  <p>
+    The designer's step list becomes (optionally, a view toggle) a <strong>canvas of step nodes in a
+    sequence lane</strong>. A repeat group renders as a <em>container node</em> — a black box showing
+    its summary — and <strong>double-click zooms into it</strong>, opening its interior in place with a
+    breadcrumb (<code>Experiment ▸ Main block</code>), exactly the mental model of zooming into
+    composites on the main canvas.
+  </p>
+  <ul>
+    <li><strong>Reuse the idioms, not the semantics</strong>: pan/zoom, node cards and the
+      internals-overlay pattern come from <code>StreamGraphEditor</code>, but a protocol is
+      <em>control flow</em> (an ordered sequence), not dataflow. Auto-layout in a lane, no free-form
+      edge wiring — so nothing invalid can be drawn and there is no second graph model to validate.</li>
+    <li><strong>The markers node is the portal</strong>: double-clicking it on the main canvas zooms
+      into the bound experiment's protocol canvas. Spatially, the experiment lives "inside" the node
+      that carries its markers — the data graph and the protocol graph become two altitudes of one
+      space.</li>
+    <li>Selecting a step node opens its labeled Phase 1 fields in the inspector rail — detail on
+      demand instead of every field on every row.</li>
+  </ul>
+  <p class="meta">Size: the big one. Gate it on Phases 2–3 proving the model; the step list stays as the accessible/simple view.</p>
+</section>
+
+<section>
+  <h2>Phase 5 (later) — Wiring experiments together</h2>
+  <p>
+    Once protocols are spatial, composition is natural: <strong>session blocks</strong> — whole
+    protocols or repeat groups promoted to reusable blocks — chained on the same canvas
+    (Tutorial → Ready gate → Block A → Break → Block B, counterbalanced variants, etc.), compiling
+    by concatenation into one timeline. This is the "side menu becomes a little visual-programming
+    sub-menu" idea, landed on top of the entity model instead of against it. Design sketch only;
+    do not build until a real protocol needs it.
+  </p>
+</section>
+
+<section class="warn">
+  <h2>Open questions — RESOLVED (Zach, 2026-08-07)</h2>
+  <ul>
+    <li><span class="q">Designer presentation:</span> <strong>overlay</strong> in the VP page
+      (shipped as such in Phase 2).</li>
+    <li><span class="q">Recipe detach:</span> <strong>hard detach</strong> with a confirm on first
+      manual step edit — regeneration must never silently destroy hand edits.</li>
+    <li><span class="q">Phase 4 scope:</span> the canvas is a <strong>view toggle</strong>; the step
+      list stays canonical for accessibility.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  natKit · plans/experiment-authoring-ux-rework-plan.html · Phase 1 shipped 2026-08-07 (uncommitted, branch zach/tab-persistence) ·
+  companions: experiment-history-snapshots-plan.html, experiments-and-time-plan.html
+</footer>
+</body>
+</html>
