@@ -29,6 +29,52 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ⚠️⚠️ THE RIG ALTERNATES WHICH LEAF IS SICK, ON ITS OWN, IN ~10-30 MINUTES
+
+**This invalidates single-window A/B measurement on this bench, including several
+results reported earlier today.** Which node is sick changed FOUR times in one
+session, twice with nothing touched in between. A condition applied for five minutes
+is indistinguishable from the rig's own flipping — which is why today produced four
+confident and contradictory explanations for the same symptom (near-far, a bad
+board, contention between leaves, airtime).
+
+➡️ **Anything comparing two radio conditions needs paired, repeated windows over
+hours.** `~/natkit-verification/350-bench/beacons.py` measures beacon loss as a RATE
+over a window (the counters in NatKitNodeStatusV1 are cumulative since the PRIMARY
+booted, so reading them directly hides everything).
+
+### What the airtime experiment did settle
+
+| condition | …1244 | …7228 |
+|---|---|---|
+| both leaves | 1.1% beacon loss, 15 dupes | 19.4%, 570 dupes |
+| **…7228 alone** | — | **36.8%, 537 dupes** |
+| **…1244 alone** | **0.0%, 0 dupes, 0 send failures** | — |
+
+**Removing the other leaf made the sick node WORSE.** ✅ Contention between the two
+leaves is RULED OUT, and #382's "one node captures the hub" framing can be dropped.
+❌ The *self*-blocking half (a leaf's own transmissions blocking its own receive) is
+UNTESTED — parking a leaf does not stop its own transmitting, and the release resets
+the board.
+
+### ⚠️ Bootloader-parking a leaf is NOT a free isolation technique
+
+Releasing it resets it, and a reset leaf needs ~10 min to recover. After several
+park/release rounds **BOTH leaves stopped delivering data entirely** while the
+primary kept publishing per-node status for them. A clean reset of all three boards
+recovered it. Budget for that before using it as an experimental control.
+
+### Two more counters that lie
+
+- **`leaf_scan_channel` is non-zero on a leaf delivering 10.0 frames/s with 0 gaps**,
+  despite being documented "0 when locked; non-zero while hopping". Do not use it to
+  judge whether a leaf is hunting.
+- **The actual transmit power varies per boot and per board from ONE pinned value.**
+  Both leaves are built with `CONFIG_NATKIT_TX_POWER_QUARTER_DBM=34` (8.5 dBm) and
+  have reported **6.5, 7.0, 8.25 and 8.5 dBm**. `esp_wifi_set_max_tx_power` snaps to
+  supported levels and does not snap consistently. Only visible because the leaf's
+  own view is now published (below).
+
 ## ⚠️ THE BENCH RADIO CONFIG WAS NEVER IN GIT, AND I LOST IT
 
 `sdkconfig` is generated and **gitignored**. "Both leaves at 8.5 dBm, sweep OFF"
