@@ -4,6 +4,69 @@
 
 **Last updated:** 2026-08-17
 
+## ✅ MERGED TO TRUNK, and the app partition is 3 MB (TEC-NATKIT-49)
+
+Everything below landed on **trunk**: superproject `b0294a6`, natKit-IMU `3d29ea2`,
+libnatkit `e9f52ad`. ⚠️ **NOT PUSHED** — local merges only, ask before pushing.
+
+⚠️ **`libnatkit-core` IS STILL UNMERGED and its trunk is stale since 2024-04-19.**
+Its trunk carries a 12-commit "c-build" PR from 2024-04-29 that moved
+`src/libnatkit-core.h` → `include/` and updated eleven `.c` files; our line deleted
+every `.c` in favour of `.cpp` (33 of them). A merge produces **10 conflicts**, all
+of the shape "deleted by us, modified by them". So `libnatkit/lib/libnatkit-core`
+points at `4481d51` on a **branch**, not on its trunk.
+➡️ **Needs a decision, not a resolution**: taking ours discards a C build that the
+overhaul roadmap says we eventually want. Recommend tagging the old tip
+(`archive/c-build-2024`) first so it stays findable, then merging ours.
+
+**TEC-NATKIT-49 done** (natKit-IMU `bf8276b`, branch
+`zach/394-widen-the-app-partition`): `firmware-idf/partitions.csv` gives `factory`
+3 MB instead of 1. Primary **93.2% → 31.0%**, gateway 86.2% → 28.7%, leaf
+67.6% → 22.6%.
+⚠️ **nvs and phy_init are byte-identical to the stock table on purpose** — the leaf
+persists its report mask there and the primary its node registry. Verified on
+hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
+⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
+silently keeps the old table.
+
+## ⚠️ THE TWO LEAVES SWAP WHICH ONE WORKS, AND IT IS NOT A BAD BOARD (#382)
+
+Reopened TEC-NATKIT-37 with the evidence its own closing note asked for. One
+afternoon, both leaves pinned at 8.5 dBm, sweep OFF, nothing physically moved:
+
+| | …1244 | …7228 |
+|---|---|---|
+| morning | **0 gaps, 98.0 fresh/s** | 63% beacons missed, 7.9% loss |
+| after the primary was reflashed | 430 gaps, 75 fresh/s | **0 gaps, 97.1 fresh/s** |
+| ~15 min later | **0 gaps, 98.2 fresh/s** | **0 gaps, 97.3 fresh/s** |
+
+**Each board was the good one and the bad one on the same day**, so it is neither a
+bad board nor configured power. ⚠️ A *leaf* reset did NOT fix a sick leaf (40 minutes
+unchanged); reflashing the **primary** did, and made the other one sick at the same
+instant. It lives at the hub or in the pairing. **It also self-heals in ~15 min**,
+so any measurement taken inside that window is measuring the settle.
+
+⚠️ **A second loss path, uncounted until now**: the sick node had
+`publish_no_shift` **164** — frames the primary RECEIVED and then refused because
+`rewriteFrameTimestamps` would not accept its clock fit, with its timestamps 392 ms
+off the other leaf's against a normal 0.1–0.2 ms. Radio loss and clock loss compound.
+Inferred order (counters are consistent, they do not prove it): RF degrades → beacons
+missed → fit starves → frames refused.
+
+⚠️ **`rssi_last` DOES NOT TRACK DELIVERY.** …1244 read −74 dBm while recovering to a
+clean 98.2 fresh samples/s, and −52 earlier while sick. Read `beacons_missed`,
+`publish_no_shift` and the actual rate; the RSSI field misleads in both directions.
+
+**Next on #382, in order — measure before designing:** (1) is it capture or is it the
+fit (watch `beacons_missed` against `publish_no_shift` across a swap); (2) what at
+the primary's boot decides the winner (peer add order, channel, registry); (3) only
+then, what the hub sends back.
+
+## Bench as left
+
+Both leaves and the primary on the **3 MB partition image**, both at **10.0
+frames/s, 0 gaps, 97–98 fresh samples/s**, bridge restarted. `embeded` on no board.
+
 ## ✅ THE FORK IS ADOPTED. #350 / TEC-NATKIT-27 decided and greenlit, 2026-08-17
 
 **Zach greenlit adoption on 2026-08-17.** `firmware-idf/` is the node firmware;
