@@ -2,7 +2,112 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-14
+**Last updated:** 2026-08-17
+
+## ✅ THE TWO FIRMWARES ARE BENCHED. #350 / TEC-NATKIT-27, recommendation: ADOPT
+
+Branch `zach/350-bench-the-fork` (natKit-IMU `0e86a05`, superproject follow-up).
+Both firmwares measured on the SAME two boards, the same broker, the same day,
+alternating within three hours. Evidence and scripts in
+`~/natkit-verification/350-bench/` (probe.py, status.py, timeline.py, failures.sh,
+plus a JSON per run). Four comments on #350 carry the full tables.
+
+### The result, two nodes, 300 s each
+
+| per node | `embeded` (quiet, + the fix below) | **fork** |
+|---|---|---|
+| frame loss to Kafka | 0% | **0%** |
+| **fresh samples/s** | 56 and 80 | **98 and 99** |
+| wire bandwidth | 13.1 KB/s | **6.4 KB/s** |
+| inter-arrival sd | 16–19 ms | **1.3–1.5 ms** |
+| node-to-node clock | 2.7–5.5 ms | **0.1–0.2 ms** |
+| magnetometer | no (frame v1) | **yes (v2)** |
+| leaf flash / static RAM | 1.25 MB / 75 KB | **709 KB / 41 KB** |
+
+### ⚠️ A SAMPLE IS NOT A MEASUREMENT — this is the metric the whole thing turns on
+
+`embeded` publishes **235–248 samples/s** against the fork's 100, and is not ahead:
+it polls a cached reading every ~3.7 ms while the cache refreshes every ~10 ms, so
+**58–78% of its samples are byte-identical repeats**. Counting samples that DIFFER
+from their predecessor is the only figure that means the same thing for both.
+`fresh_pct`: fork **97–98%**, `embeded` **22–41%**.
+
+### ⚠️ `embeded` COULD NEVER RUN TWO NODES. One hard-coded string.
+
+All three `connect()` calls passed the literal client id `"natKit-IMU"`. MQTT
+requires a broker to evict an existing session when a second client presents the
+same id, so two nodes took turns kicking each other off — **699 evictions per 60 s,
+41% of frames lost**, `seqNo` advancing over the losses with nothing counting them.
+Invisible because the bench had only ever run one at a time. Fixed in `0e86a05`
+(`natkitMqttClientId()` → `natKit-IMU-<mac>`); re-measured **0 evictions, 0% loss**.
+
+⚠️ This edits `embeded/` against the README's own rule, deliberately — as it stood, a
+rollback would have handed a two-node rig 41% loss.
+
+### ⚠️ AND IT CORRECTS TWO THINGS THIS FILE USED TO SAY
+
+1. **"`embeded` samples at 50 Hz while declaring 100" (#381) was never measured** —
+   it came from reading `BoardConfig.hpp:31 DELAY_BETWEEN_SAMPLES 20000`. That
+   constant does not pace this firmware. It polls at `IMU_DELAY_BETWEEN_POLL_US`
+   (1 ms nominal, ~3.7 ms real) and its sensor cache refreshes at ~10 ms. The old
+   claim lands near the right number for the wrong reason, and the fix it implies
+   would have done nothing.
+2. **`embeded` at ONE node is not behind the fork** — 102.8 fresh samples/s against
+   97.6, 0% loss. My own first comment on #350 said 54 vs 98, because I had compared
+   the fork's quiet build against `embeded`'s `[env:release]`, which prints every
+   frame to the console. **The env names are backwards: `release` is the chatty one,
+   `debug` is quiet.** The console cost it half its service rate.
+
+### ⚠️ THE COSTS OF THE FORK, which the decision has to carry
+
+- **One primary reset = 31 s of outage on EVERY node at once.** `embeded` has no such
+  component; resetting one of its nodes costs 8 s from that node alone.
+- **A fork leaf takes MINUTES to return to full rate after a reset** — first frame at
+  18.7 s, but 174 sequence gaps still in a 420 s window seven minutes later, clean at
+  ~10 min. `embeded` is back at full rate in ~8 s. ⚠️ **"Publishing again" is not
+  "recovered", and a rate measured in between reads as a fault that is not there** —
+  it cost two single-node runs today before it was recognised.
+- Three defects filed against the fork from this bench: **#392 / TEC-NATKIT-47**
+  (leaf clock fit latches on a bad window — `residual_rms_ns` saturates at
+  UINT32_MAX and that value is what the 3σ outlier gate uses, so the gate becomes
+  ~13 s wide and can never clean the window that broke it; suspected cause of the
+  slow recovery above), **TEC-NATKIT-48** (the primary's ABSOLUTE clock wanders
+  ~38 ms against the site's NTP and carries every node with it — `embeded` was
+  *better* on this axis), **TEC-NATKIT-49** (all three fork roles are on the stock
+  1 MB app partition and the primary is at **93.2%** of it, with 3 MB free beside).
+
+### ⚠️ #375 / TEC-NATKIT-31 HAS A REPRODUCTION NOW: restart the broker
+
+`podman stop mosquitto; podman start mosquitto` and the bridge never forwards to
+Kafka again. Container stays `Up`, log stays clean, offsets freeze. Devices reconnect
+within a second, so MQTT looks perfect. It cost one 300 s run that read
+`delivered 0.0%` and looked like total firmware failure. `podman restart
+natkit-v0-bridge` fixes it instantly. **Check offsets are advancing before believing
+any delivery number.**
+
+### ⚠️ FOUR INSTRUMENT FAULTS IN ONE SESSION, all mine
+
+1. **The failure-test recorder ran INSIDE the container the test stops.** It logged
+   `record_end` half a second in and reported every device as NEVER RETURNED — which
+   reads exactly like a firmware that cannot recover. Subscribe from the HOST
+   (mosquitto publishes 1883) and respawn the client; `mosquitto_sub` exits on broker
+   loss rather than retrying.
+2. **Loss from a QoS 0 subscriber's sequence gaps is not loss.** It cannot separate
+   "never sent" from "dropped for me". Kafka offsets must BRACKET the same window.
+3. **`monitor.py` DOES reset a CH340 leaf on open** despite its docstring — a boot
+   banner appeared mid-session. It is only reliable on boards where opening the port
+   does not toggle DTR/RTS.
+4. **A struct format string that totals the right size can still be wrong.** A
+   spurious `4x` in the `UplinkPrimaryStatus` layout came to 144 bytes by coincidence
+   and shifted every field after `bytes_sent`; the size check passed.
+
+### Bench state as left
+
+Both leaves back on `firmware-idf` **leaf**, primary on ttyACM0 untouched, bridge
+restarted, `embeded` NOT on any board. Leaf …7228 was reset most recently and is
+still inside its ~10 min settle. The two-firmware board/port/serial mapping is now
+in `natKit-IMU/README.md` — **the two CH340 leaves DO have distinct stable USB
+serials**, so they no longer have to be told apart by flashing one.
 
 ## ✅ EVERY SAMPLE NOW CARRIES ALL FOUR SENSORS, FRESH, AT 100 Hz
 
