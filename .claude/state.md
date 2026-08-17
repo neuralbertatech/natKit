@@ -62,19 +62,39 @@ rollback would have handed a two-node rig 41% loss.
 
 - **One primary reset = 31 s of outage on EVERY node at once.** `embeded` has no such
   component; resetting one of its nodes costs 8 s from that node alone.
-- **A fork leaf takes MINUTES to return to full rate after a reset** — first frame at
-  18.7 s, but 174 sequence gaps still in a 420 s window seven minutes later, clean at
-  ~10 min. `embeded` is back at full rate in ~8 s. ⚠️ **"Publishing again" is not
-  "recovered", and a rate measured in between reads as a fault that is not there** —
-  it cost two single-node runs today before it was recognised.
+- **A fork leaf publishes again 18.7 s after a reset but may not be at full rate for
+  tens of minutes, and sometimes does not get there at all.** …7228 was still at 139
+  gaps and 6.7% loss **40 minutes** after its reset. `embeded` is back at full rate in
+  ~8 s. ⚠️ **"Publishing again" is not "recovered", and a rate measured in between
+  reads as a fault that is not there** — it cost two single-node runs today.
+  ⚠️ **The cause is the RADIO LINK, not the clock** — see the correction below.
 - Three defects filed against the fork from this bench: **#392 / TEC-NATKIT-47**
-  (leaf clock fit latches on a bad window — `residual_rms_ns` saturates at
-  UINT32_MAX and that value is what the 3σ outlier gate uses, so the gate becomes
-  ~13 s wide and can never clean the window that broke it; suspected cause of the
-  slow recovery above), **TEC-NATKIT-48** (the primary's ABSOLUTE clock wanders
+  (`residual_rms_ns` saturates at UINT32_MAX and that value is what the 3σ outlier
+  gate uses, so the gate is ~13 s wide and `outliers_rejected` is 0 forever — the
+  guard is provably dead, though ⚠️ **NOT the cause of anything measured**, see
+  below), **TEC-NATKIT-48** (the primary's ABSOLUTE clock wanders
   ~38 ms against the site's NTP and carries every node with it — `embeded` was
   *better* on this axis), **TEC-NATKIT-49** (all three fork roles are on the stock
   1 MB app partition and the primary is at **93.2%** of it, with 3 MB free beside).
+
+### ⚠️ AND I BUILT A CAUSAL STORY ON ONE NODE'S COUNTER, AGAIN
+
+I filed #392 saying the saturated `residual_rms_ns` was the suspected cause of leaf
+…1244's poor delivery. Checked against both nodes four hours later:
+
+| | leaf …1244 | leaf …7228 |
+|---|---|---|
+| `residual_rms_us` | **saturated** | **saturated** |
+| `outliers_rejected` | 0 | 0 |
+| delivery | **0 gaps, 98.2 fresh/s** | 139 gaps, 6.7% loss |
+| **beacons missed** | **22 of 870** | **616 of 913** |
+| **leaf send failures** | **4** | **1800** |
+
+**A node can be fully saturated and delivering perfectly.** The saturation is real
+and the outlier gate really is dead, but what separates a good node from a bad one
+here is the RADIO LINK — beacons missed and send failures — which is the near-far
+family (#382). ⚠️ **`beacons_missed` and `leaf_send_failures` are the two counters to
+read when a node stops delivering**; the clock-fit figures say nothing about it.
 
 ### ⚠️ #375 / TEC-NATKIT-31 HAS A REPRODUCTION NOW: restart the broker
 
@@ -104,10 +124,20 @@ any delivery number.**
 ### Bench state as left
 
 Both leaves back on `firmware-idf` **leaf**, primary on ttyACM0 untouched, bridge
-restarted, `embeded` NOT on any board. Leaf …7228 was reset most recently and is
-still inside its ~10 min settle. The two-firmware board/port/serial mapping is now
-in `natKit-IMU/README.md` — **the two CH340 leaves DO have distinct stable USB
+restarted, `embeded` NOT on any board. The board/port/serial mapping is now in
+`natKit-IMU/README.md` — **the two CH340 leaves DO have distinct stable USB
 serials**, so they no longer have to be told apart by flashing one.
+
+➡️ **LEAF …7228 IS LEFT WITH A DEGRADED RADIO LINK AND A RESET DID NOT FIX IT.**
+67% of beacons missed, 1800 send failures, 7.9% loss and 165 gaps in a 200 s window,
+unchanged across 40 minutes and one reset. Leaf …1244 on the same bench is clean at
+**98.0 fresh samples/s, 0 gaps**. So it is that board's link, not settling and not
+anything the bench changed — both leaves are still pinned at 8.5 dBm with the sweep
+OFF, and this is the near-far/link family (#382, #391) again.
+
+⚠️ **Do not read a rate off …7228 without checking its `beacons_missed` first**, and
+do not take it as a fork regression: it was delivering 98.6 fresh samples/s with 0
+gaps earlier the same afternoon.
 
 ## ✅ EVERY SAMPLE NOW CARRIES ALL FOUR SENSORS, FRESH, AT 100 Hz
 
