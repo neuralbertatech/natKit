@@ -2,7 +2,59 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-18
+
+## ⏳ THE CLOCK FIT NO LONGER INVENTS A RESIDUAL (#392 / TEC-NATKIT-47) — BUILT, NOT FLASHED
+
+**natKit-IMU `a9e23a9`, branch `zach/392-clock-fit-residual`.** Not merged, not on
+hardware. All three roles build (esp32-leaf, esp32s3-primary, esp32-gateway);
+esp32c3 still fails in `ethernet_net.cpp` on the W5500 driver, which is #379 and
+predates this.
+
+⚠️ **#392's description is wrong by 1000×**: `residual_rms_ns` overflows past **4.29
+SECONDS**, not 4.29 ms — it is uint32 *nanoseconds*. So a saturated residual does not
+mean "a few ms loose", it means **the window's samples sit seconds off their own
+line** (or the rms is non-finite). Corrected on the ticket.
+
+What changed: deliberate saturation via `residualToNs()`; the outlier limit clamped at
+**both** ends so no field maximum can widen the gate to 12.9 s again; the gate keyed on
+*having* a fit rather than on it being *good*; **quality graded on the fit instead of
+the sample count** (it was `sCount >= kMinFitSamples ? kLocked : kCoarse` — a count
+wearing the word "quality"); and a window past 50 ms rms discarded, **but only after
+three in a row**.
+
+⚠️ **That three-in-a-row caveat is load-bearing. Three of the four leaves are saturated
+right now**, so an unconditional reset — which is what the ticket asks for — would put
+them into a rebuild every second, ~2 s of kUnsynced each, which the primary turns into
+dropped frames.
+
+➡️ **Flash this WITH the channel 3 → 10 change, not before it.** A reflash resets the
+boards and costs ~10 min of recovery each; #395's next step needs one anyway.
+
+### The soak's instruments now measure the clock (`~/natkit-verification/350-bench/`)
+
+The 2026-08-18 soak could say **nothing** about time sync: 13 windows recorded one
+clock-adjacent field (`publish_no_shift`, 0 throughout) and the fit was sampled once,
+before the soak began. Now every window carries skew, residual, peak, mac spread,
+samples, quality, outliers, epoch changes, `publish_no_sync` — **and the primary's
+coherence probe**, the only independent measurement of the clock on this rig.
+
+- `status.py` decodes a saturated residual as `null` + a `residual_saturated` flag
+  instead of **4294967.3 µs**, a number it has already reported into a ticket.
+- ⚠️ `beacons.py` had **`NODE_SIZE = 168` hardcoded and silently skipped any other
+  size** — a struct that grew a field would have produced empty windows that read as a
+  dead rig. Derived from the layout now; skips are printed.
+- `soak.sh` prints a clock line per node per window and a coherence line per window.
+  A saturated residual prints as the word `sat`, so it can never be averaged.
+
+**Live smoke test, 70 s, old firmware still flashed:** all four leaves saturated, all
+four reporting quality "good", `outliers_rejected` 0 on every one — the whole of #392
+in a single window. Coherence: typical 66 µs, bound 186 µs, worst 652 µs.
+Beacon loss 0.0% on all four, so #395's interference is still switched off.
+
+⚠️ **These scripts are load-bearing measurement tools and they are NOT in git** —
+`~/natkit-verification` is not a repository. Same shape as the bench radio config that
+was lost (below). Worth a decision.
 
 ## ✅ MERGED TO TRUNK, and the app partition is 3 MB (TEC-NATKIT-49)
 
