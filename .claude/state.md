@@ -4,10 +4,58 @@
 
 **Last updated:** 2026-08-18
 
-## ⏳ THE CLOCK FIT NO LONGER INVENTS A RESIDUAL (#392 / TEC-NATKIT-47) — BUILT, NOT FLASHED
+## ✅ THE CLOCK FIT NO LONGER INVENTS A RESIDUAL (#392 / TEC-NATKIT-47) — VERIFIED ON HARDWARE
 
-**natKit-IMU `a9e23a9`, branch `zach/392-clock-fit-residual`.** Not merged, not on
-hardware. All three roles build (esp32-leaf, esp32s3-primary, esp32-gateway);
+**natKit-IMU `a6aabb4` + `1cfbda3`, branch `zach/392-clock-fit-residual`.** Not merged.
+**Flashed to all four leaves and the primary 2026-08-18 14:14 and verified.**
+
+⚠️⚠️ **THE ROOT CAUSE WAS NOT WHAT #392 SAID.** Nothing latched onto a bad sample and
+the fits were good the whole time. `refit()` computes the signed difference
+`local_us - x0` in **three** places and the `int64_t` cast was missing from exactly one
+— the residual loop. **It is the same ring-buffer underflow the big comment directly
+above it exists to warn about**, fixed in the sums and missed in the residual. Once the
+ring wraps, 31 of 32 entries underflow to ~1.8e19 and `rms * 1000` overflows uint32 onto
+0xFFFFFFFF. **So the residual is honest for exactly one refit in every 32.**
+
+✅ **Predicted, then confirmed before flashing**: in the channel-3 baseline, node
+…671244 at a full `samples_used: 32` reported a real **74.6 µs** while the other three
+saturated — the 1-in-32 refit caught in the act.
+
+✅ **After flashing, every node in every window reports a real residual**: 83.1 / 79.2 /
+81.5 / 90.4 µs rms, peaks 169–208 µs. `implausible_residuals` 0 everywhere (the
+window-discard guard has never fired). Quality now reads `coarse` while rebuilding and
+`good` when locked. `outliers_rejected` still 0 — but legitimately: 3σ ≈ 240 µs sits
+under the 500 µs floor, where before the limit was **12.9 s**.
+
+⚠️ **Coherence did NOT improve — 48 µs before, 53 µs after.** Expected: the fit was
+never broken, only its self-report. The clock was never this rig's problem.
+
+✅ **Port↔device mapping closed** (open since 2026-08-18): `5185027171` = …670644,
+`5185027831` = …553360, by resetting the first and watching whose counters restarted.
+
+## ⚠️⚠️ CHANNEL 10 IS WORSE, AND THE SITE AP IS ON CHANNEL 11 (#395)
+
+```
+                BEFORE ch3    AFTER-1 ch10    AFTER-2 ch10 (settled)
+  553360           0.4%          1.4%             3.6%
+  671244           0.4%          1.8%             4.3%
+  407228           0.4%          2.9%             5.4%
+  670644           0.0%         82.9%           (INVALID: counter reset in window)
+```
+
+Every node worse, the three healthy ones monotonically so. Delivery held on those three
+(0 gaps, ~2800 frames/window). ⚠️ **…670644 cannot hold channel 10** — 0 frames in
+300 s, 5108 send failures, `leaf_scan_channel` 9 then 12 while the others sit on 10.
+**Do not re-convict that board**; all four moved the same way, it moved furthest.
+
+⚠️ **Channels 10 and 11 overlap ~75%, and the site AP is on 11.** "Move off channel 3"
+moved the link INTO the AP. Of the non-overlapping channels, **1 is ruled out** (25 MHz
+crystal harmonics) and **11 is the AP**, leaving **6**, with 3 as the known-good
+fallback.
+
+➡️ **DO NOT run the 13-window soak on channel 10.** And ⚠️ this is the third channel
+chosen by argument rather than measurement — which is what #396 exists to end.
+Old status below. All three roles build (esp32-leaf, esp32s3-primary, esp32-gateway);
 esp32c3 still fails in `ethernet_net.cpp` on the W5500 driver, which is #379 and
 predates this.
 
