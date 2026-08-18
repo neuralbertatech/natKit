@@ -129,6 +129,68 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ✅ THE RIG CAN SEE THE NOISE FLOOR NOW (natKit-IMU `12cf5bc`, #396/TEC-NATKIT-51)
+
+`rx_ctrl->noise_floor` — the PHY's own estimate — sits beside the `rssi` this code
+already read, in **both** receive paths. So it costs **no promiscuous mode, no scan,
+no airtime**, and it is ENERGY not decoded frames. That last part is the requirement:
+⚠️ **the channel the fault happens on is the QUIETEST at this site by AP count** (one
+AP at −96 dBm vs a dozen up to −61 on ch6, from Zach's UniFi scan), so a
+frame-counting floor would have called ch3 pristine throughout and **been believed**.
+
+Published at BOTH ends (leaves' floor vs the hub's is what separates "noise at the
+leaves" from "noise in the room"), per leaf as the **worst since its last heartbeat**
+rather than a snapshot, plus a derived **`leaf_snr_db`** — the figure that actually
+predicts whether a packet survives, and which nothing here reported before.
+
+**Also the hub's die temperature**, for the hub-transmitter hypothesis. ⚠️ It read
+"unavailable" at first: the sensor has PREDEFINED range buckets and `-10..110`
+straddles three, so install returned `ESP_ERR_INVALID_ARG`. The S3's console resets
+the board, so the only reason this took two minutes instead of becoming another
+silent gap is that **the `esp_err_t` is published in a spare byte**. Now `-10..80`,
+reads 45 C.
+
+⚠️ All three structs keep their sizes (56 / 168 / 144) and **`static_assert`s now pin
+them**, because a field that grows one decodes as plausible nonsense on the far side
+and that has already happened twice here.
+
+## ⚠️ THE EVENT RECURRED AT ~15:40 AND COST DATA THIS TIME
+
+Three of four nodes lost a third to two thirds of their frames (gaps 1056-1706 per
+300 s window) where the morning event cost none. Same signature otherwise: RSSI fine,
+reciprocity 4-8 dB, and the least-sensitive node untouched. **The hub-side gaps are a
+CONSEQUENCE of hub→leaf ACK loss exhausting MAC retries** (send failures 25k-33k), not
+a second fault — one mechanism, two amplitudes.
+⚠️ **Confounded with the channel move at 15:05**; cannot separate "impairment returned"
+from "ch3 is worse now". The same three nodes read 0.4-0.7% on ch10 at 14:52.
+
+## ➡️ 17-HOUR CAPTURE RUNNING ON CHANNEL 3
+
+`./soak.sh 200 300` → `~/natkit-verification/350-bench/longsoak-ch3.log` and
+`soak-161342.jsonl`. Window 1 already discriminates:
+
+```
+  node    beacon loss  gaps   FLOOR    SNR   hub heard at
+  553360     2.2%        0   -96 dBm  61 dB    -35 dBm
+  407228     2.9%        0   -93 dBm  61 dB    -32 dBm
+  671244     5.8%        0   -95 dBm  42 dB    -53 dBm
+  670644    67.7%      426   -91 dBm  24 dB    -67 dBm   <-- losing data
+  hub: floor -95 dBm, die 45 C
+```
+
+**The only node losing data has the worst SNR by 18 dB** — and the instrument says it
+is mostly a SIGNAL DROP (it hears the hub at −67, having heard it at −37..−49 earlier
+today), not a floor rise. ⚠️ **That is a DIFFERENT failure mode from the morning
+event**, where RSSI was flat across a 65%→0.1% swing. At least two things are in play.
+
+⚠️ `670644` was best-of-four in the morning, could not hold ch10 at all, and is worst
+on ch3 now. Frequency- and time-dependent per-board response; still not grounds to
+re-convict it (TEC-NATKIT-46).
+
+✅ **TEC-NATKIT-47's fix is confirmed on hardware**: residuals read 41-67 us with
+144-167 us peaks instead of saturating, and the independent coherence probe agrees at
+typical 82 us / bound 227 us.
+
 ## ➡️ BENCH IS ON CHANNEL 3, and the channel test settled nothing
 
 Reflashed all five boards to **channel 3** at 2026-08-18 15:05 (leaves
