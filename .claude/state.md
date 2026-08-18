@@ -129,6 +129,58 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ➡️ BENCH IS ON CHANNEL 3, and the channel test settled nothing
+
+Reflashed all five boards to **channel 3** at 2026-08-18 15:05 (leaves
+`NATKIT_PROFILE=bench`, primary no profile so it keeps FULL power; both carry the
+residual fix `a6aabb4`). Settled, both channels measured:
+
+```
+              553360  671244  407228  670644
+  ch3           0.4%    0.4%    0.4%    0.0%
+  ch10          0.7%    0.4%    0.7%   17.1%
+```
+
+Equal on three, strictly better on the fourth, and ch3 is what `sdkconfig.defaults`
+already says — so bench and tree agree again, which is the hazard that cost a whole
+day. ⚠️ **Channel 6 is NOT a candidate: it is one of the two house AP clusters**
+(validated against Zach's UniFi scan). Of the non-overlapping channels 1 is jammed by
+the board's own crystal harmonics and 6/11 are the APs, which is why the only two
+channels this rig has measured as good are the in-between 3 and 10.
+
+### ⚠️ THE CHANNEL EXPERIMENT COULD NOT HAVE ANSWERED ITS QUESTION
+
+The ch3 baseline read **0.0-0.4%** — the impairment was **ABSENT**, and has been since
+~10:41. So it compared *channel 3 with no interference* against channel 10. **We still
+do not know whether the impairment lives on channel 3**, and the case for leaving it
+is unproven. Catching it requires knowing when it is present → **#396 /
+TEC-NATKIT-51 (publish a noise floor) is the real next step.**
+
+### ⚠️ "Channel 10 made every node worse" was SETTLING, not the channel
+
+Two windows taken 8 and 24 min after a five-board reflash showed a monotonic
+degradation; 35 and 40 min in, the three healthy nodes were back to 0.4%. ➡️ **RULE:
+after a channel change or fleet reflash, wait 30-40 minutes before measuring.** Three
+of this investigation's wrong conclusions have been measurements taken inside a
+settling window.
+
+### ✅ The one real finding: per-board sensitivity is FREQUENCY-DEPENDENT
+
+`670644` was the **best** of four on ch3 (0.0%) and the **worst** on ch10 (17-18%),
+stable across two clean windows, while the other three were unchanged. So **"which
+board is worst" is a property of the channel** — any per-board comparison must name
+the channel it was measured on. Third reason not to re-convict that board: at 18%
+beacon loss it still delivered 2798 unique frames with 0 gaps.
+
+### ⚠️ TEC-NATKIT-47's root cause was NOT what I filed
+
+Zach's session found it: no window was ever latching, and the fits were good all
+along. `refit()` computes `local_us - x0` in three places and the `int64_t` cast was
+missing from exactly one — the residual loop. Correct for one refit in 32, meaningless
+for the other 31. Fixed in `a6aabb4` with `dx()`/`dy()` so there is no second place to
+forget. That is why the primary's independent coherence probe read 39-66 us while
+every leaf claimed a saturated residual.
+
 ## ⚠️⚠️ SOLVED (mechanism): THE IMPAIRMENT IS SHARED, EXTERNAL AND TIME-VARYING (#395)
 
 **Four leaves, 13 windows of 300 s, 2026-08-18.** Three facts settle it:
