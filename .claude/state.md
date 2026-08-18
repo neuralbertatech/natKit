@@ -29,6 +29,46 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ✅ RULED OUT: one bad board changing serial ports (#395)
+
+Zach asked whether the "alternation" is really one bad board that keeps landing on a
+different `/dev/ttyACM`. It is not, three ways:
+
+1. **Identity is the efuse MAC, never the port.** `0c:8b:95:96:bc:4c` →
+   13793649671244, `4c:75:25:a4:45:3c` → 84066026407228. Burned into silicon; every
+   health figure in #395 is keyed on it.
+2. **Both ids publish simultaneously** — 200 frames each in the same 20 s window. Two
+   concurrent publishers is two chips, and each has been healthy and sick at
+   different times.
+3. **The ports never moved.** `/dev/ttyACM0/1/2` device nodes date from
+   2026-08-17 07:54-07:59 and survived a full day of resets, reflashes and bootloader
+   parks, plus two new boards appearing. A DTR/RTS reset does not re-enumerate a CH340.
+
+⚠️ **But the kernel of the question is real and worth keeping**: a port swap could not
+corrupt a measurement, but it *could* corrupt a FLASH. `-p /dev/ttyACM1` aims at a
+port, not a board. esptool refuses a chip-type mismatch, so leaf-vs-S3 fails loudly —
+**leaf-vs-leaf does not**. ➡️ **Flash by `/dev/serial/by-id/...`**, now documented in
+`natKit-IMU/README.md`.
+
+## ⚠️ FOUR LEAVES NOW — two more ESP32s added 2026-08-18
+
+`/dev/ttyACM3` (serial `5185027171`) and `/dev/ttyACM4` (`5185027831`), both CH340,
+**nothing flashed yet, MACs unknown** (reading a MAC resets the board, which costs
+~10 min of recovery).
+
+➡️ **They unlock the one experiment that does not depend on the flipping holding
+still**: with four leaves, *how many are sick at once* is a counting question
+answerable in a single window. Always one → hub-side arbitration; a fixed fraction →
+scales with population; still 0-1 → independent of load; more than two → the hub
+saturates with node count, which matters before any deployment. They also give a
+spare pair to run the untested **self-blocking** branch on without disturbing the two
+boards that carry the history.
+
+⚠️ **And "both leaves healthy at once" has now been observed** (0.0% beacon loss each,
+2026-08-18), so it is NOT "exactly one sick at a time" — which already argues against
+a strict one-winner arbitration. Transmit power does not correlate with health either:
+the sick node has been the one at 8.5 dBm and, at another time, the one at 7.0.
+
 ## ⚠️⚠️ THE RIG ALTERNATES WHICH LEAF IS SICK, ON ITS OWN, IN ~10-30 MINUTES (#395)
 
 **The symptom now has its own bug report: TEC-NATKIT-50 (#395)**, because it had
