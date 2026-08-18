@@ -29,7 +29,16 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
-## ⚠️⚠️ THE RIG ALTERNATES WHICH LEAF IS SICK, ON ITS OWN, IN ~10-30 MINUTES
+## ⚠️⚠️ THE RIG ALTERNATES WHICH LEAF IS SICK, ON ITS OWN, IN ~10-30 MINUTES (#395)
+
+**The symptom now has its own bug report: TEC-NATKIT-50 (#395)**, because it had
+none — it was being tracked inside #382, which is a ticket for a *proposed fix*
+whose premise is ruled out, so closing the fix would have closed the only record of
+the fault. #382 is demoted to a candidate remedy and should not be built as
+specified. ⚠️ #391 (the …0644 board removed as "physically banged up") is annotated:
+the evidence that convicted it is exactly what this rig now does with two undamaged
+boards.
+
 
 **This invalidates single-window A/B measurement on this bench, including several
 results reported earlier today.** Which node is sick changed FOUR times in one
