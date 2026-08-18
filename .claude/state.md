@@ -29,6 +29,55 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ⚠️⚠️ SOLVED (mechanism): THE IMPAIRMENT IS SHARED, EXTERNAL AND TIME-VARYING (#395)
+
+**Four leaves, 13 windows of 300 s, 2026-08-18.** Three facts settle it:
+
+1. **All four nodes' beacon loss moves TOGETHER** — Pearson r **+0.67 to +0.97**.
+   Four independent radios do not correlate at 0.9 by accident.
+2. **It switched off for everyone at the same instant** (window 10): means went
+   2.0/5.9/9.7/**65.0%** → 0.3/0.1/0.3/**0.1%**, nothing touched.
+3. ⚠️⚠️ **AND THE WANTED SIGNAL DID NOT MOVE — ±2 dB — while loss went 65% → 0.1%.**
+   Signal flat + loss changed = **the NOISE FLOOR moved**. The node hearing the hub
+   **loudest** (−33 dBm, 2nd strongest) was losing **63%** of its beacons, which is
+   impossible for a power or path problem.
+
+➡️ **External 2.4 GHz interference near channel 3 is the explanation that fits.** NOT
+directly observed — that needs #396.
+
+### It retires everything chased for two days
+
+❌ bad board ❌ near-far ❌ antenna/receiver fault ❌ reciprocity ❌ contention between
+leaves ❌ airtime/self-blocking (…553360's send failures fell **12×** while its beacon
+loss held at 60-68%) ❌ transmit power.
+
+✅ **And it explains the "alternation" that defeated every test.** Nothing was flipping
+between boards. ONE shared impairment drifted up and down across FOUR different
+per-board sensitivity thresholds, so whoever sat nearest their threshold looked sick.
+Per-board sensitivity spans **1.4% to 63%** against the same common cause.
+
+### ⚠️ Delivery was FINE throughout — beacon loss ≠ data loss
+
+Every node delivered ~**2800 unique frames per 300 s** (the full 9.3/s) with **0
+gaps**, except …553360 during settling. At four nodes with the hub at full power even
+65% beacon loss cost duplicates and airtime, not data. Data loss is what happens when
+something removes a node's margin — which is what pinning the primary to 8.5 dBm did.
+⚠️ My own soak first labelled nodes "sick" on beacon loss, which was the wrong
+criterion.
+
+### ⚠️ RETRACTED: board `0c:8b:95:96:b9:f4` was never the problem (#391)
+
+The board removed 2026-08-14 as "physically banged up" is **the BEST of four**: 1.4%
+beacon loss, 24-48 dupes, 0 gaps, full delivery, heard loudest at −36 dBm. A
+**brand-new** board was **45× worse**. The 2026-08-14 swap removed the most robust
+board and fixed nothing. README corrected.
+
+**Filed #396** — publish a NOISE FLOOR. Every instrument the rig has read "healthy"
+throughout this fault, because RSSI of a wanted signal cannot see the floor.
+
+➡️ **NEXT: move the ESP-NOW channel (3 → 10) and re-run the same soak.** Cheapest
+decisive test, and possibly the fix.
+
 ## ✅ RULED OUT: one bad board changing serial ports (#395)
 
 Zach asked whether the "alternation" is really one bad board that keeps landing on a
