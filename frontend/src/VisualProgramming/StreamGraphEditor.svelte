@@ -10,6 +10,8 @@
         Eye,
         FileDown,
         FlaskConical,
+        FolderOpen,
+        Pencil,
         Network,
         GitBranch,
         Monitor,
@@ -164,6 +166,7 @@
         OutputChannelTopic,
         ChannelKind,
         Profile,
+        Workspace,
         Experiment,
     } from "../StreamViewer/types";
     import {
@@ -194,6 +197,19 @@
         // objects that own a board + its history. saveExperiment doubles as the
         // bind action (its live_graph_id is the board).
         experiments: Experiment[];
+        // Workspaces (TEC-NATKIT-56). The lists above arrive ALREADY SCOPED to the
+        // selected workspace — the page owns the lens so scoping lives in one
+        // place. These are for the selector and its create/rename/delete.
+        workspaces: Workspace[];
+        // null is the Unfiled pseudo-workspace, where everything that predates
+        // workspaces lives.
+        selectedWorkspaceId: string | null;
+        // How much is filed elsewhere, so the UI can say so rather than appearing
+        // to have lost it.
+        hiddenCounts: { experiments: number; graphs: number; profiles: number };
+        selectWorkspace: (workspaceId: string | null) => void;
+        saveWorkspace: (workspace: Workspace) => boolean;
+        deleteWorkspace: (workspaceId: string) => boolean;
         saveExperiment: (experiment: Experiment) => boolean;
         deleteExperiment: (experimentId: string) => boolean;
         // Instances (Phases 2 + 3): recording mints an immutable snapshot welded to
@@ -318,6 +334,12 @@
         saveProfile,
         deleteProfile,
         experiments,
+        workspaces,
+        selectedWorkspaceId,
+        hiddenCounts,
+        selectWorkspace,
+        saveWorkspace,
+        deleteWorkspace,
         saveExperiment,
         deleteExperiment,
         startExperimentInstance,
@@ -1340,6 +1362,7 @@
             persistExperiment({
                 experiment_id: experimentId,
                 label: template.experiment.label,
+                workspace_id: selectedWorkspaceId ?? "",
                 protocol: { ...template.experiment.protocol },
                 notes: "",
                 live_graph_id: selectedGraphId,
@@ -2404,6 +2427,9 @@
         persistExperiment({
             experiment_id: experimentId,
             label,
+            // Filed into the workspace in view (TEC-NATKIT-56), or it would be
+            // created into Unfiled and vanish from the list being looked at.
+            workspace_id: selectedWorkspaceId ?? "",
             protocol: { ...FINGER_COUNTING_PROTOCOL },
             notes: "",
             live_graph_id: selectedGraphId,
@@ -2612,7 +2638,12 @@
         saveExperiment({
             experiment_id: experimentId,
             label: config.protocol?.label || node.label || experimentId,
+            workspace_id: selectedWorkspaceId ?? "",
             protocol: config.protocol ?? { ...FINGER_COUNTING_PROTOCOL },
+            // Legacy experiment-NODE migration: the node's config predates both
+            // the participant-per-run move and workspaces, so this preserves an
+            // old participant into the deprecated field (which the TEC-NATKIT-54
+            // back-fill reads) rather than dropping it.
             participant_id: config.participant_id ?? "",
             notes: config.notes ?? "",
             live_graph_id: selectedGraphId,
@@ -2810,11 +2841,143 @@
         );
     });
 
+    // --- Workspaces (TEC-NATKIT-56) ------------------------------------------
+    //
+    // The selector scopes the boards, experiments and roster the editor sees. The
+    // page owns the filtering; this is the surface for choosing and managing.
+
+    // ⚠️ `<select value={...}>` does NOT reliably select an option that is added in
+    // the SAME update. Creating a workspace does exactly that — the saved push adds
+    // the option while selectWorkspace sets the value — and the control rendered
+    // BLANK, with no workspace apparently selected, while the scoping underneath
+    // had already switched. Caught by screenshotting it; the type check and the
+    // unit tests were both green.
+    //
+    // Mirroring the prop into local state and using bind:value fixes the ordering:
+    // the effect runs after the DOM update that added the option.
+    // Starts empty and is synced entirely by the effect, which also runs on mount —
+    // seeding it from the prop directly would only capture the initial value, which
+    // is what Svelte warns about.
+    let workspaceSelectValue = $state("");
+    $effect(() => {
+        workspaceSelectValue = selectedWorkspaceId ?? "";
+    });
+
+    const selectedWorkspace = $derived(
+        workspaces.find(
+            (workspace) => workspace.workspace_id === selectedWorkspaceId,
+        ) ?? null,
+    );
+
+    // Everything filed under some OTHER workspace. Shown rather than left
+    // implicit: a board list that just got shorter looks like data loss.
+    const hiddenTotal = $derived(
+        hiddenCounts.experiments + hiddenCounts.graphs + hiddenCounts.profiles,
+    );
+
+    async function createWorkspace() {
+        const label = await askName({
+            title: "New workspace",
+            body: "A workspace groups a study's boards, experiments and participants, so picking an experiment is not picking from every experiment ever made.",
+            label: "Workspace name",
+            placeholder: "e.g. Stroke cohort A",
+            noun: "workspace",
+            existing: workspaces.map((workspace) => ({
+                name: workspace.label,
+                hint: workspace.workspace_id,
+            })),
+            confirmLabel: "Create workspace",
+        });
+        if (!label) return;
+        const workspaceId =
+            sanitizeIdentifier(label) || `workspace-${Date.now()}`;
+        if (
+            workspaces.some(
+                (workspace) => workspace.workspace_id === workspaceId,
+            )
+        ) {
+            await showAlert({
+                title: "Already exists",
+                body: `A workspace with the id ${workspaceId} already exists. Pick a different name.`,
+            });
+            return;
+        }
+        if (
+            saveWorkspace({
+                workspace_id: workspaceId,
+                label,
+                notes: "",
+                created_at_us: 0,
+                updated_at_us: 0,
+            })
+        ) {
+            // Switch to it: creating a workspace and then still looking at the
+            // previous one is never what was meant.
+            selectWorkspace(workspaceId);
+        }
+    }
+
+    async function renameWorkspace() {
+        if (!selectedWorkspace) return;
+        const label = await askName({
+            title: "Rename workspace",
+            body: "Only the name changes — its boards, experiments and participants stay exactly where they are.",
+            label: "Workspace name",
+            initial: selectedWorkspace.label,
+            noun: "workspace",
+            existing: workspaces
+                .filter(
+                    (workspace) =>
+                        workspace.workspace_id !==
+                        selectedWorkspace.workspace_id,
+                )
+                .map((workspace) => ({
+                    name: workspace.label,
+                    hint: workspace.workspace_id,
+                })),
+            confirmLabel: "Rename",
+        });
+        if (!label || label === selectedWorkspace.label) return;
+        // The id is deliberately NOT re-derived from the new name: it is what
+        // every member's workspace_id points at, so renaming must not re-file
+        // anything.
+        saveWorkspace({ ...selectedWorkspace, label });
+    }
+
+    async function removeWorkspace() {
+        if (!selectedWorkspace) return;
+        // These props arrive already scoped to the selected workspace, so their
+        // lengths ARE what is filed in the one about to be deleted.
+        const counts = [
+            experiments.length > 0 ? `${experiments.length} experiment(s)` : null,
+            graphDefinitions.length > 0
+                ? `${graphDefinitions.length} board(s)`
+                : null,
+            profiles.length > 0 ? `${profiles.length} participant(s)` : null,
+        ].filter(Boolean);
+        const confirmed = await askConfirm({
+            title: `Delete workspace "${selectedWorkspace.label}"?`,
+            // ⚠️ The copy has to say the contents survive. "Delete workspace"
+            // reads like it takes everything with it, and an operator who
+            // believes that will not press it -- or worse, will press it
+            // believing they are cleaning up a cohort's data.
+            body:
+                counts.length > 0
+                    ? `Its ${counts.join(", ")} are NOT deleted — they move to Unfiled, where you can re-file them. Recorded data and history are untouched.`
+                    : "It is empty, so nothing moves.",
+            confirmLabel: "Delete workspace",
+            danger: true,
+        });
+        if (!confirmed) return;
+        deleteWorkspace(selectedWorkspace.workspace_id);
+    }
+
     // Ask who this run is of. Returns the participant id, or null if the operator
     // backed out (which must abort the recording — see the call site).
     //
-    // The roster is the profile store for now; TEC-NATKIT-57 scopes it to the
-    // selected workspace so a cohort's list is not every participant ever seen.
+    // The roster is `profiles`, which the page has ALREADY scoped to the selected
+    // workspace — so a cohort's list is that cohort's participants, not every
+    // person the rig has ever seen. In Unfiled it is the unfiled ones.
     async function askParticipantForRun(): Promise<string | null> {
         const chosen = await askName({
             title: "Who is this run of?",
@@ -2835,7 +2998,34 @@
         // Sanitized because it becomes part of session metadata and marker
         // attributes, which are identifier-shaped. An id that sanitizes to nothing
         // is treated as no answer rather than silently recorded as "".
-        return sanitizeIdentifier(chosen) || null;
+        const participantId = sanitizeIdentifier(chosen);
+        if (!participantId) {
+            return null;
+        }
+        // A name typed rather than picked joins this workspace's roster, or the
+        // next Record would not offer them and the operator would have to retype
+        // the id exactly — which is how one participant becomes two.
+        if (
+            !profiles.some(
+                (profile) => profile.participant_id === participantId,
+            )
+        ) {
+            const nowUs = Date.now() * 1000;
+            saveProfile({
+                participant_id: participantId,
+                display_name: chosen.trim() || participantId,
+                workspace_id: selectedWorkspaceId ?? "",
+                model_path: "",
+                graph_id: "",
+                protocol_id: "",
+                device_id: "",
+                session_ids: [],
+                best_accuracy: 0,
+                created_at_us: nowUs,
+                updated_at_us: nowUs,
+            });
+        }
+        return participantId;
     }
 
     async function startSessionRecording(experiment: Experiment) {
@@ -4993,6 +5183,67 @@
                 >
                     <PanelLeft size={16} />
                 </button>
+                <!-- Workspace picker (TEC-NATKIT-56). First in the toolbar
+                     because it scopes everything to its right: which boards are
+                     listed, which experiments can be bound, whose names the
+                     participant roster offers. -->
+                <div class="workspace-picker">
+                    <FolderOpen size={14} />
+                    <select
+                        class="workspace-select"
+                        bind:value={workspaceSelectValue}
+                        onchange={(event) => {
+                            const picked = (
+                                event.currentTarget as HTMLSelectElement
+                            ).value;
+                            selectWorkspace(picked === "" ? null : picked);
+                        }}
+                        title="Workspace — scopes the boards, experiments and participant roster"
+                    >
+                        <!-- Unfiled is a real view, not a migration artifact:
+                             everything that predates workspaces lives here. -->
+                        <option value="">Unfiled</option>
+                        {#each workspaces as workspace}
+                            <option value={workspace.workspace_id}>
+                                {workspace.label || workspace.workspace_id}
+                            </option>
+                        {/each}
+                    </select>
+                    <button
+                        type="button"
+                        class="icon-btn"
+                        onclick={createWorkspace}
+                        title="New workspace"
+                    >
+                        <Plus size={14} />
+                    </button>
+                    {#if selectedWorkspace}
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            onclick={renameWorkspace}
+                            title="Rename this workspace"
+                        >
+                            <Pencil size={13} />
+                        </button>
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            onclick={removeWorkspace}
+                            title="Delete this workspace — its contents move to Unfiled"
+                        >
+                            <Trash2 size={13} />
+                        </button>
+                    {/if}
+                    {#if hiddenTotal > 0}
+                        <span
+                            class="workspace-hidden"
+                            title={`Filed in other workspaces: ${hiddenCounts.graphs} board(s), ${hiddenCounts.experiments} experiment(s), ${hiddenCounts.profiles} participant(s). Switch workspace to see them.`}
+                        >
+                            {hiddenTotal} elsewhere
+                        </span>
+                    {/if}
+                </div>
                 <SquareDashedMousePointer size={16} />
                 <input
                     class="graph-title-input"
@@ -5472,6 +5723,8 @@
                 <div class="graph-experiment-panel">
                     <ExperimentPanel
                         {experiments}
+                        {workspaces}
+                        {selectedWorkspaceId}
                         bound={boundExperimentView}
                         boardId={selectedGraphId}
                         readOnly={boardIsImmutable}
@@ -7255,6 +7508,35 @@
 
     .graph-sidebar,
     .graph-inspector,
+    /* Workspace picker (TEC-NATKIT-56). Grouped and set apart from the board
+       title beside it: the two are different scopes, and reading them as one
+       control is how you record into the wrong cohort. */
+    .workspace-picker {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding-right: 0.5rem;
+        margin-right: 0.25rem;
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        color: #9fb2c8;
+    }
+
+    .workspace-select {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 4px;
+        color: #e8eef6;
+        font-size: 0.76rem;
+        padding: 0.15rem 0.3rem;
+        max-width: 11rem;
+    }
+
+    .workspace-hidden {
+        font-size: 0.68rem;
+        color: #8b9bb0;
+        white-space: nowrap;
+    }
+
     .graph-toolbar {
         background: rgba(8, 13, 26, 0.9);
         border: 1px solid rgba(110, 138, 255, 0.18);

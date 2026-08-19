@@ -1237,6 +1237,9 @@ export type WebSocketMessage =
   | ProfileListMessage
   | ProfileSavedMessage
   | ProfileDeletedMessage
+  | WorkspaceListMessage
+  | WorkspaceSavedMessage
+  | WorkspaceDeletedMessage
   | ExperimentListMessage
   | ExperimentSavedMessage
   | ExperimentDeletedMessage
@@ -1521,6 +1524,9 @@ export type ClientAction =
   | StartStreamGraphAction
   | StopStreamGraphAction
   | RestartStreamGraphNodeAction
+  | ListWorkspacesAction
+  | SaveWorkspaceAction
+  | DeleteWorkspaceAction
   | ListExperimentsAction
   | SaveExperimentAction
   | DeleteExperimentAction

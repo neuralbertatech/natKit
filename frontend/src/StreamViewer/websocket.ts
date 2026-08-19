@@ -26,6 +26,9 @@ import type {
   ProfileSavedMessage,
   ProfileDeletedMessage,
   ExperimentListMessage,
+  WorkspaceListMessage,
+  WorkspaceSavedMessage,
+  WorkspaceDeletedMessage,
   ExperimentSavedMessage,
   ExperimentDeletedMessage,
   ExperimentInstanceMessage,
@@ -72,6 +75,9 @@ export interface StreamViewerCallbacks {
   onProfileList?: (message: ProfileListMessage) => void;
   onProfileSaved?: (message: ProfileSavedMessage) => void;
   onProfileDeleted?: (message: ProfileDeletedMessage) => void;
+  onWorkspaceList?: (message: WorkspaceListMessage) => void;
+  onWorkspaceSaved?: (message: WorkspaceSavedMessage) => void;
+  onWorkspaceDeleted?: (message: WorkspaceDeletedMessage) => void;
   onExperimentList?: (message: ExperimentListMessage) => void;
   onExperimentSaved?: (message: ExperimentSavedMessage) => void;
   onExperimentDeleted?: (message: ExperimentDeletedMessage) => void;
@@ -268,6 +274,15 @@ export class StreamViewerWebSocket {
           break;
         case "profile_deleted":
           this.callbacks.onProfileDeleted?.(message);
+          break;
+        case "workspace_list":
+          this.callbacks.onWorkspaceList?.(message);
+          break;
+        case "workspace_saved":
+          this.callbacks.onWorkspaceSaved?.(message);
+          break;
+        case "workspace_deleted":
+          this.callbacks.onWorkspaceDeleted?.(message);
           break;
         case "experiment_list":
           this.callbacks.onExperimentList?.(message);

@@ -18,6 +18,7 @@
     } from "@lucide/svelte";
     import type {
         Experiment,
+        Workspace,
         SessionProtocol,
         StreamGraphDefinition,
     } from "../StreamViewer/types";
@@ -60,6 +61,11 @@
         onBind: (experimentId: string) => void;
         onCreate: () => void;
         onPatch: (patch: Partial<Experiment>) => void;
+        // Workspaces (TEC-NATKIT-56): filing this experiment. Moving it takes its
+        // bound board with it — save_experiment stamps the board's workspace_id —
+        // so this control moves BOTH halves of the binding at once.
+        workspaces: Workspace[];
+        selectedWorkspaceId: string | null;
         // Opens the ExperimentDesigner overlay, where the protocol is authored.
         onEditProtocol: () => void;
         onDelete: () => void;
@@ -84,6 +90,8 @@
         onBind,
         onCreate,
         onPatch,
+        workspaces,
+        selectedWorkspaceId,
         onEditProtocol,
         onDelete,
         onRecord,
@@ -226,6 +234,34 @@
                     })}
             />
         </label>
+        <label>
+            <span>Workspace</span>
+            <select
+                value={bound.workspace_id || ""}
+                onchange={(event) =>
+                    onPatch({
+                        workspace_id: (event.currentTarget as HTMLSelectElement)
+                            .value,
+                    })}
+            >
+                <option value="">Unfiled</option>
+                {#each workspaces as workspace}
+                    <option value={workspace.workspace_id}>
+                        {workspace.label || workspace.workspace_id}
+                    </option>
+                {/each}
+            </select>
+        </label>
+        {#if (bound.workspace_id || null) !== selectedWorkspaceId}
+            <!-- Moving an experiment out of the workspace in view makes it (and
+                 its board) leave the lists on screen. Saying so beats it
+                 seeming to vanish. -->
+            <p class="hint-text">
+                Moving this experiment takes its bound board with it, and both
+                leave the workspace you are viewing.
+            </p>
+        {/if}
+
         <!-- No participant field: it belongs to the RUN, and Record asks for it
              (TEC-NATKIT-55). A field here could only ever name the most recent
              person, so one procedure recording a cohort attributed every run to

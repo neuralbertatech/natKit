@@ -21,6 +21,10 @@
         ProfileListMessage,
         ProfileSavedMessage,
         ProfileDeletedMessage,
+        Workspace,
+        WorkspaceListMessage,
+        WorkspaceSavedMessage,
+        WorkspaceDeletedMessage,
         Experiment,
         ExperimentListMessage,
         ExperimentSavedMessage,
@@ -114,6 +118,46 @@
     let mlThreadSlots = $state<ThreadSlotSummary[]>([]);
     let mlControlPlaneWorkerId = $state<string | null>(null);
     let mlControlPlanePrincipalId = $state<string | null>(null);
+    // The selected workspace survives a reload: an operator mid-cohort who
+    // refreshes should not silently land in a different one — or worse, in
+    // Unfiled, where Record would be pointing at another study's board.
+    const WORKSPACE_STORAGE_KEY = "natkit.vp.workspace";
+
+    function readStoredWorkspace(): string | null {
+        try {
+            const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+            return stored && stored.length > 0 ? stored : null;
+        } catch {
+            // Private-mode / blocked storage: fall back to Unfiled rather than
+            // failing to mount the page.
+            return null;
+        }
+    }
+
+    function storeWorkspace(workspaceId: string | null) {
+        try {
+            if (workspaceId === null) {
+                localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+            } else {
+                localStorage.setItem(WORKSPACE_STORAGE_KEY, workspaceId);
+            }
+        } catch {
+            // Non-fatal: the selection just won't survive the next reload.
+        }
+    }
+
+    // ⚠️ FALSY, not `=== ""`. "Unfiled" arrives in two representations: an
+    // experiment always serializes the key so an unfiled one reads `""`, while a
+    // board only emits it when set so an unfiled one reads `undefined`. Comparing
+    // against either literal silently drops half the unfiled records.
+    function inWorkspace(
+        member: { workspace_id?: string },
+        workspaceId: string | null,
+    ): boolean {
+        const filed = member.workspace_id || null;
+        return filed === workspaceId;
+    }
+
     let streamGraphs = $state<StreamGraphDefinition[]>([]);
     // Phase 4: individual profiles (person -> saved classify graph).
     let profiles = $state<Profile[]>([]);
@@ -121,6 +165,40 @@
     // own a board + its recorded history. The protocol lives here now, not on a
     // node.
     let experiments = $state<Experiment[]>([]);
+    // Workspaces (TEC-NATKIT-56): the container that scopes everything below, so
+    // picking an experiment is not picking from every experiment ever made.
+    let workspaces = $state<Workspace[]>([]);
+    // Which one is in view. `null` is the Unfiled pseudo-workspace, which is
+    // where everything that predates workspaces lives — a real view, not a
+    // migration artifact, so it must stay usable rather than be special-cased
+    // out of existence.
+    let selectedWorkspaceId = $state<string | null>(readStoredWorkspace());
+    // The workspace lens. Everything the editor sees is filtered through this, so
+    // scoping lives in ONE place rather than at each consumer — a consumer that
+    // forgot to filter would show another cohort's boards without saying so.
+    //
+    // Instances are deliberately NOT filtered out by workspace here: they follow
+    // their experiment, and an instance whose experiment is in view belongs in
+    // view with it.
+    const visibleExperiments = $derived(
+        experiments.filter((experiment) =>
+            inWorkspace(experiment, selectedWorkspaceId),
+        ),
+    );
+    const visibleGraphs = $derived(
+        streamGraphs.filter((graph) => inWorkspace(graph, selectedWorkspaceId)),
+    );
+    const visibleProfiles = $derived(
+        profiles.filter((profile) => inWorkspace(profile, selectedWorkspaceId)),
+    );
+    // How much is filed elsewhere, so the UI can say "3 boards in other
+    // workspaces" instead of just appearing to have lost them.
+    const hiddenCounts = $derived({
+        experiments: experiments.length - visibleExperiments.length,
+        graphs: streamGraphs.length - visibleGraphs.length,
+        profiles: profiles.length - visibleProfiles.length,
+    });
+
     // The instance currently being recorded (minted on Record, closed on Stop).
     // Held here rather than in the editor because materialization finishes
     // asynchronously and its result is BROADCAST, not returned to a caller.
@@ -485,6 +563,49 @@
             participant_id: participantId,
         });
         return true;
+    }
+
+    // Workspaces (TEC-NATKIT-56).
+    function listWorkspaces() {
+        wsManager?.send({
+            action: "list_workspaces",
+            request_id: `workspaces:${Date.now()}`,
+        });
+    }
+
+    function saveWorkspace(workspace: Workspace): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "save_workspace",
+            request_id: `workspace-save:${Date.now()}`,
+            workspace,
+        });
+        return true;
+    }
+
+    // ⚠️ The contents SURVIVE. The backend un-files experiments, boards and
+    // profiles rather than deleting them, so this moves a cohort to Unfiled — it
+    // never destroys recorded history. The confirm copy has to say so, because
+    // "delete workspace" reads like it takes everything with it.
+    function deleteWorkspace(workspaceId: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") {
+            lastError = "Visual Programming WebSocket is not connected";
+            return false;
+        }
+        wsManager.send({
+            action: "delete_workspace",
+            request_id: `workspace-delete:${Date.now()}`,
+            workspace_id: workspaceId,
+        });
+        return true;
+    }
+
+    function selectWorkspace(workspaceId: string | null) {
+        selectedWorkspaceId = workspaceId;
+        storeWorkspace(workspaceId);
     }
 
     // Experiments. save_experiment doubles as the bind action: setting
@@ -979,6 +1100,7 @@
                     listStreamGraphs();
                     listProfiles();
                     listExperiments();
+                    listWorkspaces();
                     // Ask the control plane (via the proxy) for compute slots so a
                     // train submit can auto-pick one; periodic pushes keep it fresh.
                     wsManager?.sendMlAction({
@@ -1043,6 +1165,46 @@
                     (profile) =>
                         profile.participant_id !== message.participant_id,
                 );
+            },
+            onWorkspaceList: (message: WorkspaceListMessage) => {
+                workspaces = [...message.workspaces].sort((left, right) =>
+                    left.label.localeCompare(right.label),
+                );
+                // A stored selection pointing at a workspace that no longer
+                // exists would scope every list to nothing and look like data
+                // loss. Fall back to Unfiled instead.
+                if (
+                    selectedWorkspaceId !== null &&
+                    !workspaces.some(
+                        (workspace) =>
+                            workspace.workspace_id === selectedWorkspaceId,
+                    )
+                ) {
+                    selectWorkspace(null);
+                }
+            },
+            onWorkspaceSaved: (message: WorkspaceSavedMessage) => {
+                const remaining = workspaces.filter(
+                    (workspace) =>
+                        workspace.workspace_id !== message.workspace_id,
+                );
+                workspaces = [...remaining, message.workspace].sort(
+                    (left, right) => left.label.localeCompare(right.label),
+                );
+            },
+            onWorkspaceDeleted: (message: WorkspaceDeletedMessage) => {
+                workspaces = workspaces.filter(
+                    (workspace) =>
+                        workspace.workspace_id !== message.workspace_id,
+                );
+                if (selectedWorkspaceId === message.workspace_id) {
+                    selectWorkspace(null);
+                }
+                // Its members were un-filed server-side, so the local copies of
+                // all three lists are stale.
+                listExperiments();
+                listStreamGraphs();
+                listProfiles();
             },
             onExperimentList: (message: ExperimentListMessage) => {
                 experiments = sortExperiments(message.experiments);
@@ -1333,7 +1495,7 @@
         availableStreams={editorStreams}
         {transformCapabilities}
         {nodeCatalog}
-        graphDefinitions={streamGraphs}
+        graphDefinitions={visibleGraphs}
         graphStatuses={streamGraphStatuses}
         latestValidation={latestStreamGraphNodeDiagnostics}
         latestEdgeValidation={latestStreamGraphEdgeDiagnostics}
@@ -1342,11 +1504,17 @@
         {listStreamGraphs}
         {requestStreamGraphStatus}
         {saveStreamGraph}
-        {profiles}
+        profiles={visibleProfiles}
         {listProfiles}
         {saveProfile}
         {deleteProfile}
-        {experiments}
+        experiments={visibleExperiments}
+        {workspaces}
+        {selectedWorkspaceId}
+        {hiddenCounts}
+        {selectWorkspace}
+        {saveWorkspace}
+        {deleteWorkspace}
         {saveExperiment}
         {deleteExperiment}
         {startExperimentInstance}
