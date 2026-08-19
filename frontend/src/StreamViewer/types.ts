@@ -572,6 +572,15 @@ export interface StreamGraphSourceNode extends StreamGraphBaseNode<"stream_sourc
   kind: "stream_source";
   stream_id: string;
   schema_name?: string;
+  // Which body position this sensor is worn at (TEC-NATKIT-62). One of
+  // SENSOR_POSITION_NAMES; absent or "N/A" means not stated.
+  //
+  // ⚠️ It belongs on the SOURCE, not on the calibration viewer that also carries
+  // one: a position is a property of where the sensor IS, and it is the
+  // stream↔limb pairing an exported file needs in order to say which signal came
+  // from which arm. A board with no calibration node would otherwise have nowhere
+  // to record placement at all.
+  sensor_position?: string;
 }
 
 export interface StreamGraphTransformNode extends StreamGraphBaseNode<"transform"> {
@@ -794,6 +803,8 @@ export interface InstanceRecording {
   participant_backfilled?: boolean;
   participant_unrecorded?: boolean;
   protocol_backfilled?: boolean;
+  // What was worn where, as recorded (TEC-NATKIT-62). Read; never author.
+  sensor_positions?: { stream_id: string; position: string }[];
   window_start_us?: number;
   window_end_us?: number | null;
   streams?: {
@@ -1436,6 +1447,11 @@ export interface StartExperimentInstanceAction {
   // whole cohort, so the procedure cannot name the person. Omitted or empty is
   // recorded by the backend as explicitly unattributed rather than inherited.
   participant_id?: string;
+  // The stream↔limb mapping at the moment of recording (TEC-NATKIT-62). Snapshotted
+  // per run because the same board records different participants with the sensors
+  // physically re-placed each time — a mapping that lives only on the board is not
+  // evidence about any particular run.
+  sensor_positions?: { stream_id: string; position: string }[];
   window_start_us?: number;
 }
 

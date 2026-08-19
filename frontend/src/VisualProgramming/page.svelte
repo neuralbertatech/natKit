@@ -649,6 +649,7 @@
         experimentId: string,
         windowStartUs: number,
         participantId: string,
+        sensorPositions: { stream_id: string; position: string }[],
     ): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
@@ -659,6 +660,7 @@
             request_id: `instance-start:${Date.now()}`,
             experiment_id: experimentId,
             participant_id: participantId,
+            sensor_positions: sensorPositions,
             window_start_us: windowStartUs,
         });
         return true;

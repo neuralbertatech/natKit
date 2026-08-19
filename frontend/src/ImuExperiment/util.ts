@@ -143,13 +143,11 @@ export function calibration_status_for_accuracies(
     return accuracy_int_to_calibration_status(Number(raw));
 }
 
-export const SENSOR_POSITION_NAMES = [
-    "N/A",
-    "Left Forearm",
-    "Right Forearm",
-    "Left Upper Arm",
-    "Right Upper Arm",
-    "Left Shoulder",
-    "Right Shoulder",
-    "Trunk",
-] as const;
+// Re-exported: the canonical list moved to StreamViewer/sensorPositions.ts so
+// retiring this page (TEC-NATKIT-61) cannot take the enumeration with it. Kept as
+// a re-export rather than updating this page's imports, because the page is a
+// rollback path and should not be churned.
+export {
+    SENSOR_POSITION_NAMES,
+    type SensorPositionName,
+} from "../StreamViewer/sensorPositions";

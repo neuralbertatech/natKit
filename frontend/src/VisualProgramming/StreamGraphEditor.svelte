@@ -96,9 +96,14 @@
         calibration_status_for_accuracies,
         calibration_status_to_color,
         calibration_status_to_string,
-        SENSOR_POSITION_NAMES,
         type SensorAccuracies,
     } from "../ImuExperiment/util";
+    import {
+        SENSOR_POSITION_NAMES,
+        ASSIGNABLE_SENSOR_POSITIONS,
+        duplicatePositions,
+        isAssignedPosition,
+    } from "../StreamViewer/sensorPositions";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
     import ExperimentPanel from "./ExperimentPanel.svelte";
@@ -218,6 +223,7 @@
             experimentId: string,
             windowStartUs: number,
             participantId: string,
+            sensorPositions: { stream_id: string; position: string }[],
         ) => boolean;
         finishExperimentInstance: (
             graphId: string,
@@ -3003,6 +3009,51 @@
         deleteWorkspace(selectedWorkspace.workspace_id);
     }
 
+    // --- Sensor body positions (TEC-NATKIT-62) --------------------------------
+    //
+    // The stream↔limb pairing for THIS board. Derived from the sources rather than
+    // stored separately, so there is one owner of the fact and nothing to keep in
+    // sync.
+    const sourcePositions = $derived(
+        draftGraph.nodes
+            .filter((node) => node.kind === "stream_source")
+            .map((node) => ({
+                node_id: node.id,
+                stream_id: (node as { stream_id?: string }).stream_id ?? "",
+                label: node.label,
+                position:
+                    (node as { sensor_position?: string }).sensor_position ?? "",
+            })),
+    );
+
+    // ⚠️ Two streams claiming the same limb is the error worth refusing. A swapped
+    // left/right forearm is invisible in the data and cannot be corrected
+    // afterwards without knowing it happened; a duplicate is the one form of it a
+    // machine can actually see.
+    const positionDuplicates = $derived(
+        duplicatePositions(sourcePositions.map((entry) => entry.position)),
+    );
+
+    const unpositionedSources = $derived(
+        sourcePositions.filter((entry) => !isAssignedPosition(entry.position)),
+    );
+
+    // What TEC-NATKIT-63's Record gate consumes: null when the mapping is fit to
+    // record against, otherwise the reason, worded for the operator.
+    const positionMappingProblem = $derived.by(() => {
+        if (sourcePositions.length === 0) return null; // no sources: a different problem
+        if (positionDuplicates.length > 0) {
+            return `Two sensors are both set to ${positionDuplicates.join(", ")}. Give each source its own body position.`;
+        }
+        if (unpositionedSources.length > 0) {
+            const names = unpositionedSources
+                .map((entry) => entry.label || entry.stream_id || entry.node_id)
+                .join(", ");
+            return `No body position set for ${names}. An exported file cannot say which limb the signal came from.`;
+        }
+        return null;
+    });
+
     // Ask who this run is of. Returns the participant id, or null if the operator
     // backed out (which must abort the recording — see the call site).
     //
@@ -3162,6 +3213,14 @@
             experiment.experiment_id,
             startedAtUs,
             participantId,
+            // Only the sources that actually state a position: an "N/A" recorded as
+            // if it were a placement would be worse than its absence.
+            sourcePositions
+                .filter((entry) => isAssignedPosition(entry.position))
+                .map((entry) => ({
+                    stream_id: entry.stream_id,
+                    position: entry.position,
+                })),
         );
         sessionRecordMessage = `Recording markers as ${sessionId}…`;
         sessionRecordTimer = setInterval(tickSessionRecording, 100);
@@ -6131,6 +6190,46 @@
                                     {/each}
                                 </select>
                             </label>
+                            <!-- Where this sensor is worn (TEC-NATKIT-62). On the
+                                 SOURCE because it is a property of the sensor, and
+                                 because it is the stream↔limb pairing an exported
+                                 file needs to say which signal came from which arm. -->
+                            <label>
+                                <span>Worn at</span>
+                                <select
+                                    disabled={boardIsImmutable}
+                                    value={selectedSourceNode.sensor_position ??
+                                        "N/A"}
+                                    onchange={(event) =>
+                                        updateSelectedNode((node) =>
+                                            node.kind === "stream_source"
+                                                ? {
+                                                      ...node,
+                                                      sensor_position: (
+                                                          event.currentTarget as HTMLSelectElement
+                                                      ).value,
+                                                  }
+                                                : node,
+                                        )}
+                                >
+                                    {#each SENSOR_POSITION_NAMES as name}
+                                        <option value={name}>{name}</option>
+                                    {/each}
+                                </select>
+                            </label>
+                            {#if positionDuplicates.includes(
+                                (selectedSourceNode.sensor_position ??
+                                    "") as (typeof positionDuplicates)[number],
+                            )}
+                                <!-- Named on the offending node, not only in the
+                                     board-level summary: the operator is looking at
+                                     this inspector when they make the mistake. -->
+                                <p class="position-clash">
+                                    Another source is also set to {selectedSourceNode.sensor_position}.
+                                    A swapped limb cannot be seen in the data or
+                                    fixed afterwards, so give each its own.
+                                </p>
+                            {/if}
                         {/if}
 
                         {#if selectedTransformNode}
@@ -7566,6 +7665,15 @@
         font-size: 0.68rem;
         color: #8b9bb0;
         white-space: nowrap;
+    }
+
+    /* Position clash. Deliberately the warning colour rather than an error: the
+       board is still savable, it is RECORDING that must be refused. */
+    .position-clash {
+        margin: 0.2rem 0 0;
+        font-size: 0.7rem;
+        line-height: 1.4;
+        color: #fbd88a;
     }
 
     .graph-toolbar {
