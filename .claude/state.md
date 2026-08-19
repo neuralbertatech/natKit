@@ -129,6 +129,47 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ⚠️⚠️ OVERNIGHT VERDICT: THE FLOOR NEVER MOVED. IT IS THE SIGNAL, AND IT IS PER-BOARD.
+
+178 windows x 300 s, channel 3, 2026-08-18 16:13 -> 08-19 07:04. 52 lossy, 126 clean:
+
+```
+  node      SIGNAL loss->clean      FLOOR loss->clean      lossy windows
+  407228     -33 -> -32 dBm (+1)     -93 -> -93 dBm (0)         0 of 178
+  553360     -34 -> -30 dBm (+4)     -96 -> -96 dBm (0)         0 of 178
+  671244     -47 -> -43 dBm (+4)     -95 -> -95 dBm (0)        18 of 178
+  670644     -47 -> -42 dBm (+5)     -96 -> -96 dBm (0)        39 of 178
+  hub floor -91 dBm FLAT all night   |   hub die 45 C FLAT all night
+```
+
+**ZERO dB of floor movement on every node between lossy and clean windows.** ❌ Kills
+external interference / raised floor (#396's premise), ❌ kills thermal degradation of
+the hub's transmitter (45 C flat), ❌ kills a general hub transmit fault (two boards
+lost NOTHING in 15 hours).
+
+⚠️ **ZACH WAS RIGHT AND I WAS WRONG TWICE.** The cross-node correlation (r=+0.67..+0.97)
+is real but is **a small common term riding on a much larger PER-BOARD one**. Two
+boards absorb the shared variation entirely; two do not. An hour could not show that;
+fifteen hours can.
+
+⚠️ **My retraction on #391 is WITHDRAWN.** `0c:8b:95:96:b9:f4` ("physically banged up")
+is the worst board here: 39 lossy windows, median 38.7% beacon loss, and **24 dB of
+swing in its own received signal** vs 6-7 dB for the good boards. A fixed attenuation
+is an offset, not a swing -- this reads as an intermittent connection, which is what
+physical damage predicts. What survives of my objection is only that the August
+evidence could not have *established* it.
+
+➡️ **ONE TEST LEFT, AND IT IS PHYSICAL**: swap `670644` into a known-good position with
+the soak running. Follows the board -> hardware, retire it. Stays with the position ->
+geometry.
+
+⚠️ **Before trusting the noise floor anywhere that matters**: it has been suspiciously
+constant (-93/-95/-96, never moving 1 dB in 178 windows). Plausible for a quiet bench,
+but also what a stuck value looks like. Validate against a known emitter (a phone
+hotspot on-channel) first.
+
+**Rig is stable enough to work on**: the two good boards have not lost a frame in 15 h.
+
 ## ✅ THE RIG CAN SEE THE NOISE FLOOR NOW (natKit-IMU `12cf5bc`, #396/TEC-NATKIT-51)
 
 `rx_ctrl->noise_floor` — the PHY's own estimate — sits beside the `rssi` this code
