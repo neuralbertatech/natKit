@@ -2,6 +2,183 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
+**Last updated:** 2026-08-19
+
+## ➡️ WORK MOVED OFF THE RADIO/CLOCK RIG AND ONTO THE INTERFACE (#300 / TEC-NATKIT-1)
+
+Zach: "I agree, we should get back to the interface now." Everything below the
+`----` divider is the previous firmware/radio state and is unchanged — the rig is
+stable enough to work on (two boards, 15 h, zero lost frames), and nothing here
+touched firmware.
+
+**#300 was scoped into ten children (#403-#412) plus #413.** The flow Zach named:
+open Visual Programming, pick the IMU experiment (post-stroke patients presented
+with **visual and verbal** ADLs), run a setup routine (participant, calibration
+check), perform it, download data + markers as Parquet.
+
+### The finding that reframed the epic: the engine already exists
+
+- **Parquet with markers is DONE.** `ParquetExport.cpp:553-690` stamps `label`,
+  `label_phase`, `label_cue_id` onto every row using the same interval stitcher the
+  training path uses, plus a JSONL marker sidecar.
+- **Calibration readout is DONE** — the viewer with `display_mode:
+  "imu_calibration"`, per-sensor accuracy + Save/Read config over
+  EXECUTION_COMMAND (`StreamGraphEditor.svelte:1695`).
+- **Visual + verbal presentation works as an ENGINE** — `image_url`/`audio_url` on
+  steps, upload slots in the designer, image render in the runner, audio via
+  `new Audio(cue.audio_url)`. The ADL *content* is text-only, which is #410.
+
+So the four real gaps are: no IMU-shaped starter template (#407), nothing gates
+Record (#408), body-position mapping is free text in VP while the typed 7-position
+enum lives only in the pages being retired (#409), and the stimulus content (#410).
+
+### Design decisions (Zach, 2026-08-19) — do not relitigate
+
+- **Workspaces** as a selectable container so picking an experiment is not picking
+  from every experiment ever made. **Pure container**: new store, nullable
+  `workspace_id`, everything pre-existing reads as **Unfiled**. No migration.
+- ⚠️ **The 1:1 experiment↔board binding STAYS.** Boards inheriting the workspace's
+  experiment, and protocols shared by reference, were both **declined**.
+- **The participant decouples from the procedure** — it belongs to the RUN.
+- **Audio clips, not TTS.** No `speechSynthesis` is being added.
+- ⚠️ **The standalone pages STAY for now** (#412 on hold). Revisit only after a real
+  ADL session has run end to end through VP with a Parquet opened and checked. The
+  calibration / position-mapping drift between the two paths is accepted
+  deliberately, not overlooked.
+
+## ✅ #403, #404, #405 DONE AND VERIFIED. #406 IS 70% WITH ONE UNVERIFIED BEHAVIOUR
+
+⚠️ **NOTHING IS PUSHED, nothing merged.** One branch per ticket, stacked in order:
+
+```
+  zach/403-instance-participant-snapshot   natKit dee9a00   libnatkit 345c7fb
+  zach/404-participant-per-run             natKit cea3a6e   libnatkit a6d55c2
+  zach/405-workspace-container             natKit 5075ad4   libnatkit 359e4e5
+  zach/406-workspace-scoped-pickers        natKit 079ff46   (frontend only)
+```
+
+### #403 — a sealed recording did not record WHO was recorded
+
+A completed instance stored neither participant nor protocol: "whose run is this"
+was resolved at READ time through the live experiment's **editable** field, so
+**retyping it retroactively reassigned every past run** while the sha256'd
+artifacts kept verifying. Now snapshotted at record time, plus
+`natkit.participant_id` in the Parquet key-value metadata, plus a one-time
+back-fill.
+
+⚠️ **The back-fill recovered NO participants, because there never were any.** Both
+instances on the rig trace to experiments whose `participant_id` is `""`. That
+changed the design mid-implementation: the back-fill now keeps **three** states
+apart — captured (no flag), recovered (`participant_backfilled`), never entered
+(`participant_unrecorded`). Stamping "back-filled" on an empty string would claim
+an attribution that never existed. **This is direct evidence for #408.**
+
+### #404 — the participant belongs to the run
+
+`start_experiment_instance` carries it per run; Record asks, picking from the
+roster or accepting a new id; backing out **aborts** the recording. ⚠️ The prompt
+fires **before** the session is timestamped, or a dialog the operator sat in front
+of for 20 s would put the session's start 20 s before its first cue.
+`Experiment::participantId` → `legacyParticipantId`, still **written** as well as
+read because it is the back-fill's only source.
+
+⚠️ **Deliberately NOT done**: moving `model_path`/`graph_id`/`protocol_id` off the
+profile. `profile.graph_id` implements profile resume
+(`StreamGraphEditor.svelte:1428`); removing them breaks a shipped EMG feature, the
+backend never reads them, and the ADL flow does not need it.
+
+### #405 — the workspace container
+
+New `data/workspaces.json` (`NATKIT_WORKSPACE_STORE`), three actions, nullable
+`workspace_id` on **experiments, boards and profiles**. Membership lives on the
+MEMBER only — a workspace holding its own id list is a second copy of the same
+fact. Lock order is now **workspace → experiment → graph → profile**.
+
+⚠️ **Deleting a workspace does NOT delete its contents** — verified: 10
+experiments, 8 graphs, 2 instances all survived, binding intact, members moved to
+Unfiled.
+
+### ⚠️ #406 — 70%, and the unverified bit
+
+Built: the lens (picker/board list/roster all scoped), Unfiled as a real view,
+selection persisted across reload, "N elsewhere" reporting, experiments filed into
+the workspace in view, move-between-workspaces, roster auto-enrol, and a delete
+confirm that says the contents survive.
+
+⚠️ **Filter on FALSY, not `=== ""`.** Unfiled arrives two ways: an experiment
+always serializes the key (`""`), a board only emits it when set (`undefined`).
+Either literal comparison silently drops half the unfiled records.
+
+➡️ **OPEN**: immediately after the **first-ever** create in a browser session the
+dropdown renders blank and rename/delete stay hidden, though the workspace IS
+created and selected. Ruled out: the backend (a raw WS client gets
+`workspace_saved` against empty AND populated stores) and the push handling (a
+second create in the same session applies fine). ⚠️ The isolated host stack cannot
+resolve the address Kafka advertises for itself, so the page loops on consume
+failures at exactly that moment — **confirming it needs the in-container
+backend**, i.e. restarting the live backend onto unmerged code, which also runs
+#403's back-fill against the real store. **Not done; waiting on Zach.**
+
+⚠️ **My first fix for it was WRONG** — I assumed the Svelte `<select value={...}>`
+dynamic-option trap and switched to `bind:value` with a mirrored `$effect`. It did
+not fix it. The change was kept (better pattern) but it is not the cause.
+
+⚠️ **A green `svelte-check` and 110 passing unit tests said nothing about any of
+this.** The blank control was only ever visible in a screenshot.
+
+## Verification method used throughout, and worth reusing
+
+Every backend change was verified against **copies** of the rig's stores, with the
+live ones left byte-identical (`a7ecd034b2660228` / `4cc692e217612533`, checked
+before and after each run):
+
+```sh
+podman cp natkit-v0-backend:/graphs/*.json /tmp/nk-verify/graphs/
+# host build + NATKIT_*_STORE pointed at the copies, NATKIT_BACKEND_PORT=7410
+# frontend: VITE_DEV_BACKEND_URL=http://127.0.0.1:7410 npx vite --port 5199
+```
+
+⚠️ **`pkill -f "NATKIT_BACKEND_PORT=7410"` kills your own shell** (the pattern
+matches the bash command line). Kill by port via `ss -lntp` instead.
+
+⚠️ **The HOST build silently does NOT compile the Parquet path.**
+`find_package(Parquet)` fails on this box, so `make libnatkit-natkit-backend` goes
+green while everything inside `#if NATKIT_HAVE_PARQUET` is skipped. Compiling it
+requires the `natkit-v0-backend` container, whose cache has `Parquet_DIR` set.
+**A green host build proves nothing about an export change.**
+
+⚠️ **The isolated host stack cannot reach Kafka** — the broker advertises
+`natkit-v0-kafka`, unresolvable from the host. Fine for store/UI work, useless for
+anything needing data to flow.
+
+## #413 — the backend's logs, and a correction
+
+Filed because no drogon log line at any level reaches any container log. ⚠️ **My
+first diagnosis was wrong**: the same binary run on the HOST logs perfectly, so it
+is **container-specific stdout buffering** through the supervisor's `tee` pipe.
+And the 4,010-line log I cited as ruling buffering OUT actually confirms it — its
+only content is librdkafka, which writes to **stderr** (unbuffered). Fix:
+`setvbuf(stdout, nullptr, _IOLBF, 0)` at startup, or `stdbuf -oL` in compose.
+
+## Ticket state
+
+```
+  Verification   #403 #404 #405
+  Doing          #406 (70%)
+  Ice Box        #407 #408 #409 #410 #411 #412 (on hold) #413
+```
+
+Screenshots + captioned MANIFEST: `~/natkit-verification/406-5075ad4/`, attached to
+#406.
+
+**Next**: settle #406's open behaviour, then #407 (ADL/IMU workspace template) →
+#409 → #408 → #410. #411 (cohort export) is the payoff of the container.
+
+---
+
+
+> This file is maintained by Claude Code. Read on session start, update before session end.
+
 **Last updated:** 2026-08-18
 
 ## ✅ THE CLOCK FIT NO LONGER INVENTS A RESIDUAL (#392 / TEC-NATKIT-47) — VERIFIED ON HARDWARE
