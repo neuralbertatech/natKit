@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CONVENTION_PROTOCOL, STARTER_TEMPLATES } from "./starterTemplates";
+import { ADL_PROTOCOL_ID } from "../AdlExperiment/tasks";
 
 function template(id: string) {
     const found = STARTER_TEMPLATES.find((t) => t.id === id);
@@ -9,6 +10,88 @@ function template(id: string) {
     }
     return found;
 }
+
+describe("IMU ADL session template", () => {
+    it("is registered and names a workspace", () => {
+        const adl = template("imu-adl-session");
+        // The workspace is what makes this a study rather than a board: without it
+        // the experiment and board land in Unfiled and disappear from the scoped
+        // lists the moment the user switches workspace.
+        expect(adl.workspace?.label).toBe("ADL study");
+    });
+
+    it("carries the ADL protocol, with its cue labels intact", () => {
+        const adl = template("imu-adl-session");
+        const protocol = adl.experiment?.protocol as unknown as {
+            protocol_id: string;
+            steps: { kind: string; label?: string }[];
+        };
+        expect(protocol.protocol_id).toBe(ADL_PROTOCOL_ID);
+        // The cue labels ARE the class labels a classifier would learn, so they
+        // have to survive the trip through the template.
+        const cueLabels = protocol.steps
+            .filter((step) => step.kind === "cue")
+            .map((step) => step.label);
+        expect(cueLabels).toContain("drink_cup");
+        expect(cueLabels).toContain("brush_teeth");
+    });
+
+    it("wires data AND markers into combine, and combine into export", () => {
+        const graph = template("imu-adl-session").build("imu-live-1");
+        const source = graph.nodes.find((n) => n.id === "source");
+        expect(source && "stream_id" in source ? source.stream_id : null).toBe(
+            "imu-live-1",
+        );
+        expect(graph.nodes.map((n) => n.id).sort()).toEqual(
+            [
+                "calibration",
+                "combine",
+                "export",
+                "live",
+                "markers",
+                "source",
+            ].sort(),
+        );
+
+        const pairs = graph.edges
+            .filter((e) => e.edge_kind !== "provenance")
+            .map((e) => `${e.source_node_id}->${e.target_node_id}`)
+            .sort();
+        // ⚠️ source->combine AND markers->combine are the load-bearing pair. That
+        // bundle is the join the exporter needs; drop either and the Parquet comes
+        // back with an empty label column, which reads as a successful export.
+        expect(pairs).toEqual(
+            [
+                "source->calibration",
+                "source->live",
+                "source->combine",
+                "markers->combine",
+                "combine->export",
+            ].sort(),
+        );
+    });
+
+    it("exports parquet with the label column named", () => {
+        const graph = template("imu-adl-session").build(null);
+        const exportNode = graph.nodes.find((n) => n.id === "export");
+        const config = (exportNode as { config?: Record<string, unknown> })
+            ?.config;
+        expect(config?.format).toBe("parquet");
+        expect(config?.label_field).toBe("label");
+    });
+
+    it("shows the calibration readout without needing the inline-graph toggle", () => {
+        const graph = template("imu-adl-session").build(null);
+        const calibration = graph.nodes.find((n) => n.id === "calibration") as {
+            display_mode?: string;
+            inline_graph?: boolean;
+        };
+        // A setup routine whose calibration check is hidden behind a toggle is not
+        // a setup routine.
+        expect(calibration.display_mode).toBe("imu_calibration");
+        expect(calibration.inline_graph).toBe(true);
+    });
+});
 
 describe("Convention EMG Quick-Start template", () => {
     it("is registered", () => {

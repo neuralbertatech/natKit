@@ -1350,6 +1350,35 @@
         selectedNodeIds = new Set();
         selectedEdgeId = null;
         pendingConnection = null;
+        // A template that is a whole study also brings its WORKSPACE (#407). Created
+        // FIRST and switched to, so the experiment and board below are filed there
+        // rather than into Unfiled — where the scoped lists would hide them the
+        // instant the user switched workspace, which looks like the template having
+        // silently failed.
+        //
+        // An existing workspace with the same id is reused rather than clobbered:
+        // loading the template twice should put you back in the study you already
+        // have, not mint "ADL study 2".
+        let templateWorkspaceId = selectedWorkspaceId;
+        if (template.workspace) {
+            const workspaceId =
+                sanitizeIdentifier(template.workspace.label) ||
+                `workspace-${Date.now()}`;
+            const existing = workspaces.find(
+                (workspace) => workspace.workspace_id === workspaceId,
+            );
+            if (!existing) {
+                saveWorkspace({
+                    workspace_id: workspaceId,
+                    label: template.workspace.label,
+                    notes: "",
+                    created_at_us: 0,
+                    updated_at_us: 0,
+                });
+            }
+            templateWorkspaceId = workspaceId;
+            selectWorkspace(workspaceId);
+        }
         // A recording template needs its EXPERIMENT too, not just the board: the
         // protocol lives in the experiment record and the board's markers node
         // resolves its topic from the binding. persistExperiment saves the board
@@ -1362,7 +1391,9 @@
             persistExperiment({
                 experiment_id: experimentId,
                 label: template.experiment.label,
-                workspace_id: selectedWorkspaceId ?? "",
+                // The workspace just created, NOT `selectedWorkspaceId` — that prop
+                // has not round-tripped through the page yet at this point.
+                workspace_id: templateWorkspaceId ?? "",
                 protocol: { ...template.experiment.protocol },
                 notes: "",
                 live_graph_id: selectedGraphId,

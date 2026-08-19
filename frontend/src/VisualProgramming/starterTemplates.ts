@@ -4,6 +4,10 @@
 // available stream when one is passed, else left blank for the user to pick.
 
 import type { SessionProtocol } from "../StreamViewer/types";
+// The ADL task list lives with the page it came from. Imported rather than copied:
+// two task lists that drift is exactly the failure the retirement ticket (#412)
+// exists to avoid while both paths are alive.
+import { adlStepProtocol } from "../AdlExperiment/tasks";
 import type { EditorGraphDefinition } from "./composites";
 import { PROVENANCE_PORT_MODELS, PROVENANCE_PORT_MODEL } from "./streamGraph";
 
@@ -17,6 +21,11 @@ export interface StarterTemplate {
     // resolves its topic from whichever experiment is bound
     // (experiment-history-snapshots-plan). The loader creates + binds this one.
     experiment?: { label: string; protocol: SessionProtocol };
+    // A template that is a whole study, not just a board, also names a WORKSPACE
+    // (TEC-NATKIT-56). The loader creates it and switches to it, so the experiment
+    // and board it makes are filed there rather than dropped into Unfiled — where
+    // they would immediately vanish from the lists the user is looking at.
+    workspace?: { label: string };
 }
 
 function baseGraph(label: string, description: string): EditorGraphDefinition {
@@ -308,6 +317,94 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                 edge("bandpass", "output", "rectify", "input"),
                 edge("rectify", "output", "envelope", "input"),
                 edge("envelope", "output", "viewer", "input"),
+            ];
+            return graph;
+        },
+    },
+    {
+        id: "imu-adl-session",
+        label: "IMU ADL session",
+        description:
+            "The post-stroke ADL study, ready to run: a workspace, the ADL protocol, and a board wired IMU → combine → export with a calibration readout.",
+        workspace: { label: "ADL study" },
+        experiment: {
+            label: "ADL tasks",
+            // The ADL task list as an authorable step protocol. Declared
+            // SessionProtocol on this interface but a StepProtocol is equally
+            // legitimate (see the Experiment type) — the step editor stores these
+            // and `isStepProtocol` discriminates at the read sites.
+            protocol: adlStepProtocol() as unknown as SessionProtocol,
+        },
+        build(sourceStreamId) {
+            const graph = baseGraph(
+                "IMU ADL session",
+                "Pick the participant when you press Record. The combine node bundles the IMU data with the experiment's marker timeline, which is what makes the exported Parquet carry label / label_phase / label_cue_id per row.",
+            );
+            // ⚠️ Laid out for the state this template LANDS IN, which has the
+            // experiment panel open as well as the board library — so the usable
+            // canvas is a narrow middle column, not the full width. Spread these
+            // out like the other templates and half the board sits behind a panel
+            // with its titles clipped, which is not "ready to run".
+            graph.nodes = [
+                { ...source(sourceStreamId), position: { x: 360, y: 180 } },
+                {
+                    id: "markers",
+                    kind: "markers",
+                    label: "Markers",
+                    position: { x: 360, y: 560 },
+                    input_port_ids: [],
+                    output_port_ids: ["markers"],
+                },
+                // The calibration readout hangs off the raw source: it reads the
+                // per-sensor accuracy the device reports, so it must see the
+                // device's own frames rather than anything derived.
+                {
+                    id: "calibration",
+                    kind: "viewer",
+                    label: "IMU Calibration",
+                    position: { x: 700, y: 40 },
+                    input_port_ids: ["input"],
+                    inline_graph: true,
+                    display_mode: "imu_calibration",
+                },
+                {
+                    id: "live",
+                    kind: "viewer",
+                    label: "Live IMU",
+                    position: { x: 700, y: 300 },
+                    input_port_ids: ["input"],
+                },
+                // Data + markers into ONE channel. That bundle IS the join the
+                // exporter needs; without it the Parquet comes back unlabelled.
+                {
+                    id: "combine",
+                    kind: "combine",
+                    label: "Combine",
+                    position: { x: 700, y: 560 },
+                    input_port_ids: ["in1", "in2"],
+                    output_port_ids: ["data"],
+                    output_identifier: `adl-session-combine-${suffix()}`,
+                },
+                {
+                    id: "export",
+                    kind: "export",
+                    label: "Export",
+                    position: { x: 700, y: 800 },
+                    input_port_ids: ["in1", "in2"],
+                    output_port_ids: [],
+                    config: {
+                        format: "parquet",
+                        label_field: "label",
+                        run_index: null,
+                    },
+                },
+            ];
+            graph.edges = [
+                edge("source", "data", "calibration", "input"),
+                edge("source", "data", "live", "input"),
+                edge("source", "data", "combine", "in1"),
+                edge("markers", "markers", "combine", "in2"),
+                edge("combine", "data", "export", "in1"),
             ];
             return graph;
         },
