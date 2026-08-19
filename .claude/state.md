@@ -98,7 +98,7 @@ fact. Lock order is now **workspace → experiment → graph → profile**.
 experiments, 8 graphs, 2 instances all survived, binding intact, members moved to
 Unfiled.
 
-### ⚠️ #406 — 70%, and the unverified bit
+### ✅ #406 — RESOLVED. The open behaviour was the harness, not the code
 
 Built: the lens (picker/board list/roster all scoped), Unfiled as a real view,
 selection persisted across reload, "N elsewhere" reporting, experiments filed into
@@ -109,22 +109,49 @@ confirm that says the contents survive.
 always serializes the key (`""`), a board only emits it when set (`undefined`).
 Either literal comparison silently drops half the unfiled records.
 
-➡️ **OPEN**: immediately after the **first-ever** create in a browser session the
-dropdown renders blank and rename/delete stay hidden, though the workspace IS
-created and selected. Ruled out: the backend (a raw WS client gets
-`workspace_saved` against empty AND populated stores) and the push handling (a
-second create in the same session applies fine). ⚠️ The isolated host stack cannot
-resolve the address Kafka advertises for itself, so the page loops on consume
-failures at exactly that moment — **confirming it needs the in-container
-backend**, i.e. restarting the live backend onto unmerged code, which also runs
-#403's back-fill against the real store. **Not done; waiting on Zach.**
+✅ **Re-tested against the LIVE in-container backend (Zach approved the restart) and
+the first-ever create works**: `save_workspace` → `workspace_saved`, option list
+updated, select value set, all three buttons, no console errors. Screenshots 08/09.
 
-⚠️ **My first fix for it was WRONG** — I assumed the Svelte `<select value={...}>`
-dynamic-option trap and switched to `bind:value` with a mirrored `$effect`. It did
-not fix it. The change was kept (better pattern) but it is not the cause.
+⚠️ **The earlier failure was the degraded harness** — the host-side isolated backend
+cannot resolve `natkit-v0-kafka`, the address the broker advertises for itself, so
+the page looped on consume failures at exactly the moment of the first save. **An
+isolated host stack is fine for store work and misleading for anything
+timing-adjacent.**
+
+⚠️ **My `bind:value` change fixed nothing.** I assumed the Svelte
+`<select value={...}>` dynamic-option trap; it never reproduced against a healthy
+backend. Kept because it is the better pattern, but it addressed no real defect.
 
 ⚠️ **A green `svelte-check` and 110 passing unit tests said nothing about any of
 this.** The blank control was only ever visible in a screenshot.
+
+## ⚠️ THE LIVE BACKEND IS NOW RUNNING UNMERGED CODE
+
+The in-container binary at `/libnatkit/build/libnatkit/tools/src/libnatkit-natkit-backend`
+was overwritten by an in-container `make` and the backend was restarted onto it
+(pid 560), so **the running dev stack includes #403-#405's backend changes**, which
+are on branches and not merged. To get back to the image's binary, rebuild from
+pristine sources in the container or recreate it.
+
+✅ **#403's back-fill ran against the real store** and did what the isolated run
+predicted: both instances `participant_unrecorded: true` with `participant_backfilled`
+absent, protocols recovered (`finger-counting-v1`, `adl-tasks-v1`) and flagged,
+**sealed state preserved** (`immutable: true`, `status: complete`) and all four
+artifacts still present with **sha256 matching what the instance recorded**.
+
+Backup taken first: `~/natkit-verification/live-store-backup-20260819-110646/`
+(both stores + `/instances`).
+
+⚠️ **My first artifact-integrity check reported every file MISSING.**
+`artifacts.data[].path` is a filename **relative to `artifacts.directory`**, not an
+absolute path. The files were fine. Same shape as the radio work's lying counters —
+a check that disagrees with expectation is itself a suspect.
+
+➡️ **#414 filed**: `NATKIT_WORKSPACE_STORE` is absent from every compose file, so the
+store landed on the **ephemeral container layer** (`/libnatkit/data/workspaces.json`)
+instead of `/graphs`. Workspaces vanish on a container recreate **while their contents
+survive**, leaving every experiment pointing at a workspace that no longer exists.
 
 ## Verification method used throughout, and worth reusing
 
@@ -163,16 +190,16 @@ only content is librdkafka, which writes to **stderr** (unbuffered). Fix:
 ## Ticket state
 
 ```
-  Verification   #403 #404 #405
-  Doing          #406 (70%)
-  Ice Box        #407 #408 #409 #410 #411 #412 (on hold) #413
+  Verification   #403 #404 #405 #406
+  Ice Box        #407 #408 #409 #410 #411 #412 (on hold) #413 #414
 ```
 
 Screenshots + captioned MANIFEST: `~/natkit-verification/406-5075ad4/`, attached to
 #406.
 
-**Next**: settle #406's open behaviour, then #407 (ADL/IMU workspace template) →
-#409 → #408 → #410. #411 (cohort export) is the payoff of the container.
+**Next**: #414 (one compose line, before any cohort is filed), then #407 (ADL/IMU
+workspace template) → #409 → #408 → #410. #411 (cohort export) is the payoff of the
+container.
 
 ---
 
