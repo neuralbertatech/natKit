@@ -760,6 +760,12 @@ export interface StreamGraphDefinition {
   // stored record, so a save can't launder a fork into a recording or re-parent
   // it. Read them; never author them.
   experiment_id?: string;
+  // Which workspace this board is filed under, or absent for Unfiled
+  // (TEC-NATKIT-56). A board carries its own so an unbound analysis board has
+  // somewhere to live; once an experiment is bound, save_experiment stamps the
+  // experiment's workspace here, because two halves of one binding in different
+  // workspaces is a state no picker could show honestly.
+  workspace_id?: string;
   instance_id?: string;
   immutable?: boolean;
   origin?: "recording" | "fork";
@@ -835,6 +841,9 @@ export interface InstanceRecording {
 export interface Experiment {
   experiment_id: string;
   label: string;
+  // Which workspace this experiment belongs to, or absent for Unfiled
+  // (TEC-NATKIT-56). Scoping the picker to this is the point of the container.
+  workspace_id?: string;
   // Declared as SessionProtocol, but a StepProtocol is equally legitimate here
   // and is what the step editor stores; `isStepProtocol` discriminates at the
   // read sites. Widening this union cascades through ExperimentPanel's
@@ -850,6 +859,68 @@ export interface Experiment {
   live_graph_id: string;
   created_at_us: number;
   updated_at_us: number;
+}
+
+// --- Workspaces (TEC-NATKIT-56) -------------------------------------------
+//
+// A selectable container, so picking an experiment is not picking from every
+// experiment ever made. Cohorts are the motivation: one workspace per study, with
+// its experiments, boards and participant roster inside it.
+//
+// It is a container and nothing more — the 1:1 experiment↔board binding is
+// untouched, boards do not inherit the workspace's experiment, and protocols are
+// not shared by reference.
+//
+// Membership lives on the MEMBER (`workspace_id` on experiments, boards and
+// profiles) and is deliberately not mirrored into a list here: two copies of the
+// same fact drift the first time something is deleted while a client holds a
+// stale list.
+export interface Workspace {
+  workspace_id: string;
+  label: string;
+  notes: string;
+  created_at_us: number;
+  updated_at_us: number;
+}
+
+export interface WorkspaceListMessage {
+  type: "workspace_list";
+  request_id: string;
+  workspaces: Workspace[];
+}
+
+export interface WorkspaceSavedMessage {
+  type: "workspace_saved";
+  request_id: string;
+  workspace_id: string;
+  workspace: Workspace;
+}
+
+export interface WorkspaceDeletedMessage {
+  type: "workspace_deleted";
+  request_id: string;
+  workspace_id: string;
+}
+
+export interface ListWorkspacesAction {
+  action: "list_workspaces";
+  request_id: string;
+}
+
+export interface SaveWorkspaceAction {
+  action: "save_workspace";
+  request_id: string;
+  workspace: Workspace;
+}
+
+// ⚠️ Deleting a workspace does NOT delete its contents: experiments, boards and
+// profiles survive with an empty `workspace_id`, which puts them in Unfiled. The
+// affordance that empties a filing cabinet reads as tidying up, so it must never
+// destroy a cohort's recorded history.
+export interface DeleteWorkspaceAction {
+  action: "delete_workspace";
+  request_id: string;
+  workspace_id: string;
 }
 
 export interface ExperimentListMessage {
@@ -1073,6 +1144,9 @@ export interface StreamGraphSavedMessage {
 export interface Profile {
   participant_id: string;
   display_name: string;
+  // Which workspace's roster this participant is on, or absent for Unfiled.
+  // ⚠️ ONE workspace: the same person cannot yet appear in two cohorts.
+  workspace_id?: string;
   model_path: string;
   graph_id: string;
   protocol_id: string;
