@@ -805,6 +805,11 @@ export interface InstanceRecording {
   protocol_backfilled?: boolean;
   // What was worn where, as recorded (TEC-NATKIT-62). Read; never author.
   sensor_positions?: { stream_id: string; position: string }[];
+  // Present only on runs taken below the calibration minimum on purpose
+  // (TEC-NATKIT-63), carrying the reason shown at the time. Its ABSENCE is the
+  // claim that the run met the threshold, so it must never be written by anything
+  // other than the gate.
+  calibration_override?: string;
   window_start_us?: number;
   window_end_us?: number | null;
   streams?: {
@@ -1452,6 +1457,9 @@ export interface StartExperimentInstanceAction {
   // physically re-placed each time — a mapping that lives only on the board is not
   // evidence about any particular run.
   sensor_positions?: { stream_id: string; position: string }[];
+  // Set when the operator recorded through the calibration gate (TEC-NATKIT-63).
+  // The value is the reason they were shown, so the run says WHAT was overridden.
+  calibration_override?: string;
   window_start_us?: number;
 }
 

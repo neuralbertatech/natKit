@@ -103,6 +103,8 @@
         ASSIGNABLE_SENSOR_POSITIONS,
         duplicatePositions,
         isAssignedPosition,
+        meetsCalibrationMinimum,
+        CALIBRATION_MINIMUM,
     } from "../StreamViewer/sensorPositions";
     import StreamGraphNodeCard from "./StreamGraphNode.svelte";
     import ExperimentRunner from "./ExperimentRunner.svelte";
@@ -224,6 +226,7 @@
             windowStartUs: number,
             participantId: string,
             sensorPositions: { stream_id: string; position: string }[],
+            calibrationOverride: string | null,
         ) => boolean;
         finishExperimentInstance: (
             graphId: string,
@@ -3127,6 +3130,43 @@
                 "Protocol has no cues — add classes and timing first.";
             return;
         }
+        // THE GATE (TEC-NATKIT-63). Before the participant is even asked: there is no
+        // point collecting a name for a run that cannot legitimately start.
+        if (hardBlockReason) {
+            // Hard: an operator error, fixable now, and a run recorded with it is
+            // worthless. Stated rather than silently disabling Record — a greyed
+            // button with no reason is what sends someone hunting through nodes.
+            sessionRecordMessage = hardBlockReason;
+            await showAlert({
+                title: "Cannot record yet",
+                body: hardBlockReason,
+            });
+            return;
+        }
+        let calibrationOverride: string | null = null;
+        if (calibrationWarning) {
+            // Soft: a judgement. A pilot, a bench test, or a rig whose accuracy feed
+            // is not configured are all legitimate reasons to go ahead.
+            const proceed = await askConfirm({
+                title: "Record below the calibration minimum?",
+                body: calibrationWarning,
+                points: [
+                    "The run will be recorded and marked as taken below the minimum, so it can be found again later.",
+                ],
+                confirmLabel: "Record anyway",
+                danger: true,
+            });
+            if (!proceed) {
+                sessionRecordMessage = calibrationWarning;
+                return;
+            }
+            // ⚠️ Recorded IN THE RUN, not merely permitted. A session taken below
+            // threshold on purpose is fine; one that cannot be identified afterwards
+            // is not — and by then the accuracies that justified the decision are
+            // long gone.
+            calibrationOverride = calibrationWarning;
+        }
+
         // WHO is asked here, per run, before anything is published or timestamped
         // (TEC-NATKIT-55). It used to be a field on the experiment, which could
         // only ever name the most recent person — so one procedure recording a
@@ -3221,6 +3261,7 @@
                     stream_id: entry.stream_id,
                     position: entry.position,
                 })),
+            calibrationOverride,
         );
         sessionRecordMessage = `Recording markers as ${sessionId}…`;
         sessionRecordTimer = setInterval(tickSessionRecording, 100);
@@ -4391,13 +4432,25 @@
     let accuracyTimer: ReturnType<typeof setInterval> | null = null;
     let accuracySelectionMissing = $state(false);
 
+    // Poll while EITHER a calibration node is on the board (it renders the
+    // readout) OR any source states a body position (the Record gate needs the
+    // accuracies to decide — TEC-NATKIT-63). Without the second condition a gated
+    // board with no calibration node would report every sensor as Unknown and block
+    // for a reason that is really "nobody is looking".
     const hasCalibrationNode = $derived(
         draftGraph.nodes.some(
             (node) =>
                 node.kind === "viewer" &&
                 (node as { display_mode?: string }).display_mode ===
                     "imu_calibration",
-        ),
+        ) ||
+            draftGraph.nodes.some(
+                (node) =>
+                    node.kind === "stream_source" &&
+                    isAssignedPosition(
+                        (node as { sensor_position?: string }).sensor_position,
+                    ),
+            ),
     );
 
     async function pollSensorAccuracies() {
@@ -4437,6 +4490,52 @@
                 accuracyTimer = null;
             }
         };
+    });
+
+    // Calibration of each POSITIONED source, for the Record gate (TEC-NATKIT-63).
+    // Read straight from the polled accuracies by stream id, so the gate does not
+    // require a calibration node per sensor — a board can be gated without also
+    // being instrumented.
+    const positionedSourceCalibration = $derived(
+        sourcePositions
+            .filter((entry) => isAssignedPosition(entry.position))
+            .map((entry) => {
+                const raw = entry.stream_id
+                    ? sensorAccuracies[String(entry.stream_id)]
+                    : undefined;
+                const status = calibration_status_for_accuracies(raw);
+                return {
+                    ...entry,
+                    status,
+                    statusLabel: calibration_status_to_string(status),
+                    ok: meetsCalibrationMinimum(status),
+                };
+            }),
+    );
+
+    const undercalibratedSources = $derived(
+        positionedSourceCalibration.filter((entry) => !entry.ok),
+    );
+
+    // ⚠️ TWO TIERS, and the distinction is deliberate.
+    //
+    // A duplicate or missing body position is an OPERATOR ERROR: it is fixable in
+    // five seconds and a run recorded with it is worthless, so it is a hard block.
+    //
+    // Calibration below threshold — or unknown, which a gate must treat the same
+    // way — is a JUDGEMENT. A pilot, a bench test, or a rig whose accuracy feed is
+    // not configured are all legitimate reasons to record anyway. So it is
+    // overridable, and the override is recorded IN THE RUN, because a session
+    // recorded below threshold on purpose is fine and one that cannot be
+    // identified afterwards is not.
+    const hardBlockReason = $derived(positionMappingProblem);
+
+    const calibrationWarning = $derived.by(() => {
+        if (undercalibratedSources.length === 0) return null;
+        const parts = undercalibratedSources
+            .map((entry) => `${entry.position} (${entry.statusLabel})`)
+            .join(", ");
+        return `Calibration below the minimum on ${parts}. Move each sensor through its full range until it reads Medium or better.`;
     });
 
     // Resolve the calibration state for a calibration node: its upstream stream's
@@ -5815,6 +5914,8 @@
                         {experiments}
                         {workspaces}
                         {selectedWorkspaceId}
+                        {hardBlockReason}
+                        {calibrationWarning}
                         bound={boundExperimentView}
                         boardId={selectedGraphId}
                         readOnly={boardIsImmutable}

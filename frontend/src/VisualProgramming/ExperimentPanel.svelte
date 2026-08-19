@@ -66,6 +66,15 @@
         // so this control moves BOTH halves of the binding at once.
         workspaces: Workspace[];
         selectedWorkspaceId: string | null;
+        // The setup gate (TEC-NATKIT-63), computed by the editor because it depends
+        // on the board's sources. Two tiers, deliberately:
+        //   hardBlockReason  — an operator error (unmapped or duplicated body
+        //                      position). Fixable now, and a run recorded with it is
+        //                      worthless, so Record is refused.
+        //   calibrationWarning — a judgement. Record stays available and asks for
+        //                      confirmation, and the override is recorded in the run.
+        hardBlockReason: string | null;
+        calibrationWarning: string | null;
         // Opens the ExperimentDesigner overlay, where the protocol is authored.
         onEditProtocol: () => void;
         onDelete: () => void;
@@ -92,6 +101,8 @@
         onPatch,
         workspaces,
         selectedWorkspaceId,
+        hardBlockReason,
+        calibrationWarning,
         onEditProtocol,
         onDelete,
         onRecord,
@@ -154,6 +165,10 @@
                 : "Add at least one class to the protocol.";
         if (!summary || summary.holdCues === 0)
             return "The protocol produces no cues — check the timing.";
+        // Last, because the protocol problems above are about the experiment while
+        // this one is about the physical setup, and an operator fixing things wants
+        // the experiment sound before being sent to re-place a sensor.
+        if (hardBlockReason) return hardBlockReason;
         return null;
     });
 </script>
@@ -359,6 +374,11 @@
         </div>
         {#if !recording && recordBlockedReason}
             <p class="muted-text">{recordBlockedReason}</p>
+        {:else if !recording && calibrationWarning}
+            <!-- Not a block: Record stays enabled and asks. Shown here anyway so
+                 the operator can fix the calibration BEFORE pressing it, rather than
+                 meeting the question at the worst moment. -->
+            <p class="calibration-warning">{calibrationWarning}</p>
         {/if}
 
         {#if recording}
@@ -642,6 +662,13 @@
         color: #e6ecf5;
         padding: 0.28rem;
         cursor: pointer;
+    }
+
+    .calibration-warning {
+        margin: 0.4rem 0 0;
+        font-size: 0.72rem;
+        line-height: 1.45;
+        color: #fbd88a;
     }
 
     .muted-text {

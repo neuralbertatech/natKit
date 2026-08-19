@@ -650,6 +650,10 @@
         windowStartUs: number,
         participantId: string,
         sensorPositions: { stream_id: string; position: string }[],
+        // Non-null when the operator recorded through the calibration gate; the
+        // text is the reason they were shown, so the run carries what was overridden
+        // rather than just that something was.
+        calibrationOverride: string | null,
     ): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
@@ -661,6 +665,9 @@
             experiment_id: experimentId,
             participant_id: participantId,
             sensor_positions: sensorPositions,
+            ...(calibrationOverride
+                ? { calibration_override: calibrationOverride }
+                : {}),
             window_start_us: windowStartUs,
         });
         return true;

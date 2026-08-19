@@ -60,3 +60,25 @@ export function duplicatePositions(
         .filter(([, count]) => count > 1)
         .map(([position]) => position as SensorPositionName);
 }
+
+// --- The Record gate's calibration threshold (TEC-NATKIT-63) ---------------
+//
+// `CalibrationStatus` runs Unknown(0) / Unreliable(1) / Low(2) / Medium(3) /
+// High(4). The minimum a run must clear is a DECISION, not a constant to guess at,
+// so it is named here with its reasoning rather than buried in a comparison:
+//
+// **Medium.** Below that the BNO08x's own fusion is telling you it does not trust
+// its own orientation, and an ADL study's whole signal is limb orientation over a
+// 10-15 s window. Requiring High would be stricter than the hardware reliably
+// reaches while worn — the magnetometer in particular sits at Medium indoors — so
+// it would make the gate something operators route around rather than satisfy,
+// which is worse than a threshold slightly too low.
+export const CALIBRATION_MINIMUM = 3; // CalibrationStatus.Medium
+
+// Unknown(0) is deliberately NOT treated as "probably fine". A missing reading and
+// a bad reading are the same thing to a gate: nothing has said this sensor is
+// trustworthy. It stays overridable, because "no calibration data available" is a
+// rig-configuration state an operator may legitimately need to record through.
+export function meetsCalibrationMinimum(status: number | undefined): boolean {
+    return typeof status === "number" && status >= CALIBRATION_MINIMUM;
+}

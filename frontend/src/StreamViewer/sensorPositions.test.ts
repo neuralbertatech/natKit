@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
     ASSIGNABLE_SENSOR_POSITIONS,
+    CALIBRATION_MINIMUM,
     SENSOR_POSITION_NAMES,
     duplicatePositions,
     isAssignedPosition,
+    meetsCalibrationMinimum,
 } from "./sensorPositions";
 
 describe("sensor positions", () => {
@@ -55,5 +57,27 @@ describe("sensor positions", () => {
 
     it("says nothing about a correct full seven-sensor mapping", () => {
         expect(duplicatePositions([...ASSIGNABLE_SENSOR_POSITIONS])).toEqual([]);
+    });
+});
+
+describe("the Record gate's calibration minimum", () => {
+    it("is Medium — named, not guessed", () => {
+        // CalibrationStatus: Unknown 0, Unreliable 1, Low 2, Medium 3, High 4.
+        expect(CALIBRATION_MINIMUM).toBe(3);
+    });
+
+    it("passes Medium and High, refuses Low and Unreliable", () => {
+        expect(meetsCalibrationMinimum(4)).toBe(true);
+        expect(meetsCalibrationMinimum(3)).toBe(true);
+        expect(meetsCalibrationMinimum(2)).toBe(false);
+        expect(meetsCalibrationMinimum(1)).toBe(false);
+    });
+
+    it("⚠️ refuses Unknown, and refuses a missing reading the same way", () => {
+        // A missing reading and a bad reading are the same thing to a gate: nothing
+        // has said this sensor is trustworthy. Treating Unknown as "probably fine"
+        // is how a rig with no accuracy feed records a whole cohort unchecked.
+        expect(meetsCalibrationMinimum(0)).toBe(false);
+        expect(meetsCalibrationMinimum(undefined)).toBe(false);
     });
 });
