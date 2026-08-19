@@ -773,6 +773,21 @@ export interface StreamGraphDefinition {
 // read-only here.
 export interface InstanceRecording {
   session_id: string;
+  // WHO was recorded, and WHAT they were asked to do, captured when the instance
+  // was created. Before this existed both were resolved at read time through the
+  // live experiment's editable fields, so retyping the participant retroactively
+  // reassigned every past run of that experiment while the artifact checksums
+  // kept verifying. Read these; never author them.
+  participant_id?: string;
+  protocol?: unknown;
+  // Set only on runs repaired by the one-time back-fill. Three states have to stay
+  // distinguishable: captured at record time (neither flag), recovered from the
+  // experiment record afterwards (`participant_backfilled` — a weaker claim), and
+  // never entered by anyone (`participant_unrecorded` — no claim at all, which is
+  // what every run made before the Record gate existed turns out to be).
+  participant_backfilled?: boolean;
+  participant_unrecorded?: boolean;
+  protocol_backfilled?: boolean;
   window_start_us?: number;
   window_end_us?: number | null;
   streams?: {
