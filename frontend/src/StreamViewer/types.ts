@@ -840,7 +840,12 @@ export interface Experiment {
   // read sites. Widening this union cascades through ExperimentPanel's
   // patch-a-protocol callbacks, so callers cast on the way in instead.
   protocol: SessionProtocol | null;
-  participant_id: string;
+  // DEPRECATED (TEC-NATKIT-55): the participant belongs to a RUN, and is passed
+  // with start_experiment_instance. Kept only so the stored value survives a
+  // round trip — it is the one-time back-fill's only source for runs recorded
+  // before the instance snapshotted its own participant. Do not read it, do not
+  // offer it for editing.
+  participant_id?: string;
   notes: string;
   live_graph_id: string;
   created_at_us: number;
@@ -1350,6 +1355,10 @@ export interface StartExperimentInstanceAction {
   action: "start_experiment_instance";
   request_id: string;
   experiment_id: string;
+  // WHO this run is of. Per run, not per experiment: one experiment records a
+  // whole cohort, so the procedure cannot name the person. Omitted or empty is
+  // recorded by the backend as explicitly unattributed rather than inherited.
+  participant_id?: string;
   window_start_us?: number;
 }
 

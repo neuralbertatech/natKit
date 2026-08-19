@@ -158,7 +158,22 @@
                     />
                 </label>
 
-                {#if collision}
+                {#if collision && current.existingMeansReuse}
+                    <!-- Picking an existing entry is the intended action here, so
+                         this confirms the match instead of warning about it. -->
+                    <p class="dialog-reuse">
+                        <span class="collision-icon">
+                            <Check size={12} />
+                        </span>
+                        <span>
+                            Matches the existing {current.noun ?? "record"}
+                            <strong>{collision.name}</strong
+                            >{collision.hint
+                                ? ` (${collision.hint})`
+                                : ""}.
+                        </span>
+                    </p>
+                {:else if collision}
                     <!-- The text lives in one span: this is a flex row, so bare
                          text nodes would each become their own flex item and
                          stack into columns. -->
@@ -368,6 +383,18 @@
         font-size: 0.72rem;
         line-height: 1.45;
         color: #fbd88a;
+    }
+
+    /* Same shape as .dialog-collision, affirmative colour: a match is the goal
+       when the dialog is a picker, so it must not read as the amber warning. */
+    .dialog-reuse {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.3rem;
+        margin: 0;
+        font-size: 0.72rem;
+        line-height: 1.45;
+        color: #86e3a8;
     }
 
     .collision-icon {

@@ -527,6 +527,7 @@
     function startExperimentInstance(
         experimentId: string,
         windowStartUs: number,
+        participantId: string,
     ): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             lastError = "Visual Programming WebSocket is not connected";
@@ -536,6 +537,7 @@
             action: "start_experiment_instance",
             request_id: `instance-start:${Date.now()}`,
             experiment_id: experimentId,
+            participant_id: participantId,
             window_start_us: windowStartUs,
         });
         return true;

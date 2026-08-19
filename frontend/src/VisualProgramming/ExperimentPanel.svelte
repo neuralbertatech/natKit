@@ -5,8 +5,9 @@
     // a first-class object authored entirely in this side panel — which crammed
     // a 30-step protocol editor into a 320px strip. Authoring now lives in the
     // ExperimentDesigner overlay ("Edit protocol"); this panel is the OPERATOR
-    // surface: bind/create an experiment, set the participant, Record/Stop,
-    // watch the live cue, and review the recorded history.
+    // surface: bind/create an experiment, Record/Stop, watch the live cue, and
+    // review the recorded history. The participant is NOT here — it belongs to the
+    // run, so Record asks for it (TEC-NATKIT-55).
     import {
         CircleDot,
         Pencil,
@@ -225,17 +226,15 @@
                     })}
             />
         </label>
-        <label>
-            <span>Participant id</span>
-            <input
-                value={bound.participant_id}
-                oninput={(event) =>
-                    onPatch({
-                        participant_id: (event.currentTarget as HTMLInputElement)
-                            .value,
-                    })}
-            />
-        </label>
+        <!-- No participant field: it belongs to the RUN, and Record asks for it
+             (TEC-NATKIT-55). A field here could only ever name the most recent
+             person, so one procedure recording a cohort attributed every run to
+             whoever was typed last — and editing it retroactively reassigned the
+             runs already recorded. -->
+        <p class="hint-text">
+            Participant is chosen when you press Record, so one experiment can
+            record a whole cohort.
+        </p>
         <label>
             <span>Notes</span>
             <input

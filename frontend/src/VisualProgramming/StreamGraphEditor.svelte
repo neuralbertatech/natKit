@@ -201,6 +201,7 @@
         startExperimentInstance: (
             experimentId: string,
             windowStartUs: number,
+            participantId: string,
         ) => boolean;
         finishExperimentInstance: (
             graphId: string,
@@ -1340,7 +1341,6 @@
                 experiment_id: experimentId,
                 label: template.experiment.label,
                 protocol: { ...template.experiment.protocol },
-                participant_id: "",
                 notes: "",
                 live_graph_id: selectedGraphId,
                 created_at_us: nowUs,
@@ -2405,7 +2405,6 @@
             experiment_id: experimentId,
             label,
             protocol: { ...FINGER_COUNTING_PROTOCOL },
-            participant_id: "",
             notes: "",
             live_graph_id: selectedGraphId,
             created_at_us: nowUs,
@@ -2811,7 +2810,35 @@
         );
     });
 
-    function startSessionRecording(experiment: Experiment) {
+    // Ask who this run is of. Returns the participant id, or null if the operator
+    // backed out (which must abort the recording — see the call site).
+    //
+    // The roster is the profile store for now; TEC-NATKIT-57 scopes it to the
+    // selected workspace so a cohort's list is not every participant ever seen.
+    async function askParticipantForRun(): Promise<string | null> {
+        const chosen = await askName({
+            title: "Who is this run of?",
+            body: "The participant belongs to the run, not to the experiment — one procedure can record a whole cohort. Pick someone already on the roster, or type a new id for a first session.",
+            label: "Participant",
+            placeholder: "e.g. P-042",
+            noun: "participant",
+            existingMeansReuse: true,
+            existing: profiles.map((profile) => ({
+                name: profile.participant_id,
+                hint: profile.display_name,
+            })),
+            confirmLabel: "Start recording",
+        });
+        if (chosen === null) {
+            return null;
+        }
+        // Sanitized because it becomes part of session metadata and marker
+        // attributes, which are identifier-shaped. An id that sanitizes to nothing
+        // is treated as no answer rather than silently recorded as "".
+        return sanitizeIdentifier(chosen) || null;
+    }
+
+    async function startSessionRecording(experiment: Experiment) {
         if (sessionRecording) {
             return;
         }
@@ -2828,6 +2855,22 @@
                 "Protocol has no cues — add classes and timing first.";
             return;
         }
+        // WHO is asked here, per run, before anything is published or timestamped
+        // (TEC-NATKIT-55). It used to be a field on the experiment, which could
+        // only ever name the most recent person — so one procedure recording a
+        // cohort attributed every run to whoever was typed in last, and editing
+        // that field retroactively reassigned the runs already recorded.
+        //
+        // The roster is the profile store, and a name not in it is accepted: the
+        // first session of a new participant has nothing to pick from.
+        const participantId = await askParticipantForRun();
+        if (participantId === null) {
+            // Cancelled. Deliberately NOT a recording with an empty participant:
+            // backing out of this dialog has to mean no run, or the dialog is
+            // just a speed bump on the way to unattributed data.
+            sessionRecordMessage = "Recording cancelled — no participant chosen.";
+            return;
+        }
         // Deterministic session↔stream binding: stamp the resolved device_id
         // string(s) of every source on the board, so reconstruction reads the
         // right topics directly instead of scanning the broker to guess "the one
@@ -2842,9 +2885,11 @@
             experiment.experiment_id ||
                 buildDefaultSessionId(protocol.protocol_id || "experiment"),
         );
+        // AFTER the participant dialog: a dialog the operator sat in front of for
+        // twenty seconds would otherwise put the session's start twenty seconds
+        // before its first cue.
         const startedAtEpochMs = Date.now();
         const startedAtUs = startedAtEpochMs * 1000;
-        const participantId = experiment.participant_id ?? "";
         const notes = experiment.notes ?? "";
         const meta = buildSessionMetadataRecordPayload({
             sessionId,
@@ -2892,7 +2937,11 @@
         // Mint the instance: the backend snapshots the board and opens the window
         // at the SAME timestamp the markers are stamped with, so the snapshot's
         // window and its marker timeline describe one run.
-        startExperimentInstance(experiment.experiment_id, startedAtUs);
+        startExperimentInstance(
+            experiment.experiment_id,
+            startedAtUs,
+            participantId,
+        );
         sessionRecordMessage = `Recording markers as ${sessionId}…`;
         sessionRecordTimer = setInterval(tickSessionRecording, 100);
     }

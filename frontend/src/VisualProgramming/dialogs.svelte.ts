@@ -58,6 +58,13 @@ export interface NameOptions extends DialogChoice, DialogCopy {
     existing?: NameSuggestion[];
     /** What the existing names are, for wording ("experiment", "profile"). */
     noun?: string;
+    /**
+     * Whether typing an existing name is the POINT (picking a participant from a
+     * roster) or a hazard (two boards with the same label). Naming something new
+     * is the default; a picker sets this, otherwise choosing the right existing
+     * entry is met with a warning that it will be hard to tell apart from itself.
+     */
+    existingMeansReuse?: boolean;
 }
 
 interface BaseRequest {
