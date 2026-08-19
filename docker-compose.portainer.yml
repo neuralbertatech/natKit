@@ -120,6 +120,14 @@ services:
       # Experiments live alongside the graphs: an experiment owns a board and its
       # recorded instances, so losing this store orphans history.
       NATKIT_EXPERIMENT_STORE: /graphs/experiments.json
+      # Workspaces and profiles belong on the same volume for the same reason.
+      # ⚠️ Both defaulted to ./data/*.json — the ephemeral layer — so a container
+      # recreate lost them WHILE THEIR CONTENTS SURVIVED: membership lives on the
+      # member (`workspace_id` on experiments, boards and profiles), so every
+      # experiment would point at a workspace that no longer exists, and the picker
+      # shows that as an empty list. It reads as "my experiments are gone".
+      NATKIT_WORKSPACE_STORE: /graphs/workspaces.json
+      NATKIT_PROFILE_STORE: /graphs/profiles.json
       # NOTE: auth is ENFORCED here (no NATKIT_AUTH_DISABLED). Bootstrap the first
       # admin on first run (see header). Default bootstrap mode = password.
     volumes:

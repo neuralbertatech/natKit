@@ -36,6 +36,14 @@ services:
       # Experiments live on the same volume: an experiment owns a board and (from
       # Phase 2) its recorded instances, so losing this store orphans history.
       NATKIT_EXPERIMENT_STORE: /graphs/experiments.json
+      # Workspaces and profiles belong on the same volume for the same reason.
+      # ⚠️ Both defaulted to ./data/*.json — the ephemeral layer — so a container
+      # recreate lost them WHILE THEIR CONTENTS SURVIVED: membership lives on the
+      # member (`workspace_id` on experiments, boards and profiles), so every
+      # experiment would point at a workspace that no longer exists, and the picker
+      # shows that as an empty list. It reads as "my experiments are gone".
+      NATKIT_WORKSPACE_STORE: /graphs/workspaces.json
+      NATKIT_PROFILE_STORE: /graphs/profiles.json
       # Materialized instance artifacts (Parquet + the markers sidecar). These ARE
       # the permanence guarantee — the whole point is that the data has left Kafka —
       # so they live on their own named volume, never the container layer.
