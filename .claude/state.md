@@ -129,6 +129,76 @@ hardware, not argued: after reflashing the primary, `nodes_known` still reads 3.
 ⚠️ Needs `rm build/<target>-<role>/sdkconfig` to take effect; a build without that
 silently keeps the old table.
 
+## ✅ PUSHED. All four repos on trunk and in sync with GitHub (2026-08-19)
+
+```
+  libnatkit-core  793cd80    libnatkit  96ec38c
+  natKit-IMU      cf9cef0    natKit     2dff217   + tag archive/c-build-2024
+```
+
+⚠️ **The remotes were HTTPS with no credential helper on this box** (`ksshaskpass`
+is not installed), so `origin` was switched to SSH in libnatkit-core, libnatkit and
+the superproject. natKit-IMU was already SSH. Reversible: the old URLs were
+`https://github.com/neuralbertatech/<repo>`.
+
+⚠️ **`searcher` had pushed Windows fixes that we did not have** — `f0941d6` in
+libnatkit and `c5560e5` in the superproject, both 2026-08-05. The first push attempt
+was correctly REJECTED as non-fast-forward. Merged rather than forced; the
+superproject's `libnatkit` submodule pointer conflicted and was resolved to ours
+**after verifying ours is a descendant of theirs**, so nothing of theirs was lost
+(their `.gitattributes` and `docs/docker-compose-dev-troubleshooting.md` are both
+present on trunk).
+
+### libnatkit-core's trunk was replaced, deliberately
+
+Its trunk had not moved since 2024-05-02 and carried a 12-commit C build that every
+consumer had long since abandoned. `793cd80`'s tree is **byte-identical to the branch
+in use** (0 `.c` files, 33 `.cpp`, tree hash verified equal). Recorded as a MERGE, not
+a force-move, so trunk stays a descendant of its old tip and nobody needs a
+force-push or a re-clone. The discarded tip is tagged **`archive/c-build-2024`** and
+pushed, because the roadmap still intends a C++ → C move and that PR is the previous
+attempt at it.
+
+## ✅ TEC-NATKIT-48 FIXED: wander 40.3 ms -> 7.0 ms. A free-running crystal.
+
+Measured first, four 300 s windows, offset = arrival at the broker minus the frame's
+last sample time (the number a recording actually inherits, since
+`rewriteFrameTimestamps` stamps from the hub's wall clock):
+
+```
+  +5.9 -> -4.1 -> -14.3 -> -24.9 -> -34.4 ms      drift -10.0 -10.5 -9.7 -9.5 /300s
+```
+
+Dead linear, **-119 ms/hour = -33.1 ppm**. `CONFIG_LWIP_SNTP_UPDATE_DELAY` defaults to
+**ONE HOUR**, so the clock coasts, accumulates ~119 ms and is stepped back. Now 60 s.
+
+```
+  before  poll 3600 s   -119.1 ms/hour   40.3 ms wander / 20 min
+  after   poll   60 s    +25.2 ms/hour    7.0 ms
+```
+
+⚠️⚠️ **SNTP_SYNC_MODE_SMOOTH WAS TRIED AND IS MUCH WORSE — do not re-attempt.** The
+reasoning for it was sound (this clock stamps every sample, so a backwards STEP writes
+non-monotonic timestamps into a recording). Measured, the hub came up from a reflash
+**41 SECONDS out** and adjtime crawled it back at 4.4 s per 300 s -- all four leaves
+reporting an identical **+20.8 s** forty minutes later with healthy fits, which is how
+it was pinned on the hub's clock rather than the leaves' fits. Smooth mode's 35-minute
+step threshold is far too loose. **The shorter poll is what removes the
+non-monotonicity risk** (~2 ms of accumulated error = ~2 ms steps). Recorded in the
+code.
+
+⚠️ **EXPOSED, not caused: a steady +35..42 ms offset** is now visible with the clock no
+longer sweeping through zero. Age plus bias, and the two have opposite consequences --
+if bias, every recording is shifted ~38 ms against anything the rig does not stamp
+itself. **Filed as #402 / TEC-NATKIT-53**, with the decomposition method (host-side
+subscriber first to remove the `podman exec` tail, then publish the primary's own
+`wall_now - frame_last_sample_wall` to split leaf-side from hub-side).
+⚠️ **Do not "correct" it with a constant before decomposing it.**
+
+✅ **TEC-NATKIT-47 closed**: residuals 41-67 us over 178 windows against a saturated
+0xFFFFFFFF before, and the leaves now agree with the primary's independent coherence
+probe (64-82 us) where the two used to disagree by five orders of magnitude.
+
 ## ⚠️⚠️ OVERNIGHT VERDICT: THE FLOOR NEVER MOVED. IT IS THE SIGNAL, AND IT IS PER-BOARD.
 
 178 windows x 300 s, channel 3, 2026-08-18 16:13 -> 08-19 07:04. 52 lossy, 126 clean:
