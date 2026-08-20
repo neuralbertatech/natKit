@@ -128,11 +128,21 @@ services:
       # shows that as an empty list. It reads as "my experiments are gone".
       NATKIT_WORKSPACE_STORE: /graphs/workspaces.json
       NATKIT_PROFILE_STORE: /graphs/profiles.json
+      # ⚠️ Materialized instance artifacts (Parquet + the markers sidecar) — the
+      # permanence guarantee, and the one store this file was missing entirely
+      # (TEC-NATKIT-67). Without it they defaulted to the ephemeral container layer,
+      # so a recreate destroyed the DATA while stream_graphs.json (on the graphs
+      # volume) kept describing it: a sealed instance still reporting `complete`,
+      # its row counts, its label histogram and its sha256, pointing at Parquet
+      # files that no longer exist. The checksum that would catch corruption cannot
+      # catch absence.
+      NATKIT_INSTANCE_STORE: /instances
       # NOTE: auth is ENFORCED here (no NATKIT_AUTH_DISABLED). Bootstrap the first
       # admin on first run (see header). Default bootstrap mode = password.
     volumes:
       - natkit-v0-auth:/auth
       - natkit-v0-graphs:/graphs
+      - natkit-v0-instances:/instances
       - natkit-v0-models:/models:ro
       - natkit-v0-backend-log:/logs
     networks:
@@ -214,6 +224,7 @@ volumes:
   natkit-v0-kafka-data:
   natkit-v0-auth:
   natkit-v0-graphs:
+  natkit-v0-instances:
   natkit-v0-models:
   natkit-v0-backend-log:
   natkit-v0-cp-state:
