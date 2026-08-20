@@ -570,7 +570,15 @@ export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraph
 
 export interface StreamGraphSourceNode extends StreamGraphBaseNode<"stream_source"> {
   kind: "stream_source";
-  stream_id: string;
+  // ⚠️ OPTIONAL, because a source with no stream chosen yet is a real state — a
+  // starter template on a rig that is not currently streaming, or a node dropped
+  // before picking from the dropdown (TEC-NATKIT-66).
+  //
+  // This was `string`, which made `""` the only way to express "unbound" — and the
+  // backend parses stream_id only if the key is PRESENT and then demands a
+  // non-negative integer, so `""` silently made the whole board unsavable. The type
+  // asserted something false and the bug followed from it.
+  stream_id?: string;
   schema_name?: string;
   // Which body position this sensor is worn at (TEC-NATKIT-62). One of
   // SENSOR_POSITION_NAMES; absent or "N/A" means not stated.

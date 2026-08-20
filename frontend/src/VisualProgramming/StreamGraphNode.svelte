@@ -140,7 +140,7 @@
     // "Stream <id>" label, falling back to the stream id when no frame has named
     // it yet.
     const displayLabel = $derived(
-        node.kind === "stream_source"
+        node.kind === "stream_source" && node.stream_id
             ? (streamDeviceNames?.[node.stream_id] ?? node.label)
             : node.label,
     );

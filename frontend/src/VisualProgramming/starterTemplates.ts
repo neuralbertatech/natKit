@@ -54,7 +54,19 @@ function source(streamId: string | null): EditorGraphDefinition["nodes"][number]
         kind: "stream_source",
         label: "Stream source",
         position: { x: 40, y: 200 },
-        stream_id: streamId ?? "",
+        // ⚠️ OMITTED, not "", when there is no stream to bind (TEC-NATKIT-66).
+        //
+        // The backend parses `stream_id` only `if (json.contains("stream_id"))` and
+        // then demands a non-negative integer, so an empty string makes the whole
+        // board unsavable — and a rig that is not currently streaming has no stream
+        // to offer, which is its normal resting state. Every template shares this
+        // helper, so `?? ""` broke all five of them there: the board appeared on the
+        // canvas, its save was rejected, and the experiment save then failed with
+        // "Unknown graph" because its live_graph_id had never been persisted.
+        //
+        // An absent stream_id is exactly what "pick a stream later" should serialize
+        // to, which is what the source inspector's dropdown is for.
+        ...(streamId ? { stream_id: streamId } : {}),
         output_port_ids: ["data"],
     };
 }

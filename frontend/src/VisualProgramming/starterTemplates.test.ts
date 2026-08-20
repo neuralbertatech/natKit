@@ -11,6 +11,36 @@ function template(id: string) {
     return found;
 }
 
+describe("every starter template with no stream to bind", () => {
+    // ⚠️ THE REGRESSION THIS EXISTS FOR (TEC-NATKIT-66): `stream_id: ""` made the
+    // whole board unsavable, because the backend parses stream_id only when the key
+    // is PRESENT and then demands a non-negative integer. The board appeared on the
+    // canvas, its save was rejected, and the experiment save then failed with
+    // "Unknown graph" — pointing at a symptom rather than the cause.
+    //
+    // The previous tests all called build(null) and passed, because they asserted
+    // the graph's SHAPE and an empty stream_id is a legitimate shape. Only the
+    // backend had an opinion, and only on a rig that was not streaming.
+    for (const template of STARTER_TEMPLATES) {
+        it(`omits stream_id rather than sending "" — ${template.id}`, () => {
+            const graph = template.build(null);
+            for (const node of graph.nodes) {
+                if (node.kind !== "stream_source") continue;
+                expect(
+                    Object.prototype.hasOwnProperty.call(node, "stream_id") &&
+                        (node as { stream_id?: string }).stream_id === "",
+                ).toBe(false);
+            }
+        });
+    }
+
+    it("still binds a real stream when one is passed", () => {
+        const graph = template("imu-adl-session").build("13793649670644");
+        const source = graph.nodes.find((n) => n.kind === "stream_source");
+        expect((source as { stream_id?: string })?.stream_id).toBe("13793649670644");
+    });
+});
+
 describe("IMU ADL session template", () => {
     it("is registered and names a workspace", () => {
         const adl = template("imu-adl-session");
