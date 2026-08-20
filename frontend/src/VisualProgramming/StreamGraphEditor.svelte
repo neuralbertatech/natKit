@@ -2915,6 +2915,70 @@
         hiddenCounts.experiments + hiddenCounts.graphs + hiddenCounts.profiles,
     );
 
+    // Cohort export (TEC-NATKIT-65): every completed run in this workspace as one
+    // tar, straight from the backend's materialized artifacts.
+    let cohortDownload = $state<{ status: "idle" | "downloading" | "done" | "failed"; message: string }>({
+        status: "idle",
+        message: "",
+    });
+
+    async function downloadCohort() {
+        // The empty id is Unfiled, which is a legitimate thing to export -- so this
+        // is a valid request rather than a missing parameter.
+        const params = new URLSearchParams({
+            workspace_id: selectedWorkspaceId ?? "",
+        });
+        cohortDownload = { status: "downloading", message: "Collecting runs…" };
+        try {
+            const response = await fetch(`/api/export/cohort?${params}`, {
+                credentials: "same-origin",
+            });
+            if (!response.ok) {
+                cohortDownload = {
+                    status: "failed",
+                    message:
+                        (await response.text()) ||
+                        `Cohort export failed (HTTP ${response.status})`,
+                };
+                return;
+            }
+            const disposition = response.headers.get("Content-Disposition") ?? "";
+            const fileName =
+                /filename="([^"]+)"/.exec(disposition)?.[1] ??
+                `cohort-${selectedWorkspaceId ?? "unfiled"}.tar`;
+            const instances = response.headers.get("X-Natkit-Instance-Count") ?? "?";
+            const files = response.headers.get("X-Natkit-File-Count") ?? "?";
+            const skipped = response.headers.get("X-Natkit-Skip-Count") ?? "0";
+            const mismatches =
+                response.headers.get("X-Natkit-Checksum-Mismatch-Count") ?? "0";
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = fileName;
+            anchor.click();
+            URL.revokeObjectURL(url);
+
+            // ⚠️ The SKIP count is reported here, not only inside the archive. A
+            // cohort export that quietly omitted three participants would read as
+            // complete, and nobody opens a manifest they have no reason to suspect.
+            const parts = [`${instances} run(s), ${files} file(s)`];
+            if (Number(skipped) > 0) {
+                parts.push(`${skipped} skipped — see MANIFEST.csv`);
+            }
+            if (Number(mismatches) > 0) {
+                parts.push(`⚠️ ${mismatches} checksum mismatch(es)`);
+            }
+            cohortDownload = { status: "done", message: parts.join(" · ") };
+        } catch (error) {
+            cohortDownload = {
+                status: "failed",
+                message: error instanceof Error ? error.message : String(error),
+            };
+        }
+    }
+
     async function createWorkspace() {
         const label = await askName({
             title: "New workspace",
@@ -5424,6 +5488,26 @@
                             <Trash2 size={13} />
                         </button>
                     {/if}
+                    <button
+                        type="button"
+                        class="icon-btn"
+                        onclick={downloadCohort}
+                        disabled={cohortDownload.status === "downloading"}
+                        title="Download every completed run in this workspace as one archive"
+                    >
+                        <Download size={13} />
+                    </button>
+                    {#if cohortDownload.status !== "idle"}
+                        <span
+                            class="cohort-status"
+                            class:failed={cohortDownload.status === "failed"}
+                            title={cohortDownload.message}
+                        >
+                            {cohortDownload.status === "downloading"
+                                ? "Collecting…"
+                                : cohortDownload.message}
+                        </span>
+                    {/if}
                     {#if hiddenTotal > 0}
                         <span
                             class="workspace-hidden"
@@ -7760,6 +7844,19 @@
         font-size: 0.76rem;
         padding: 0.15rem 0.3rem;
         max-width: 11rem;
+    }
+
+    .cohort-status {
+        font-size: 0.68rem;
+        color: #86e3a8;
+        max-width: 22rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .cohort-status.failed {
+        color: #fca5a5;
     }
 
     .workspace-hidden {
