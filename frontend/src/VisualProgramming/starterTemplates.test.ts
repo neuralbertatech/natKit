@@ -36,6 +36,30 @@ describe("IMU ADL session template", () => {
         expect(cueLabels).toContain("brush_teeth");
     });
 
+    it("gives every cue a visual and a verbal stimulus, both marked as placeholders", () => {
+        const adl = template("imu-adl-session");
+        const protocol = adl.experiment?.protocol as unknown as {
+            steps: {
+                kind: string;
+                label?: string;
+                image_url?: string;
+                audio_url?: string;
+            }[];
+        };
+        const cues = protocol.steps.filter((step) => step.kind === "cue");
+        expect(cues.length).toBeGreaterThan(0);
+        for (const cue of cues) {
+            expect(cue.image_url).toBe(`/media/placeholder-${cue.label}.png`);
+            expect(cue.audio_url).toBe(`/media/placeholder-${cue.label}.wav`);
+        }
+        // ⚠️ "placeholder" in the path is the only thing that makes a session
+        // recorded against stand-ins detectable from the recorded data alone — the
+        // url lands in the marker attributes. If the real assets are ever wired in
+        // by editing these paths, this assertion is the reminder to also stop
+        // calling them placeholders.
+        expect(cues.every((c) => c.image_url?.includes("placeholder-"))).toBe(true);
+    });
+
     it("wires data AND markers into combine, and combine into export", () => {
         const graph = template("imu-adl-session").build("imu-live-1");
         const source = graph.nodes.find((n) => n.id === "source");

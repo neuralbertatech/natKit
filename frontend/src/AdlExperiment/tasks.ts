@@ -124,6 +124,24 @@ import {
 
 export const ADL_PROTOCOL_ID = "adl-tasks-v1";
 
+// Served straight from the frontend's `public/media/`, NOT uploaded to the media
+// store. Two reasons: the URLs are then stable across deployments (a media-store id
+// is per-install, so a template referencing one would not travel), and replacing a
+// placeholder with the real asset is a file swap plus a re-generate rather than a
+// migration.
+//
+// Real assets are expected to arrive through the designer's existing upload slots,
+// which is why nothing here is load-bearing beyond the paths.
+const ADL_STIMULUS_BASE = "/media";
+
+export function adlStimulusImage(taskId: string): string {
+    return `${ADL_STIMULUS_BASE}/placeholder-${taskId}.png`;
+}
+
+export function adlStimulusAudio(taskId: string): string {
+    return `${ADL_STIMULUS_BASE}/placeholder-${taskId}.wav`;
+}
+
 export function adlStepProtocol(tasks: AdlTask[] = ADL_TASKS): StepProtocol {
     const steps: ExperimentStep[] = [
         {
@@ -150,6 +168,24 @@ export function adlStepProtocol(tasks: AdlTask[] = ADL_TASKS): StepProtocol {
             label: task.id,
             text: task.instruction,
             duration_s: task.duration_seconds,
+            // Visual + verbal stimulus (TEC-NATKIT-64). The study presents each ADL
+            // both ways, so the cue carries an image and a spoken clip alongside its
+            // text rather than relying on the operator reading it out.
+            //
+            // ⚠️ PLACEHOLDERS, and deliberately obvious ones: the image says
+            // PLACEHOLDER and "not a real stimulus", and the clip is a robotic
+            // synthesis prefixed with the word. A stand-in that looked or sounded
+            // finished is how a pilot gets recorded against the wrong stimulus and
+            // nobody notices until the labels are being analysed.
+            //
+            // ⚠️ The FILENAMES matter as much as the content. They land in the
+            // marker's image_url / audio_url attributes, so `placeholder-` in the
+            // path makes a session recorded against stand-ins detectable from the
+            // recorded data alone, rather than a judgement call afterwards.
+            image_url: adlStimulusImage(task.id),
+            image_name: `placeholder-${task.id}.png`,
+            audio_url: adlStimulusAudio(task.id),
+            audio_name: `placeholder-${task.id}.wav`,
         });
         if (index < tasks.length - 1) {
             steps.push({
