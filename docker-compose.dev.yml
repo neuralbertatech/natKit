@@ -13,6 +13,14 @@ services:
       NATKIT_BRIDGE_LOG_MESSAGES: ${NATKIT_BRIDGE_LOG_MESSAGES:-}
 
   natkit-v0-backend:
+    # Published so HOST tooling can reach the backend directly -- raw WebSocket
+    # clients, curl against /api, and a frontend run outside the container with
+    # VITE_DEV_BACKEND_URL. The in-container frontend does not need it (it proxies
+    # to natkit-v0-backend:7409 over the compose network), but the prod file
+    # publishes it and this file is now used INSTEAD of that one, so omitting it
+    # silently removed host access that development depends on (TEC-NATKIT-70).
+    ports:
+      - "7409:7409"
     image: natkit-backend:dev
     build:
       context: ./libnatkit
@@ -146,9 +154,130 @@ services:
     depends_on:
       - natkit-v0-backend
 
+  # --- Standalone-stack services (TEC-NATKIT-70) ---------------------------
+  #
+  # ⚠️ These are COPIED VERBATIM from docker-compose.yml, which is the definition
+  # actually in use, NOT from the docker-compose.dev.yml.new draft. That draft's
+  # kafka would have been a data-loss trap: a different image
+  # (apache/kafka:3.7.0 vs confluentinc/cp-kafka:7.8.0), no published ports, no
+  # natkit-v0-kafka-data volume, and only one listener instead of the four the rig
+  # uses -- so host tooling on 29092 would have broken and topics would not have
+  # survived a recreate.
+  #
+  # Why they are here at all: this file is documented (ENVIRONMENT.html) as
+  # `podman-compose -f docker-compose.dev.yml up -d`, i.e. standalone, but it had
+  # neither these three services nor a `networks:` block, so running it alone
+  # failed with "missing networks: natkit-v0-kafka-network". Combining it with
+  # docker-compose.yml instead made the FRONTEND unstartable, because `ports`
+  # lists CONCATENATE on merge: 8080:80 from the base plus 8080:5173 from here
+  # bound host 8080 twice and podman reported "rootlessport conflict with ID 1".
+  #
+  # Self-contained is the fix that matches the documentation. The two files are
+  # now alternatives, not layers -- do not pass both.
+
+  natkit-v0-kafka:
+    image: confluentinc/cp-kafka:7.8.0
+    hostname: natkit-v0-kafka
+    ports:
+      - 9092:9092
+      - 9093:9093
+      - 29092:29092
+      - 29093:29093
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_ID: 1
+      CLUSTER_ID: ReR6t0tUSZGaK6IO8K4lwA
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@natkit-v0-kafka:9093"
+      KAFKA_LISTENERS: "DOCKER_NETWORK_LISTENER://0.0.0.0:9092,CONTROLLER_LISTENER://0.0.0.0:9093,LOCALHOST_LISTENER://0.0.0.0:29092,REMOTE_LISTENER://0.0.0.0:29093"
+      # For remote access, set NATKIT_HOST_IP environment variable before running docker-compose
+      # Example: NATKIT_HOST_IP=192.168.1.100 docker-compose up -d
+      KAFKA_ADVERTISED_LISTENERS: "DOCKER_NETWORK_LISTENER://natkit-v0-kafka:9092,LOCALHOST_LISTENER://127.0.0.1:29092,REMOTE_LISTENER://${NATKIT_HOST_IP:-127.0.0.1}:29093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER_NETWORK_LISTENER"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER_LISTENER"
+      # Persist KRaft data on a named volume. This used to be /tmp/kraft-storage,
+      # i.e. the container's writable layer: every `up --build` or container
+      # recreate silently destroyed every topic, which cost us recorded sessions
+      # twice. Recorded experiment instances are meant to be permanent, so the
+      # broker's storage cannot be ephemeral. (docker-compose.portainer.yml has
+      # always done this; the dev/base stack was the outlier.)
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
+    volumes:
+      - natkit-v0-kafka-data:/var/lib/kafka/data
+    networks:
+      - natkit-v0-kafka-network
+
+  # natkit-v0-schema-registry:
+  #   image: confluentinc/cp-schema-registry:7.0.7
+  #   hostname: natkit-v0-schema-registry
+  #   ports:
+  #   - 38081:38081
+  #   depends_on:
+  #   - natkit-v0-kafka
+  #   environment:
+  #     SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL: natkit-v0-zookeeper:32181
+  #     SCHEMA_REGISTRY_HOST_NAME: natkit-v0-schema-registry
+  #     SCHEMA_REGISTRY_LISTENERS: http://natkit-v0-schema-registry:38081
+  #     SCHEMA_REGISTRY_DEBUG: "true"
+  #     SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL: PLAINTEXT
+  #     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
+  #   networks:
+  #     - natkit-v0-kafka-network
+
+  # natkit-v0-kafka-rest:
+  #   image: confluentinc/cp-kafka-rest:7.0.7
+  #   hostname: natkit-v0-kafka-rest
+  #   ports:
+  #   - 38082:38082
+  #   depends_on:
+  #     - natkit-v0-schema-registry
+  #   environment:
+  #     KAFKA_REST_ZOOKEEPER_CONNECT: natkit-v0-zookeeper:32181
+  #     KAFKA_REST_SCHEMA_REGISTRY_URL: natkit-v0-schema-registry:38081
+  #     KAFKA_REST_HOST_NAME: natkit-v0-kafka-rest
+  #     KAFKA_REST_LISTENERS: http://natkit-v0-kafka-rest:38082
+  #     KAFKA_REST_BOOTSTRAP_SERVERS: PLAINTEXT://natkit-v0-kafka:29092
+  #   networks:
+  #     - natkit-v0-kafka-network
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    hostname: mosquitto
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/etc:/etc/mosquitto:Z
+      - ./mosquitto/log:/mosquitto/log:Z
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:Z
+    networks:
+      - natkit-v0-kafka-network
+  ntp:
+    image: cturra/ntp:latest
+    container_name: ntp
+    restart: always
+    ports:
+      - 123:123/udp
+    environment:
+      - NTP_SERVERS=subitaneous.cpsc.ucalgary.ca
+      - LOG_LEVEL=0
+      - TZ=America/Edmonton
+  #      - NOCLIENTLOG=true
+  #      - ENABLE_NTS=true
+
 volumes:
+  natkit-v0-kafka-data:
   natkit-v0-instances:
   natkit-v0-auth:
   natkit-v0-graphs:
   natkit-v0-frontend-node-modules:
   natkit-v0-models:
+
+networks:
+  # Declared here so the file stands alone; same name and settings as the prod
+  # file, so a container created by either lands on the same network.
+  natkit-v0-kafka-network:
+    external: false
