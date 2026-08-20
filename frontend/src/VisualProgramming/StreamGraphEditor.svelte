@@ -9314,6 +9314,26 @@
         align-items: center;
         justify-content: center;
         min-height: 0;
+        /* ⚠️ THE CLIPPING BUG (TEC-NATKIT-68). `.viewer-data-body` caps itself at
+         * `max-height: 60vh`, which is right for a data inspector in a windowed
+         * modal and wrong for this one: the panel is deliberately 100vh
+         * "full-screen focus mode", yet its content area was still capped at 60% of
+         * the window and centred, so a runner taller than that spilled off BOTH ends
+         * — the stimulus image starting above the viewport and the countdown cut off
+         * the bottom.
+         *
+         * Measured at 1280x720: body 432px (= 60vh) of a 608px budget, so 176px of
+         * usable height was simply unavailable. Two earlier attempts at this bug
+         * tried to shrink the image to fit 432px, which was treating the symptom. */
+    }
+
+    /* ⚠️ COMPOUND selector on purpose. `.experiment-modal-body` alone has the same
+     * specificity as `.viewer-data-body`, which is declared LATER in this file and
+     * therefore won on source order — a plain `max-height: none` here was silently
+     * ignored, and the measurement still read 432px. */
+    .viewer-data-body.experiment-modal-body {
+        max-height: none;
+        overflow: visible;
     }
 
     .viewer-data-header {

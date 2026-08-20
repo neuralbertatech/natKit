@@ -451,6 +451,85 @@
         font-size: 2rem;
     }
 
+    /* --- Large view WITH an image stimulus (TEC-NATKIT-68) -------------------
+     *
+     * Decision (Zach, 2026-08-20): when there is an image, the IMAGE is the primary
+     * cue and the prompt becomes its caption. The ADL study presents each activity
+     * visually and verbally, so the picture is the stimulus rather than decoration.
+     *
+     * ⚠️ Before this, the modal body (flex, align-items: center) centred a runner
+     * taller than itself, so the overflow spilled off BOTH ends: the image started
+     * at y = -126 with only its bottom third visible, and the countdown was cut off
+     * the bottom. A participant was being shown a different stimulus from the one
+     * the marker recorded.
+     *
+     * The prompt shrinks only when an image is present (adjacent-sibling selector),
+     * so an image-less protocol — EMG gesture cues, say — keeps its full-size text.
+     */
+    .experiment-runner.large {
+        /* ⚠️ NOT `max-height: 100%`.
+         *
+         * That was the obvious way to say "never taller than your box", and it made
+         * things worse: a percentage max-height resolved against a flex parent whose
+         * own height is indefinite is circular, and the browser settled it by
+         * sizing the modal body to its CONTENT -- 432px of a 608px budget, measured.
+         * So the box the runner was told to fit inside had itself shrunk to fit the
+         * runner, and 176px of usable height simply vanished.
+         *
+         * `height: 100%` is definite in this context (the body is flex: 1 1 0% inside
+         * a 100vh panel), so the runner fills its budget and its children divide a
+         * known number. */
+        /* ⚠️ NO PERCENTAGE HEIGHT, in either direction.
+         *
+         * `max-height: 100%` and `height: 100%` both resolve against a flex parent
+         * whose own height is indefinite, which is circular — the browser settled it
+         * by sizing the modal body to its CONTENT (432px of a 608px budget, measured
+         * twice), so the box the runner was told to fit inside had itself shrunk to
+         * fit the runner and 176px of usable height vanished.
+         *
+         * The body is `display: flex; align-items: center`, so the runner is a flex
+         * item: stretching it fills the cross axis with no percentage involved. */
+        align-self: stretch;
+        min-height: 0;
+    }
+
+    .experiment-runner.large .cue-image {
+        /* ⚠️ A height BUDGET, not `flex: 1 1 auto`.
+         *
+         * The first attempt let the image take the slack and shrink freely. It
+         * stopped clipping and then collapsed to 15px tall at 1280x720, because the
+         * prompt block is fixed-size and the image absorbed every bit of shrinkage
+         * -- the opposite of "the image is the primary cue". Measured, not guessed.
+         *
+         * So it claims its share up front and may only give ground as a last resort
+         * (flex-shrink 1, flex-grow 0). 55vh leaves room for the caption, countdown
+         * and padding at both 720 and 1050 tall. */
+        max-height: none;
+        /* Takes the remaining space now that the parent's height is definite, with a
+         * floor so it can never be squeezed to the 15px it collapsed to on the first
+         * attempt. */
+        flex: 1 1 auto;
+        /* A floor so it can never be squeezed to the 15px it collapsed to on an
+         * earlier attempt, set just low enough that the whole column fits the
+         * (now un-capped) body at 720px tall — measured, not chosen by feel. Above
+         * that height flex-grow gives the image everything spare, which is the
+         * point of "the image is the primary cue". */
+        min-height: 24vh;
+        width: 100%;
+    }
+
+    .experiment-runner.large .cue-image + .cue-stage {
+        flex: 0 0 auto;
+        padding: 16px 24px;
+    }
+
+    .experiment-runner.large .cue-image + .cue-stage .cue-prompt {
+        /* A caption, not the stimulus: still legible across a room, no longer
+         * three lines of 8rem competing with the picture above it. */
+        font-size: clamp(1.4rem, 3vw, 2.4rem);
+        letter-spacing: 0.02em;
+    }
+
     .experiment-runner.large .cue-next {
         font-size: 1.4rem;
     }
