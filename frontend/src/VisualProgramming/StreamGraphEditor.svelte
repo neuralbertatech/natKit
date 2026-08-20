@@ -441,6 +441,14 @@
             openBadgeEdgeId = null;
             return;
         }
+        // An open menu was surviving Escape as well as canvas clicks: this handler
+        // had no contextMenu branch at all (TEC-NATKIT-71). Checked before the
+        // badge branch would swallow it, and returns so Escape does not also fall
+        // through to whatever else listens for it.
+        if (event.key === "Escape" && contextMenu.open) {
+            closeContextMenu();
+            return;
+        }
         if (
             (event.metaKey || event.ctrlKey) &&
             event.key.toLowerCase() === "k"
@@ -1595,10 +1603,23 @@
         if (!contextMenu.open) {
             return;
         }
-        if (
-            target?.closest(".context-menu") ||
-            target?.closest(".graph-canvas")
-        ) {
+        // Clicks on the menu itself are its own business.
+        if (target?.closest(".context-menu")) {
+            return;
+        }
+        // ⚠️ On the canvas, discriminate by BUTTON rather than exempting the canvas
+        // wholesale (TEC-NATKIT-71).
+        //
+        // The canvas used to be exempt entirely, so the only way to dismiss the menu
+        // was to click off the canvas — the toolbar or a side panel — which is
+        // backwards from how every other context menu behaves.
+        //
+        // It cannot simply be deleted, though: a right-click fires mousedown
+        // (button 2) on the canvas BEFORE the contextmenu event that opens the menu,
+        // so treating that press as "click away" would close a menu that is about to
+        // open. Left button dismisses; anything else (the opening right-click, a
+        // middle-click pan) is left alone.
+        if (target?.closest(".graph-canvas") && event.button !== 0) {
             return;
         }
         closeContextMenu();
