@@ -98,10 +98,15 @@ services:
 
   natkit-v0-ml-worker-a:
     image: natkit-ml-control-plane:dev
-    # The control plane already supplies embedded worker slots. This external
-    # worker requires a real shared-auth account, so keep it opt-in for local
-    # development instead of crash-looping when .env credentials are absent.
-    profiles: ["ml-worker"]
+    # The control plane already supplies embedded worker slots; this is the
+    # external worker, and it comes up with the rest of the stack (Zach,
+    # 2026-08-20). It was previously behind a `profiles: ["ml-worker"]` gate.
+    #
+    # ⚠️ It needs a real shared-auth account, read from .env as
+    # NATKIT_ML_WORKER_AUTH_USERNAME / _PASSWORD. Those default to EMPTY, so on a
+    # machine without them the worker will crash-loop rather than silently not
+    # exist -- which is the trade the profile was making. If you hit that, put the
+    # credentials in .env; do not re-add the profile without saying so here.
     command:
       - python
       - /workspace/libnatkit/scripts/natkit_ml_worker.py
