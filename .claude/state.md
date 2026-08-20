@@ -2,7 +2,115 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-20
+
+## ✅ THE IMU ADL EPIC IS CODE-COMPLETE. 13 TICKETS, NOTHING PUSHED.
+
+Zach's flow works end to end: open Visual Programming → pick the **IMU ADL session**
+template → a workspace, experiment and wired board arrive → the gate refuses an
+unmapped or uncalibrated setup → Record asks who the run is of → the participant
+sees the image and hears the clip → the export carries labels, body positions,
+participant and attribution → one click gives the whole cohort as a tar.
+
+⚠️ **NOTHING IS PUSHED OR MERGED.** One branch per ticket, and the stack is
+**linear** — each is an ancestor of the next, so `zach/415-...` contains everything
+and merging in this order replays cleanly:
+
+```
+  zach/403-instance-participant-snapshot   dee9a00 -> libnatkit 345c7fb
+  zach/404-participant-per-run             cea3a6e -> a6d55c2
+  zach/405-workspace-container             5075ad4 -> 359e4e5
+  zach/406-workspace-scoped-pickers        465bdb8 -> 359e4e5
+  zach/407-adl-imu-workspace-template      ae400a8 -> 359e4e5
+  zach/409-sensor-position-mapping         412f0cc -> 54b1b1f
+  zach/408-record-gate                     fa3db28 -> b76733c
+  zach/410-adl-stimulus-placeholders       6ceb7d7 -> b76733c
+  zach/417-template-savable-without-stream 2283203 -> b76733c
+  zach/418-participant-view-clipping       d56357e -> b76733c
+  zach/411-cohort-export                   b1b9612 -> 54be790
+  zach/413-backend-log-visibility          fd0ffbf -> bf27894
+  zach/415-portainer-instance-volume       95e954e -> bf27894   <- tip
+```
+
+Tip verified: frontend `npm run check` clean, **131 tests pass**, host build green,
+and the in-container build (the only one that compiles the Parquet path) green.
+
+### What each ticket did, in one line
+
+- **#403** a sealed recording now records WHO — participant + protocol snapshotted at
+  record time, `natkit.participant_id` in the Parquet metadata, plus a one-time
+  back-fill keeping **three** states apart (captured / backfilled / unrecorded).
+- **#404** the participant belongs to the RUN, asked at Record; cancelling aborts.
+- **#405** workspaces: a pure container, nullable `workspace_id`, Unfiled default,
+  deleting one **un-files** its contents rather than destroying them.
+- **#406** the workspace lens — pickers, board list and roster all scoped.
+- **#407** one-click IMU ADL session: workspace + experiment + wired board.
+- **#409** body positions typed, duplicate-refused, snapshotted per run.
+- **#408** the Record gate, in two tiers: position errors hard-block, calibration is
+  a judgement that records its override.
+- **#410** an image + spoken clip per ADL task (placeholders).
+- **#417** all five starter templates were unsavable with no stream — root cause was
+  the TYPE saying `stream_id: string`.
+- **#418** the participant view no longer clips its stimulus.
+- **#411** cohort export: every completed run in a workspace as one deterministic tar,
+  with skips named.
+- **#413** the backend's own logs are visible (stdout was block-buffered into a pipe).
+- **#414/#415** all four/five stores on durable volumes in all three compose files.
+
+### ⚠️ Read before merging
+
+- The **live dev backend is running this unmerged build** (in-container `make`
+  overwrote the image's binary). To get back to the image, rebuild from pristine
+  sources in the container or recreate it.
+- The workspace store is on the **ephemeral container layer** until #414 merges, so a
+  container *recreate* loses workspaces while keeping their contents — every
+  experiment then points at a workspace that no longer exists, which reads as "my
+  experiments are gone".
+- **Test debris** on the rig: ~24 boards, 16 instances stuck in `status: recording`,
+  duplicate ADL experiments. Zach: the rig's data is disposable as of 2026-08-19.
+
+### Still open, all needing Zach
+
+```
+  #412  retire the standalone pages   — on hold by his decision; revisit after a real
+                                        ADL session has run through VP
+  #419  runner copy is EMG-specific   — "relax your hand" to a stroke patient doing a
+                                        shoulder task; needs the actual words
+```
+
+### Method notes that cost time this session
+
+⚠️ **A green build/type-check/test run said nothing** about: #406's blank dropdown,
+#407's board hidden behind a panel, #417's unsavable template, #418's clipped
+stimulus. All four were only visible in a screenshot or on the wire.
+
+⚠️ **Three "product bugs" were my own harness**: an unscoped selector matching a saved
+board instead of a template button; `OUT=... && node` setting a shell variable
+without exporting it (so I re-read a stale PNG twice); and a fixed sleep landing
+before a WS round trip. Suspect the test first.
+
+⚠️ **Measure against the thing that clips.** #418 took three attempts because I
+measured the image against the viewport rather than the modal frame.
+
+⚠️ **`pgrep -f <binary path>` matches pid 1**, the supervisor shell whose command line
+contains that path — so `kill $(pgrep -f ... | head -1)` signals init, which ignores
+it, and the backend keeps running the OLD binary. Check `readlink /proc/<pid>/exe`; a
+rebuilt-but-running process shows `(deleted)`. Related: `pkill -f` on a port env var
+kills your own shell.
+
+⚠️ **The host build silently skips the whole Parquet path** (`find_package(Parquet)`
+fails here), so a green host build proves nothing about an export change. Confirm a
+guarded change landed by grepping the binary for a string you added.
+
+⚠️ **The isolated host stack cannot reach Kafka** — the broker advertises
+`natkit-v0-kafka`. Fine for store/UI work, misleading for anything timing-adjacent.
+
+⚠️ **The dev stack went down twice** (12:16 and 22:00), not OOM, all containers plus
+the unrelated `dev` one. `restart: always` IS set but rootless podman does not honour
+it across a reboot without systemd units + `loginctl enable-linger`. Restore with
+`podman start` (preserves the writable layer), not a compose recreate.
+
+---
 
 ## ➡️ WORK MOVED OFF THE RADIO/CLOCK RIG AND ONTO THE INTERFACE (#300 / TEC-NATKIT-1)
 
