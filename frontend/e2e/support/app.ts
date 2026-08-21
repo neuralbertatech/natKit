@@ -104,6 +104,24 @@ export class VpApp {
      * round trip to complete is how a test avoids that window instead of racing
      * it with a sleep.
      */
+    /**
+     * Select a sealed run in the sidebar's instance tree.
+     *
+     * ⚠️ By its graph id, via the `title` attribute, NOT by its "run-0001" label.
+     * Run numbering restarts per experiment, so several boards in the store have a
+     * run-0001 — an unscoped `hasText: /run-\d{4}/` picks whichever renders first,
+     * which is how a verification "passed" against somebody else's recording twice
+     * before this helper existed.
+     */
+    async openInstance(graphId: string): Promise<void> {
+        const entry = this.page.locator(`.tree-instance[title="${graphId}"]`);
+        await expect(entry, `no instance row for ${graphId}`).toBeVisible({ timeout: 15_000 });
+        await entry.click();
+        // The inspector is keyed on the selection, so wait for it to catch up
+        // rather than asserting against the previously selected record.
+        await expect(this.page.locator(".graph-inspector")).toContainText("Instance");
+    }
+
     async waitForStoredProtocol(
         match: (protocol: Record<string, unknown>) => boolean,
         timeoutMs = 15_000,

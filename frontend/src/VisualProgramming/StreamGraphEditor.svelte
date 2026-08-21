@@ -6248,10 +6248,23 @@
                             <div class="clock-record">
                                 <div class="summary-row">
                                     <span>Clocks</span>
-                                    <strong class={troubled.length === 0 ? "clock-clean" : "clock-troubled"}>
-                                        {troubled.length === 0
-                                            ? `all ${clock.devices.length} held`
-                                            : `${troubled.length} of ${clock.devices.length} in question`}
+                                    <!-- ⚠️ The empty case is its own answer. With no
+                                         devices this read "all 0 held", which is a
+                                         reassurance about nothing — and a run whose
+                                         sources were never resolved is exactly when
+                                         somebody needs telling. -->
+                                    <strong
+                                        class={clock.devices.length === 0
+                                            ? "clock-troubled"
+                                            : troubled.length === 0
+                                              ? "clock-clean"
+                                              : "clock-troubled"}
+                                    >
+                                        {clock.devices.length === 0
+                                            ? "no devices recorded"
+                                            : troubled.length === 0
+                                              ? `all ${clock.devices.length} held`
+                                              : `${troubled.length} of ${clock.devices.length} in question`}
                                     </strong>
                                 </div>
                                 {#each clock.devices as device (device.device_id)}
