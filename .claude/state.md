@@ -60,8 +60,35 @@ schema registry, so a log added tomorrow reads without a frontend change.
   needed for UI work; the **backend is not**, so a change needs
   `podman cp` + an in-container `cmake --build` + killing the backend pid.
 
+### #318 (TEC-NATKIT-7) done — audit + the live half
+
+`natKit a3e8496` on `zach/318-stream-sync-quality` (off `zach/377-device-health`,
+which it depends on). The audit found the ticket's transport half already built by
+#377; what was missing was the #319 whiteboard's "jitter on the Stream". A source
+node's inspector now shows that stream's clock fit next to **Worn at**.
+
+⚠️ Two process traps from this one:
+
+- **A DOM-mutating Playwright probe races Svelte's re-render.** I "measured" two
+  layout placements by setting `innerHTML` and re-reading boxes, and got
+  non-monotonic nonsense. Measure what the component renders, or compute from
+  text metrics — never mutate and re-measure.
+- **State the branch base explicitly.** `git checkout trunk || git checkout <dep>`
+  silently took trunk, so #318 was branched off a base with no device-health work
+  and an import silently no-op'd into a runtime error. A string replace that finds
+  no anchor is a no-op, not an error: assert the anchor.
+
 ### Filed, not started
 
+- **TEC-NATKIT-77** (#442) — a recording does not record whether the clocks were
+  trustworthy. ⚠️ The deadline one: status frames age out of Kafka retention and
+  the recording keeps no copy, so a cohort collected with a bad clock fit is
+  indistinguishable from a clean one PERMANENTLY. Everything needed exists
+  (`DeviceHealthTracker` already differences the fit); it wants sealing onto the
+  instance next to `sensor_positions`.
+- **TEC-NATKIT-78** (#443) — two `StreamType` enums and only the core one knows
+  about `MARKER`, so anything round-tripping a topic through the other silently
+  loses marker topics.
 - **TEC-NATKIT-75** (#432) — `frames_queued` undercounts: a lost-update race,
   plain `++` on a shared `uint32_t` from two tasks. Reads ~30 *below*
   `frames_sent` while `frames_dropped` is 0. `frames_dropped` has the same defect
