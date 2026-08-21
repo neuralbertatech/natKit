@@ -42,6 +42,7 @@
     } from "../StreamViewer/websocket";
     import MuseViewer from "../StreamViewer/MuseViewer.svelte";
     import DeviceHealthPanel from "./DeviceHealthPanel.svelte";
+    import { clockFitForStream } from "../StreamViewer/clockFit";
     import ImuViewer from "../StreamViewer/ImuViewer.svelte";
     import ChannelFrameViewer from "../StreamViewer/ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "../StreamViewer/FeatureVectorViewer.svelte";
@@ -5852,6 +5853,10 @@
                                   boundExperimentView.experiment_id
                                 : null}
                             {streamDeviceNames}
+                            clockFit={clockFitForStream(
+                                deviceHealth,
+                                node.stream_id,
+                            )}
                             inputPortLabels={combineInputLabels(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}
@@ -6444,6 +6449,41 @@
                                     A swapped limb cannot be seen in the data or
                                     fixed afterwards, so give each its own.
                                 </p>
+                            {/if}
+
+                            <!-- This stream's clock fit (TEC-NATKIT-7).
+                                 ⚠️ HERE rather than on the node card, and that is
+                                 a measurement, not a preference. A source node's
+                                 card is 220x92 and its header is over budget
+                                 before anything is added — its label wants 111px
+                                 in 62. A dot in the header collapsed `.node-kind`
+                                 to a 5px sliver; making that hold its width
+                                 overflowed the card by 31px; a third meta line
+                                 was clipped out of view entirely; and appended
+                                 after the truncating stream label it landed
+                                 outside the card. The inspector has room for the
+                                 numbers, which is what somebody diagnosing a
+                                 clock actually needs.
+                                 Rendered only when the device publishes a fit:
+                                 most sources (a Muse, an EMG pill) publish none,
+                                 and a row on every one of them would train people
+                                 to ignore it. -->
+                            {@const fit = clockFitForStream(
+                                deviceHealth,
+                                selectedSourceNode.stream_id,
+                            )}
+                            {#if fit.state !== "unknown"}
+                                <div class="clock-fit-row clock-{fit.state}">
+                                    <span class="clock-dot"></span>
+                                    <span class="clock-state">
+                                        {fit.state === "ok"
+                                            ? "Clock fit held"
+                                            : fit.state === "no_fit"
+                                              ? "No usable clock fit"
+                                              : "Clock fit is stale"}
+                                    </span>
+                                    <span class="clock-detail">{fit.detail}</span>
+                                </div>
                             {/if}
                         {/if}
 
@@ -7897,6 +7937,44 @@
 
     /* Position clash. Deliberately the warning colour rather than an error: the
        board is still savable, it is RECORDING that must be refused. */
+    .clock-fit-row {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-areas: "dot state" ". detail";
+        gap: 0.15rem 0.4rem;
+        align-items: baseline;
+        margin-top: 0.4rem;
+        font-size: 0.78rem;
+    }
+
+    .clock-fit-row .clock-dot {
+        grid-area: dot;
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: #64748b;
+        align-self: center;
+    }
+
+    .clock-state {
+        grid-area: state;
+        color: #cbd5e1;
+    }
+
+    .clock-detail {
+        grid-area: detail;
+        color: #7f8ea3;
+        line-height: 1.4;
+    }
+
+    .clock-ok .clock-dot { background: #4ade80; }
+    /* Two colours: RED means the hub says there is no usable fit, AMBER means we
+       have stopped hearing from the device and cannot say. */
+    .clock-no_fit .clock-dot { background: #f87171; }
+    .clock-no_fit .clock-state { color: #fca5a5; }
+    .clock-stale .clock-dot { background: #fbbf24; }
+    .clock-stale .clock-state { color: #fcd34d; }
+
     .position-clash {
         margin: 0.2rem 0 0;
         font-size: 0.7rem;
