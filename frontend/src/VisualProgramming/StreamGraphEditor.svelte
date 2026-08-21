@@ -639,12 +639,76 @@
     let pendingExperimentEdit = $state<Experiment | null>(null);
     let experimentSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // An edit that has been SENT but not yet echoed back by the backend
+    // (TEC-NATKIT-19).
+    //
+    // ⚠️ This exists because clearing the pending edit at SEND time made the
+    // designer render the PREVIOUS protocol for the length of the round trip. It
+    // was measured at ~11ms on this machine and is as long as the round trip
+    // anywhere else — so on a slow or failed save the author watches their edit
+    // vanish with nothing to explain it. It also reset anything holding a
+    // reference INTO the protocol: the canvas remembers its zoomed repeat group by
+    // step id, so opening a group just after "Convert to editable steps" zoomed in
+    // and then bounced back out.
+    //
+    // `storedUpdatedAtUs` is the stored record's timestamp AT SEND TIME, so the
+    // echo is recognised by that value advancing. Deliberately not "the backend's
+    // timestamp is newer than my clock": those are two different clocks, and
+    // comparing them is how this sort of fix breaks on a machine whose clock is a
+    // few seconds off.
+    interface InFlightExperimentEdit {
+        experiment: Experiment;
+        storedUpdatedAtUs: number;
+        timeout: ReturnType<typeof setTimeout>;
+    }
+    let inFlightExperimentEdit = $state<InFlightExperimentEdit | null>(null);
+
+    // How long to keep showing an unconfirmed edit before giving up on it.
+    // ⚠️ Not optional: without it a save that is never echoed leaves the edit on
+    // screen forever and the author believes it was stored. Long enough that a
+    // slow round trip is not mistaken for a failure.
+    const EXPERIMENT_ECHO_TIMEOUT_MS = 10000;
+
+    function clearInFlightExperimentEdit(): void {
+        if (inFlightExperimentEdit) {
+            clearTimeout(inFlightExperimentEdit.timeout);
+            inFlightExperimentEdit = null;
+        }
+    }
+
+    // The edit the UI should show: what is being typed, else what has been sent but
+    // not confirmed, else what the store holds. Ordered so a newer intention always
+    // wins over an older one.
     const boundExperimentView = $derived(
         pendingExperimentEdit &&
             pendingExperimentEdit.experiment_id === boundExperimentId
             ? pendingExperimentEdit
-            : boundExperiment,
+            : inFlightExperimentEdit &&
+                inFlightExperimentEdit.experiment.experiment_id === boundExperimentId
+              ? inFlightExperimentEdit.experiment
+              : boundExperiment,
     );
+
+    // The echo landed: the store's copy of this experiment is newer than it was
+    // when we sent, so it is now at least as new as our edit.
+    $effect(() => {
+        const inFlight = inFlightExperimentEdit;
+        if (!inFlight) {
+            return;
+        }
+        const stored = experiments.find(
+            (experiment) =>
+                experiment.experiment_id === inFlight.experiment.experiment_id,
+        );
+        if (!stored) {
+            // The record went away underneath us — nothing left to confirm.
+            clearInFlightExperimentEdit();
+            return;
+        }
+        if ((stored.updated_at_us ?? 0) > inFlight.storedUpdatedAtUs) {
+            clearInFlightExperimentEdit();
+        }
+    });
 
     function queueExperimentEdit(next: Experiment): void {
         pendingExperimentEdit = next;
@@ -666,9 +730,41 @@
         }
         const edit = pendingExperimentEdit;
         pendingExperimentEdit = null;
-        if (edit) {
-            saveExperiment(edit);
+        if (!edit) {
+            return;
         }
+        // Hold it as in-flight rather than dropping it: the store does not know
+        // about it until the echo arrives, and falling back to the store in the
+        // meantime is the flash this ticket is about.
+        const storedUpdatedAtUs =
+            experiments.find(
+                (experiment) => experiment.experiment_id === edit.experiment_id,
+            )?.updated_at_us ?? 0;
+        if (!saveExperiment(edit)) {
+            // Refused outright (a closed socket). The store is authoritative, so
+            // continuing to show the edit would be a lie — and saveExperiment has
+            // already set the error banner, so the disappearance is explained.
+            clearInFlightExperimentEdit();
+            return;
+        }
+        clearInFlightExperimentEdit();
+        inFlightExperimentEdit = {
+            experiment: edit,
+            storedUpdatedAtUs,
+            timeout: setTimeout(() => {
+                // No echo. Stop claiming the edit is stored, and SAY SO — silently
+                // reverting is exactly the "my edit vanished" this fix removes.
+                inFlightExperimentEdit = null;
+                showAlert({
+                    title: "That change may not have been saved",
+                    body:
+                        "The backend did not confirm the edit within ten seconds, " +
+                        "so the panel is showing the last version it did confirm. " +
+                        "Re-apply the change, and check the connection if it keeps " +
+                        "happening.",
+                });
+            }, EXPERIMENT_ECHO_TIMEOUT_MS),
+        };
     }
 
     // Drop a queued edit unsent — used when the record it targets is going away, so
@@ -679,6 +775,9 @@
             experimentSaveTimer = null;
         }
         pendingExperimentEdit = null;
+        // The in-flight one too: this is called when the record it targets is going
+        // away, and a late echo must not resurrect it on screen.
+        clearInFlightExperimentEdit();
     }
 
     // An immutable instance is read-only everywhere: the backend rejects a save
