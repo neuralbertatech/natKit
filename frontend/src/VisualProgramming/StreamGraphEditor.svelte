@@ -843,14 +843,42 @@
     }
     const experimentTree = $derived.by(() => {
         const instances = graphDefinitions.filter((graph) => !!graph.instance_id);
-        const byInstanceId = new Map<string, InstanceTreeNode>();
+        // ⚠️ Keyed by GRAPH ID, which is globally unique. Keyed by `instance_id`
+        // this silently LOST recordings (TEC-NATKIT-80): run numbering restarts
+        // per experiment, so "run-0001" is not one instance but one per
+        // experiment, and `Map.set` kept only whichever came last. On the dev
+        // store that meant 9 instances collapsing to 6 rows, all of them from a
+        // single experiment — every other experiment's history was simply absent
+        // from the tree, with no error and nothing to notice.
+        const byGraphId = new Map<string, InstanceTreeNode>();
         for (const graph of instances) {
-            byInstanceId.set(graph.instance_id as string, { graph, children: [] });
+            byGraphId.set(graph.graph_id, { graph, children: [] });
+        }
+        // Fork parents are named by `forked_from`, which holds an INSTANCE id and
+        // so carries the same ambiguity — resolved within the parent's own
+        // experiment rather than across all of them.
+        const forkKey = (experimentId: string | undefined, instanceId: string) =>
+            `${experimentId ?? ""}\u0000${instanceId}`;
+        const byExperimentInstance = new Map<string, InstanceTreeNode>();
+        for (const node of byGraphId.values()) {
+            byExperimentInstance.set(
+                forkKey(node.graph.experiment_id, node.graph.instance_id as string),
+                node,
+            );
         }
         const roots = new Map<string, InstanceTreeNode[]>();
-        for (const node of byInstanceId.values()) {
+        for (const node of byGraphId.values()) {
             const parentId = node.graph.forked_from;
-            const parent = parentId ? byInstanceId.get(parentId) : undefined;
+            const parent =
+                parentId && parentId !== node.graph.instance_id
+                    ? byExperimentInstance.get(
+                          forkKey(node.graph.experiment_id, parentId),
+                      )
+                    : undefined;
+            // ⚠️ `parentId !== own instance_id` above: a record naming itself as
+            // its parent would be pushed into its own children and never appear as
+            // a root, and the render is recursive — so it would hang the page
+            // rather than show a wrong tree.
             if (parent) {
                 parent.children.push(node);
                 continue;
@@ -5177,6 +5205,11 @@
 {/snippet}
 
 {#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
+    <!-- `data-graph-id` is an explicit, stable handle. The `title` below is the
+         run's MESSAGE when it has one, so keying on the title identifies a row
+         only for runs that finished cleanly — which is how a test looking for a
+         FAILED run concluded it was missing from the tree entirely
+         (TEC-NATKIT-80). -->
     {@const status = entry.graph.recording?.status ?? "unknown"}
     {@const rows = entry.graph.recording?.artifacts?.total_rows}
     <button
@@ -5184,6 +5217,7 @@
         class="tree-instance"
         class:selected={entry.graph.graph_id === selectedGraphId}
         style={`padding-left: ${0.5 + depth * 0.7}rem`}
+        data-graph-id={entry.graph.graph_id}
         title={entry.graph.recording?.message ?? entry.graph.graph_id}
         onclick={() => selectGraph(entry.graph.graph_id)}
     >

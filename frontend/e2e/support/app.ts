@@ -107,14 +107,17 @@ export class VpApp {
     /**
      * Select a sealed run in the sidebar's instance tree.
      *
-     * ⚠️ By its graph id, via the `title` attribute, NOT by its "run-0001" label.
+     * ⚠️ By its graph id, via `data-graph-id`, NOT by its "run-0001" label.
      * Run numbering restarts per experiment, so several boards in the store have a
      * run-0001 — an unscoped `hasText: /run-\d{4}/` picks whichever renders first,
      * which is how a verification "passed" against somebody else's recording twice
      * before this helper existed.
      */
     async openInstance(graphId: string): Promise<void> {
-        const entry = this.page.locator(`.tree-instance[title="${graphId}"]`);
+        // ⚠️ `data-graph-id`, not `title`: the title is the run's MESSAGE when it
+        // has one, so a title selector silently fails to find any run that failed
+        // or was stopped early — which is exactly the run you go looking for.
+        const entry = this.page.locator(`.tree-instance[data-graph-id="${graphId}"]`);
         await expect(entry, `no instance row for ${graphId}`).toBeVisible({ timeout: 15_000 });
         await entry.click();
         // The inspector is keyed on the selection, so wait for it to catch up
