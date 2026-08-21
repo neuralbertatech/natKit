@@ -41,6 +41,7 @@
         ConnectionState,
     } from "../StreamViewer/websocket";
     import MuseViewer from "../StreamViewer/MuseViewer.svelte";
+    import DeviceHealthPanel from "./DeviceHealthPanel.svelte";
     import ImuViewer from "../StreamViewer/ImuViewer.svelte";
     import ChannelFrameViewer from "../StreamViewer/ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "../StreamViewer/FeatureVectorViewer.svelte";
@@ -158,6 +159,7 @@
         StreamGraphNode,
         StreamGraphPosition,
         StreamGraphStatusSummary,
+        DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
         NodeCatalogEntry,
@@ -192,6 +194,8 @@
         latestEdgeValidation: Record<string, StreamGraphDiagnostic[]>;
         latestGraphDiagnostics: StreamGraphDiagnostic[];
         connectionState: ConnectionState;
+        /** The rig's health, or null when nothing has been heard yet. */
+        deviceHealth: DeviceHealthMessage | null;
         listStreamGraphs: () => void;
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
@@ -335,6 +339,7 @@
         latestEdgeValidation,
         latestGraphDiagnostics,
         connectionState,
+        deviceHealth,
         listStreamGraphs,
         requestStreamGraphStatus,
         saveStreamGraph,
@@ -5586,6 +5591,10 @@
                           ? "Connecting…"
                           : "Disconnected"}
                 </span>
+                <!-- Next to the connection pill on purpose: "is the backend
+                     there?" and "is the rig there?" are the same question asked
+                     of two different things, and they are asked together. -->
+                <DeviceHealthPanel health={deviceHealth} {connectionState} />
             </div>
             <div class="toolbar-actions">
                 {#if boardIsImmutable}

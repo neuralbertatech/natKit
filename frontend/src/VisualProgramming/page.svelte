@@ -34,6 +34,7 @@
         StreamGraphForkedMessage,
         ExperimentInstanceVerificationMessage,
         DeviceCommandResultMessage,
+        DeviceHealthMessage,
         InstanceReplayMessage,
         StreamGraphStatusMessage,
         StreamGraphStatusSummary,
@@ -65,6 +66,12 @@
     const STREAM_GRAPH_REFRESH_INTERVAL_MS = 1000;
 
     let connectionState = $state<ConnectionState>("disconnected");
+    // The rig's health, pushed once a second while subscribed (TEC-NATKIT-33).
+    // Kept here rather than in the editor because it is a property of the
+    // HARDWARE, not of the board being edited: the question "is the rig alive?"
+    // is asked most often when no board is running at all.
+    let deviceHealth = $state<DeviceHealthMessage | null>(null);
+
     let lastError = $state<string | null>(null);
     let availableStreams = $state<Record<string, StreamInfo>>({});
     // The node catalog is the single source of truth for available node types
@@ -1100,6 +1107,12 @@
         wsManager = new StreamViewerWebSocket(getWebSocketUrl(), {
             onConnectionChange: (state) => {
                 connectionState = state;
+                if (state !== "connected") {
+                    // ⚠️ Drop it. Age is measured by the BACKEND, so once the
+                    // socket is gone nothing advances it: keeping the last message
+                    // would show every device as "now" forever.
+                    deviceHealth = null;
+                }
                 if (state === "connected") {
                     lastError = null;
                     wsManager?.send({
@@ -1110,6 +1123,13 @@
                     listProfiles();
                     listExperiments();
                     listWorkspaces();
+                    // Start the rig health push. Re-sent on every reconnect
+                    // rather than once on mount: the backend's health thread dies
+                    // with the socket, so a reconnect that did not re-subscribe
+                    // would leave the pill frozen on its last-known figures --
+                    // which is precisely the stale-reading-shown-as-current
+                    // failure the panel is meant to prevent.
+                    wsManager?.send({ action: "subscribe_device_health" });
                     // Ask the control plane (via the proxy) for compute slots so a
                     // train submit can auto-pick one; periodic pushes keep it fresh.
                     wsManager?.sendMlAction({
@@ -1302,6 +1322,9 @@
                     wsManager?.requestStreamList();
                     startStreamGraph(message.graph_id, undefined, message.replay_id);
                 }
+            },
+            onDeviceHealth: (message: DeviceHealthMessage) => {
+                deviceHealth = message;
             },
             onDeviceCommandResult: (message: DeviceCommandResultMessage) => {
                 deviceCommandPending = {
@@ -1510,6 +1533,7 @@
         latestEdgeValidation={latestStreamGraphEdgeDiagnostics}
         latestGraphDiagnostics={latestStreamGraphDiagnostics}
         {connectionState}
+        {deviceHealth}
         {listStreamGraphs}
         {requestStreamGraphStatus}
         {saveStreamGraph}
@@ -1566,6 +1590,7 @@
 </div>
 
 <style>
+
     .visual-programming {
         position: relative;
         height: calc(100vh - 56px);

@@ -1066,6 +1066,57 @@ export interface DeviceCommandResultMessage {
   records: DeviceLogRecord[];
 }
 
+// --- device health (TEC-NATKIT-33) ----------------------------------------
+//
+// The rig's own health, pushed once a second while subscribed. Every figure in
+// `fields` is CUMULATIVE SINCE THE DEVICE BOOTED, which is why `rates` exists
+// separately: the backend differences two samples over at least 5 s of the
+// DEVICE's clock and reports per-second figures.
+//
+// ⚠️ `rates` is null when there is no rate to report, and that is not the same as
+// a rate of zero. Render a dash. The difference matters most in exactly the
+// moment somebody is staring at this panel to work out what is wrong.
+export type DeviceRateStatus =
+  | "available"
+  | "first_sample"
+  | "rebooted"
+  | "clock_not_advanced"
+  | "window_too_short";
+
+export interface DeviceHealthEntry {
+  /** A string, not a number: these ids exceed 2^53 and would round. */
+  device_id: string;
+  role: "hub" | "leaf";
+  /**
+   * Milliseconds since the BACKEND last received a frame from this device.
+   * ⚠️ The only field that can say a device has gone silent -- the frame itself
+   * cannot, because a device that stops sending leaves a last frame that looks
+   * healthy forever.
+   */
+  age_ms: number;
+  quiet: boolean;
+  /** The latest frame, keyed exactly as the schema descriptor names its fields. */
+  fields: Record<string, unknown>;
+  rate_status: DeviceRateStatus;
+  /** Per-second rates, or null. Null is not zero. */
+  rates: Record<string, number> | null;
+  /** How much device clock the rates span, so the figure can be weighed. */
+  rate_interval_us?: number;
+}
+
+export interface DeviceHealthMessage {
+  type: "device_health";
+  wall_ms: number;
+  quiet_after_ms: number;
+  /**
+   * How many status topics the backend is tailing. Distinguishes "the rig has
+   * never published" (0) from "every board went silent" (>0 with everything
+   * quiet), which look identical from the devices list alone.
+   */
+  topics_tailed: number;
+  devices: DeviceHealthEntry[];
+}
+
 export interface StreamGraphDiagnostic {
   severity: "error" | "warning";
   code: string;
@@ -1272,7 +1323,8 @@ export type WebSocketMessage =
   | StreamGraphForkedMessage
   | ExperimentInstanceVerificationMessage
   | InstanceReplayMessage
-  | DeviceCommandResultMessage;
+  | DeviceCommandResultMessage
+  | DeviceHealthMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
@@ -1533,6 +1585,18 @@ export interface SendDeviceCommandAction {
   timeout_ms?: number;
 }
 
+// Start / stop the device_health push. The rig's status topics are LOGGING_LOG,
+// which the stream list does not carry, so this is the only way to reach them.
+export interface SubscribeDeviceHealthAction {
+  action: "subscribe_device_health";
+  interval_ms?: number;
+  quiet_after_ms?: number;
+}
+
+export interface UnsubscribeDeviceHealthAction {
+  action: "unsubscribe_device_health";
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -1572,4 +1636,6 @@ export type ClientAction =
   | ListProfilesAction
   | SaveProfileAction
   | DeleteProfileAction
-  | SendDeviceCommandAction;
+  | SendDeviceCommandAction
+  | SubscribeDeviceHealthAction
+  | UnsubscribeDeviceHealthAction;
