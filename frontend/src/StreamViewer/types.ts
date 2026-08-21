@@ -1117,6 +1117,86 @@ export interface DeviceHealthMessage {
   devices: DeviceHealthEntry[];
 }
 
+// --- the log viewer (TEC-NATKIT-33) ---------------------------------------
+//
+// LOGGING_LOG topics are deliberately absent from the stream list: they are not
+// data a graph can consume, and listing them there would offer a "node status"
+// source node. They are reached through list_log_streams / subscribe_logs.
+
+export interface LogStreamTopic {
+  /** The full Kafka topic string; this is the identity used to subscribe. */
+  topic: string;
+  /** A string, not a number: these ids exceed 2^53 and would round. */
+  stream_id: string;
+  schema_name: string;
+  serialization_type: string;
+  /**
+   * Whether the schema has a descriptor, i.e. whether records arrive as
+   * labelled fields or only as text. Answered per TOPIC rather than discovered
+   * per record, so the UI can say which before anything arrives.
+   */
+  has_descriptor: boolean;
+  descriptor?: DataSchemaDescriptor;
+}
+
+export interface LogStreamListMessage {
+  type: "log_stream_list";
+  request_id: string;
+  topics: LogStreamTopic[];
+}
+
+/**
+ * How a record was made readable.
+ *
+ * ⚠️ "none" means the backend could not decode it and is telling you so rather
+ * than dropping it. A log viewer that shows nothing for a topic it cannot parse
+ * is indistinguishable from a device that is not logging.
+ */
+export type LogRecordDecoded = "schema" | "json" | "text" | "none";
+
+export interface LogRecord {
+  topic: string;
+  stream_id: string;
+  schema_name: string;
+  /** When the BACKEND received it. */
+  received_ms: number;
+  /** The record's own timestamp, when it has one (decoded === "schema"). */
+  device_ts_us?: number;
+  bytes: number;
+  decoded: LogRecordDecoded;
+  json?: unknown;
+  text?: string;
+  truncated?: boolean;
+}
+
+export interface LogRecordsMessage {
+  type: "log_records";
+  records: LogRecord[];
+  /** Records the backend walked away from in a burst, rather than silently. */
+  dropped?: number;
+  error?: string;
+}
+
+export interface ListLogStreamsAction {
+  action: "list_log_streams";
+  request_id: string;
+}
+
+/**
+ * Start, CHANGE or stop tailing. Re-sending it replaces the topic set without
+ * restarting the tail, so toggling a checkbox does not lose your place in the
+ * topics that stayed selected. An empty array stops.
+ */
+export interface SubscribeLogsAction {
+  action: "subscribe_logs";
+  topics: string[];
+  interval_ms?: number;
+}
+
+export interface UnsubscribeLogsAction {
+  action: "unsubscribe_logs";
+}
+
 export interface StreamGraphDiagnostic {
   severity: "error" | "warning";
   code: string;
@@ -1324,7 +1404,9 @@ export type WebSocketMessage =
   | ExperimentInstanceVerificationMessage
   | InstanceReplayMessage
   | DeviceCommandResultMessage
-  | DeviceHealthMessage;
+  | DeviceHealthMessage
+  | LogStreamListMessage
+  | LogRecordsMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
@@ -1638,4 +1720,7 @@ export type ClientAction =
   | DeleteProfileAction
   | SendDeviceCommandAction
   | SubscribeDeviceHealthAction
-  | UnsubscribeDeviceHealthAction;
+  | UnsubscribeDeviceHealthAction
+  | ListLogStreamsAction
+  | SubscribeLogsAction
+  | UnsubscribeLogsAction;
