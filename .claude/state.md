@@ -78,14 +78,38 @@ node's inspector now shows that stream's clock fit next to **Worn at**.
   and an import silently no-op'd into a runtime error. A string replace that finds
   no anchor is a no-op, not an error: assert the anchor.
 
+### #442 (TEC-NATKIT-77) done — a recording seals its clock record
+
+`natKit 709d47b`, `libnatkit 22ae1b0` on `zach/442-recording-clock-quality` (off
+`zach/318-stream-sync-quality`). Snapshotted at both ends of a run; beacon loss
+differenced into a rate; the summary reaches the cohort manifest.
+
+**The health tailer is now a SERVICE**, started in `NatKitBackend.cpp` at boot,
+not a per-connection thread. That is structural: tailing inside a WebSocket
+handler made a recording's answer depend on whether somebody had the panel open.
+
+⚠️ Found by running it, not reading it: lazily starting the tailer meant the FIRST
+recording after a restart sealed "no clock data" for every device — accusing the
+hardware of our own cold start, on the one run nobody gets to redo. Hence
+`not_watching` as a distinct status from `no_status_frames`.
+
+⚠️ **The frontend rendering of the clock record is UNVERIFIED.** Could not get a
+newly-created instance to appear in the sidebar run tree to screenshot (wrong
+workspace in one attempt, absent from the tree in another). That second symptom
+may itself be a refresh bug — not diagnosed, not claimed.
+
+### Branch stack (each off the previous)
+
+```
+  trunk
+   ├── zach/419-participant-copy          a0b7113   (independent)
+   └── zach/377-device-health             c7c4e24
+        └── zach/318-stream-sync-quality  0ad9ff8
+             └── zach/442-recording-clock-quality  709d47b  <- tip
+```
+
 ### Filed, not started
 
-- **TEC-NATKIT-77** (#442) — a recording does not record whether the clocks were
-  trustworthy. ⚠️ The deadline one: status frames age out of Kafka retention and
-  the recording keeps no copy, so a cohort collected with a bad clock fit is
-  indistinguishable from a clean one PERMANENTLY. Everything needed exists
-  (`DeviceHealthTracker` already differences the fit); it wants sealing onto the
-  instance next to `sensor_positions`.
 - **TEC-NATKIT-78** (#443) — two `StreamType` enums and only the core one knows
   about `MARKER`, so anything round-tripping a topic through the other silently
   loses marker topics.
