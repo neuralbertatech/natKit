@@ -7,6 +7,22 @@ services:
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
     environment:
+      # ⚠️ WHERE THE BROKERS ARE, and NOT optional (TEC-NATKIT-76). Both binaries
+      # fall back to localhost when these are unset, and inside a container
+      # localhost is the container -- so the failure is not a startup error, it is
+      # a service that comes up, logs "Using Kafka broker at localhost:29093",
+      # retries a refused connection forever, and serves an EMPTY STREAM LIST. The
+      # UI shows no sensors and looks like the hardware is off.
+      #
+      # They were lost when this file stopped being an override of
+      # docker-compose.yml and became self-contained: the values were never in
+      # this file, they were inherited. Same root as TEC-NATKIT-70 (the published
+      # port), and the same lesson -- a self-contained file has to carry
+      # everything the merge used to supply.
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 9092
+      LIBNATKIT_MQTT_BROKER_ADDRESS: mosquitto
+      LIBNATKIT_MQTT_BROKER_PORT: 1883
       # Per-message wire tracing, OFF by default: it printed every frame's fully
       # decoded payload in both directions (~100 lines per bulk IMU frame) and
       # drowned every other service in `compose logs`. Set to 1 to debug the wire.
@@ -28,6 +44,11 @@ services:
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
     environment:
+      # ⚠️ See the bridge above: unset means localhost, and localhost inside a
+      # container is the container. The backend then serves an empty stream list
+      # while looking perfectly healthy (TEC-NATKIT-76).
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: 9092
       # Dev-only: bypass authentication so the panel/WebSocket need no login in
       # the local dev stack. NEVER set this in prod (see docker-compose.portainer.yml).
       NATKIT_AUTH_DISABLED: "true"
