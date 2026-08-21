@@ -484,6 +484,8 @@ export interface StreamGraphViewport {
 // count, and protocol metadata. The cue engine (experiment.ts) is driven from
 // this — no gesture-specific hardcoding. Lives here (the shared types module) so
 // both the session node and the cue engine can reference it without a cycle.
+import type { ParticipantCopy } from "./participantCopy";
+
 export interface SessionProtocol {
   protocol_id: string;
   label: string;
@@ -497,6 +499,10 @@ export interface SessionProtocol {
   lead_in_s: number;
   tail_rest_s: number;
   seed: number;
+  // The words the PARTICIPANT sees (TEC-NATKIT-69). Optional: absent means the
+  // neutral defaults in participantCopy.ts, which is the safe direction because
+  // they name no body part.
+  participant_copy?: ParticipantCopy;
 }
 
 // Config for a train node (Phase 5): mirrors the control-plane

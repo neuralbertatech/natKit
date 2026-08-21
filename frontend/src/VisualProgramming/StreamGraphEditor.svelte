@@ -4004,6 +4004,9 @@
                 : null;
         return {
             protocolLabel: protocol.label,
+            // Carried through so the runner can show the PROTOCOL's words rather
+            // than this component's (TEC-NATKIT-69).
+            protocol,
             // A step protocol's classes are derived from its cue steps rather than
             // declared, so ask the shape-aware helper.
             classes: isStepProtocol(protocol)
@@ -5104,6 +5107,7 @@
         {#if view && boundExperimentView}
             <ExperimentRunner
                 protocolLabel={view.protocolLabel}
+                protocol={view.protocol}
                 classes={view.classes}
                 recording={view.recording}
                 recordingElsewhere={view.recordingElsewhere}
@@ -7735,6 +7739,7 @@
                 <ExperimentRunner
                     large
                     protocolLabel={view.protocolLabel}
+                    protocol={view.protocol}
                     classes={view.classes}
                     recording={view.recording}
                     recordingElsewhere={view.recordingElsewhere}

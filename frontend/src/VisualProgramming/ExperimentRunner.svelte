@@ -5,9 +5,21 @@
     // recording state + Record/Stop handlers live in the editor.
     import { CircleDot, Play, Square } from "@lucide/svelte";
     import type { EmgCueEvent } from "../StreamViewer/experiment";
+    import {
+        instructionForPhase,
+        participantCopyOf,
+    } from "../StreamViewer/participantCopy";
 
     interface Props {
         protocolLabel: string;
+        /**
+         * The protocol itself, for the words the PARTICIPANT sees
+         * (TEC-NATKIT-69). Passed rather than resolved by the caller so a caller
+         * cannot forget to and silently fall back to a default: absent here means
+         * the neutral copy, which is the safe direction, but a caller passing the
+         * protocol it already has is the normal case.
+         */
+        protocol?: unknown;
         classes: string[];
         recording: boolean;
         // True when a DIFFERENT experiment is recording (only one at a time).
@@ -34,6 +46,7 @@
 
     let {
         protocolLabel,
+        protocol = null,
         classes,
         recording,
         recordingElsewhere = false,
@@ -74,17 +87,22 @@
 
     // A plain-language instruction for the current phase — the "what do I do
     // right now" line above the gesture name.
-    const instruction = $derived.by(() => {
-        if (!activeCue) return "";
-        if (activeCue.phase === "lead_in") return "Get ready — relax your hand";
-        if (activeCue.phase === "rest") return "Relax";
-        if (activeCue.phase === "tail_rest") return "All done — relax";
-        if (activeCue.phase === "wait") return "Waiting for you";
-        if (activeCue.phase === "instruction") return "";
-        return activeCue.tutorial
-            ? "Practice — this is not kept for training"
-            : "Make and hold this gesture";
-    });
+    // ⚠️ Every participant-facing word here comes from the PROTOCOL, not from
+    // this component (TEC-NATKIT-69). It used to say "relax your hand" and "make
+    // and hold this gesture", which is EMG's vocabulary; told to someone
+    // performing a reach-overhead or trunk task, the first of those is an
+    // instruction to do something other than the protocol.
+    const copy = $derived(participantCopyOf(protocol));
+
+    const instruction = $derived(
+        activeCue
+            ? instructionForPhase(
+                  activeCue.phase,
+                  activeCue.tutorial === true,
+                  copy,
+              )
+            : "",
+    );
 
     const secondsLeftInCue = $derived.by(() => {
         if (!activeCue) return null;
@@ -147,7 +165,7 @@
                 <span>Round {currentRep} of {totalReps}</span>
             {/if}
             {#if holdsTotal > 0}
-                <span>{holdsRemaining} of {holdsTotal} gestures left</span>
+                <span>{holdsRemaining} of {holdsTotal} {copy.cueNounPlural} left</span>
             {/if}
             <span>{timeLeftLabel} remaining</span>
         </div>
@@ -191,7 +209,7 @@
                 {/each}
             </div>
             <span class="ready-meta">
-                {summary.holdCues} gestures{totalReps > 0
+                {summary.holdCues} {copy.cueNounPlural}{totalReps > 0
                     ? ` · ${totalReps} rounds`
                     : ""} · ~{timeLeftLabel}
             </span>
@@ -201,15 +219,18 @@
                         Press <strong>Record</strong>, then follow the big prompt.
                     </li>
                     <li>
-                        When a gesture name appears, <strong
-                            >make and hold it</strong
-                        > steadily until the countdown reaches 0.
+                        <strong>{copy.cueInstruction}</strong> when its name
+                        appears, until the countdown reaches 0.
                     </li>
-                    <li>On <strong>Rest</strong>, relax your hand fully.</li>
+                    <li>On <strong>Rest</strong>, {copy.restInstruction.toLowerCase()}.</li>
                     <li>
-                        Each gesture repeats {totalReps || "several"} times in a shuffled
-                        order — keep contractions consistent for the best accuracy.
+                        Each {copy.cueNoun} repeats {totalReps || "several"} times in a
+                        shuffled order.
                     </li>
+                    <!-- The EMG advice that used to sit here ("keep contractions
+                         consistent for the best accuracy") is gone rather than
+                         reworded: "contractions" is EMG vocabulary, and the advice
+                         does not transfer to an activity of daily living. -->
                 </ol>
             {/if}
         </div>

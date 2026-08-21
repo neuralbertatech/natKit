@@ -202,6 +202,22 @@ export function adlStepProtocol(tasks: AdlTask[] = ADL_TASKS): StepProtocol {
         protocol_id: ADL_PROTOCOL_ID,
         label: "ADL tasks",
         rest_class: "rest",
+        // The words the participant sees (TEC-NATKIT-69). Stated explicitly here
+        // rather than relying on the defaults, because this is the protocol the
+        // study actually runs and its vocabulary should be visible next to the
+        // tasks it describes.
+        //
+        // ⚠️ "Return to a comfortable resting position", NOT "relax your hand".
+        // These tasks are shoulder, trunk and bilateral as well as hand, and the
+        // rest instruction is read at full size by a post-stroke participant
+        // mid-run — naming the wrong body part is an instruction to do something
+        // other than the protocol.
+        participant_copy: {
+            cue_noun: "activity",
+            cue_noun_plural: "activities",
+            cue_instruction: "Perform this activity",
+            rest_instruction: "Return to a comfortable resting position",
+        },
         steps,
     };
 }

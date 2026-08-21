@@ -115,6 +115,14 @@ export const CONVENTION_PROTOCOL: SessionProtocol = {
     lead_in_s: 3,
     tail_rest_s: 2,
     seed: 1,
+    // Its own words back (TEC-NATKIT-69): the neutral default would read
+    // "task", and for an isometric EMG protocol the HOLD is the instruction.
+    participant_copy: {
+        cue_noun: "gesture",
+        cue_noun_plural: "gestures",
+        cue_instruction: "Make and hold this gesture",
+        rest_instruction: "Relax your hand",
+    },
 };
 
 // The finger-counting protocol the "Record an experiment" starter binds.
@@ -129,6 +137,14 @@ export const FINGER_COUNTING_STARTER_PROTOCOL: SessionProtocol = {
     lead_in_s: 3,
     tail_rest_s: 2,
     seed: 1,
+    // Its own words back (TEC-NATKIT-69): the neutral default would read
+    // "task", and for an isometric EMG protocol the HOLD is the instruction.
+    participant_copy: {
+        cue_noun: "gesture",
+        cue_noun_plural: "gestures",
+        cue_instruction: "Make and hold this gesture",
+        rest_instruction: "Relax your hand",
+    },
 };
 
 export const STARTER_TEMPLATES: StarterTemplate[] = [
