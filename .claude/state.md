@@ -93,14 +93,9 @@ recording after a restart sealed "no clock data" for every device — accusing t
 hardware of our own cold start, on the one run nobody gets to redo. Hence
 `not_watching` as a distinct status from `no_status_frames`.
 
-⚠️ **The frontend rendering of the clock record is UNVERIFIED, and now we know
-why: TEC-NATKIT-80.** A freshly sealed recording is unreachable in the UI — in the
-store, the page's own socket receives it (proven by intercepting WS frames), and it
-appears in neither the instance tree nor the `?board=` deep link. My earlier "maybe
-a refresh bug" is ruled out. Strongest lead: its status is `failed` (no source
-nodes ⇒ nothing to materialize), while `recording`/`complete` instances DO show —
-but `experimentTree` filters only on `instance_id`, so a failed one is meant to
-show.
+The clock record's rendering is **verified** for the no-devices case by
+`e2e/98-recording-clock-record.spec.ts`. Per-device rows are still uncovered — that
+needs a fixture that can build a board with a bound source.
 
 Writing that test also found: the summary read **"all 0 held"** with no devices (a
 reassurance about nothing — fixed, `db19219`), and TWO harness defects: the e2e
@@ -163,8 +158,12 @@ explanation was wrong:
    `VpApp.openInstance(graphId)`, which keys on the row's `title`.
 2. **a DOM-mutating Playwright probe races Svelte's re-render** — gave
    non-monotonic width readings. Measure what the component renders.
-3. **the instance was genuinely unreachable** (#80), which I had guessed was a
-   refresh bug until intercepting the page's own WebSocket frames disproved it.
+3. **the instance was genuinely unreachable** (#80) — TWO silent bugs, and my
+   first three explanations (stale listing, workspace filter, `failed` status) were
+   all wrong. What settled it: intercepting the page's own WebSocket frames to
+   prove the client HAD the data, then a temporary probe inside the derivation that
+   printed `instances=9 rootKeys=["pos-probe"]`. **Instrument the derivation, not
+   the symptom.**
 
 The e2e fixtures in `frontend/e2e/support` are the right harness for this — scratch
 board, guaranteed cleanup, console-error guard, a WS client. Use them instead of
@@ -172,8 +171,6 @@ throwaway scripts.
 
 ### Filed, not started
 
-- **#445/#80** — a freshly sealed recording is unreachable in the UI. Blocks the
-  rendering verification on #69 and #77.
 - **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
   `ManualConnection.HelloWorld`: `mosquitto_connect` to localhost:1883 errors
   after a 133 s timeout while a broker IS listening and `mosquitto_pub` works.
