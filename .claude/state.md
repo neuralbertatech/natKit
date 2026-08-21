@@ -2,38 +2,92 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-21
 
-## ✅ THE IMU ADL EPIC IS CODE-COMPLETE. 13 TICKETS, NOTHING PUSHED.
+## Where things stand
 
-Zach's flow works end to end: open Visual Programming → pick the **IMU ADL session**
-template → a workspace, experiment and wired board arrive → the gate refuses an
-unmapped or uncalibrated setup → Record asks who the run is of → the participant
-sees the image and hears the clip → the export carries labels, body positions,
-participant and attribution → one click gives the whole cohort as a tar.
+The IMU ADL epic is **merged and pushed** (see the history below). Current work is
+**TEC-NATKIT-33 / #377 — device health**, on `zach/377-device-health` in both
+repos, pushed, 75%.
 
-⚠️ **NOTHING IS PUSHED OR MERGED.** One branch per ticket, and the stack is
-**linear** — each is an ancestor of the next, so `zach/415-...` contains everything
-and merging in this order replays cleanly:
+### #377: pushed, three slices of four done
 
 ```
-  zach/403-instance-participant-snapshot   dee9a00 -> libnatkit 345c7fb
-  zach/404-participant-per-run             cea3a6e -> a6d55c2
-  zach/405-workspace-container             5075ad4 -> 359e4e5
-  zach/406-workspace-scoped-pickers        465bdb8 -> 359e4e5
-  zach/407-adl-imu-workspace-template      ae400a8 -> 359e4e5
-  zach/409-sensor-position-mapping         412f0cc -> 54b1b1f
-  zach/408-record-gate                     fa3db28 -> b76733c
-  zach/410-adl-stimulus-placeholders       6ceb7d7 -> b76733c
-  zach/417-template-savable-without-stream 2283203 -> b76733c
-  zach/418-participant-view-clipping       d56357e -> b76733c
-  zach/411-cohort-export                   b1b9612 -> 54be790
-  zach/413-backend-log-visibility          fd0ffbf -> bf27894
-  zach/415-portainer-instance-volume       95e954e -> bf27894   <- tip
+  natKit           8a30c53  the pill in the graph toolbar
+  libnatkit        08b7ee5  DeviceHealth: rates, freshness, quiet
+  libnatkit-core   d1b1126  the two binary schemas + fixture test
 ```
 
-Tip verified: frontend `npm run check` clean, **131 tests pass**, host build green,
-and the in-container build (the only one that compiles the Parquet path) green.
+The hub publishes its own health and every leaf's once a second on
+`Log-<id>-Binary-NatKitPrimaryStatusV1` / `-NatKitNodeStatusV1`. Nothing could
+read them. Now: two decoders (168 B and 144 B, explicit little-endian at pinned
+offsets), a differencing layer, and a pill next to "Connected" in the graph
+toolbar that expands to hub + every leaf.
+
+**Verified against the live four-leaf rig**, with the arithmetic cross-checking
+itself: four leaves at 10.0 data frames/s plus heartbeats = the hub's 44.7
+`frames_sent`/s, and the 10/s independently equals 80 frames per 8 s counted off
+MQTT. Evidence + manifest attached to the ticket; also in
+`~/natkit-verification/health/`.
+
+**What is left on #377** — the first half of its title. LOGGING_LOG topics
+deliberately do NOT appear in the stream list: they are not data a graph can
+consume, and listing them would offer a "node status" source node. If the intent
+was a generic log *viewer*, that wants its own ticket. **Ask Zach** rather than
+guessing.
+
+### Traps this work bought, worth not re-learning
+
+- ⚠️ **A tick is not a window.** A leaf's `frames_built` reaches the hub on the
+  *leaf's* heartbeat (every 2 s), out of step with the hub's 1 Hz publish. A 1 s
+  rate on it read 0.0/s then 20.0/s for a counter that cannot be below 10/s.
+  Rates span >= 5 s of DEVICE clock now. Any new counter relayed via a leaf has
+  the same hazard.
+- ⚠️ **Kafka's partition mtime is page-cached and lies.** I read "no writes
+  today" off `/var/lib/kafka/data/*/` and concluded the backend was replaying
+  history, while the rig was in fact live. The instrument that settled it was
+  `uptime_us` advancing 1:1 with wall time across consecutive ticks. Independent
+  confirmation is `mosquitto_sub` counting messages.
+- ⚠️ **`pgrep -f libnatkit-natkit-backend` matches pid 1**, because the
+  container's supervisor loop has the path in its cmdline. Use
+  `pgrep -x -f /full/path` and check `readlink /proc/<pid>/exe` — a
+  "(deleted)" exe means the binary was replaced and the process is still the old
+  one.
+- The **frontend is bind-mounted** (`./frontend:/app`), so no image rebuild is
+  needed for UI work; the **backend is not**, so a change needs
+  `podman cp` + an in-container `cmake --build` + killing the backend pid.
+
+### Filed, not started
+
+- **TEC-NATKIT-75** (#432) — `frames_queued` undercounts: a lost-update race,
+  plain `++` on a shared `uint32_t` from two tasks. Reads ~30 *below*
+  `frames_sent` while `frames_dropped` is 0. `frames_dropped` has the same defect
+  and is worse, being the counter the uplink is judged by.
+- **TEC-NATKIT-76** (#437, FIXED in `0e08cb5`) — the dev stack's backend and
+  bridge had lost `LIBNATKIT_KAFKA_BROKER_ADDRESS`, so the backend talked to
+  `localhost:29093` and served an **empty stream list with no error** for 24 h.
+  Same root cause as #70: values that were inherited when the dev file was an
+  override, and silently dropped when it became self-contained.
+
+### #395 — answered, awaiting disposition
+
+21.6 h clean on the swapped board: `4c:75:25` now reads −31 dBm (the *best* of
+the four) with send-failure and sequence-gap rates both flat zero, delivering a
+full 10.0/s. Its huge cumulative figures are historical. The **connector**
+theory holds, not the position. Commented on the ticket with the table.
+
+### Still needing Zach
+
+- **#419** — participant-facing copy ("relax your hand" shown to someone doing a
+  shoulder/trunk task). Needs his words, not mine.
+- **#424** — two host commands: `systemctl --user enable --now natkit-stack.service`
+  and `loginctl enable-linger $USER`.
+- **23 tickets in Verification** awaiting sign-off. None of the ADL epic has been
+  through a real session with a participant.
+
+---
+
+## History: the IMU ADL epic (merged 2026-08-20)
 
 ### What each ticket did, in one line
 
