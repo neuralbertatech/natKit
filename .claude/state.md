@@ -10,12 +10,12 @@ The IMU ADL epic is **merged and pushed** (see the history below). Current work 
 **TEC-NATKIT-33 / #377 — device health**, on `zach/377-device-health` in both
 repos, pushed, 75%.
 
-### #377: pushed, three slices of four done
+### #377: COMPLETE, pushed, 100%, awaiting verification
 
 ```
-  natKit           8a30c53  the pill in the graph toolbar
-  libnatkit        08b7ee5  DeviceHealth: rates, freshness, quiet
-  libnatkit-core   d1b1126  the two binary schemas + fixture test
+  natKit           ffaf72f  the toolbar pill + the Logs page
+  libnatkit        787089f  DeviceHealth + generic LOGGING_LOG tailing
+  libnatkit-core   fa50878  the two binary schemas, descriptors, decoders, fixture test
 ```
 
 The hub publishes its own health and every leaf's once a second on
@@ -30,14 +30,17 @@ itself: four leaves at 10.0 data frames/s plus heartbeats = the hub's 44.7
 MQTT. Evidence + manifest attached to the ticket; also in
 `~/natkit-verification/health/`.
 
-**What is left on #377** — the first half of its title. LOGGING_LOG topics
-deliberately do NOT appear in the stream list: they are not data a graph can
-consume, and listing them would offer a "node status" source node. If the intent
-was a generic log *viewer*, that wants its own ticket. **Ask Zach** rather than
-guessing.
+Zach's call on the title's first half: a **generic log viewer**, not LOGGING_LOG
+in the stream list. Built as a "Logs" nav page — topic picker grouped by device,
+filterable stream, opt-in per topic. The backend resolves topics through the
+schema registry, so a log added tomorrow reads without a frontend change.
 
 ### Traps this work bought, worth not re-learning
 
+- ⚠️ **A record with no message field must not render as its whole JSON.** A
+  34-field status frame wrapped over eight rows and five devices at 1 Hz buried
+  every real log line. Summarise to one line, object behind an expander, and
+  clamp in CSS too — a device may log 900 characters on one line.
 - ⚠️ **A tick is not a window.** A leaf's `frames_built` reaches the hub on the
   *leaf's* heartbeat (every 2 s), out of step with the hub's 1 Hz publish. A 1 s
   rate on it read 0.0/s then 20.0/s for a counter that cannot be below 10/s.
