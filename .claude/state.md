@@ -108,11 +108,30 @@ may itself be a refresh bug — not diagnosed, not claimed.
              └── zach/442-recording-clock-quality  709d47b  <- tip
 ```
 
+### #443 (TEC-NATKIT-78) done — core/streams deleted
+
+`natKit c1bec30`, `libnatkit 871a4ac` on `zach/443-one-streamtype`.
+
+⚠️ **The ticket I filed described a hazard that could not occur.** I claimed two
+live StreamType enums diverged and lost marker topics; in fact
+`#add_subdirectory(core/streams/src)` has been commented out since 67388da
+(Feb 2024), so nothing compiles the second one. **Check the build before
+describing a runtime failure mode.**
+
+The real defect was 1485 lines across 32 files that read as live code — including
+committed MSVC `.obj`/`.tlog` build output in a Syncthing-synced tree. Deleted,
+along with an orphan test and the Visual Studio solution entry that was keeping it
+nominally alive (checked standalone first; .sln left balanced 15/15).
+
+⚠️ Not verified: Visual Studio opening the edited .sln (no Windows here).
+
 ### Filed, not started
 
-- **TEC-NATKIT-78** (#443) — two `StreamType` enums and only the core one knows
-  about `MARKER`, so anything round-tripping a topic through the other silently
-  loses marker topics.
+- **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
+  `ManualConnection.HelloWorld`: `mosquitto_connect` to localhost:1883 errors
+  after a 133 s timeout while a broker IS listening and `mosquitto_pub` works.
+  Pre-existing, untracked, and it makes `ctest` red for everyone — which is how a
+  real failure gets waved through.
 - **TEC-NATKIT-75** (#432) — `frames_queued` undercounts: a lost-update race,
   plain `++` on a shared `uint32_t` from two tasks. Reads ~30 *below*
   `frames_sent` while `frames_dropped` is 0. `frames_dropped` has the same defect
