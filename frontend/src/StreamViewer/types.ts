@@ -818,6 +818,15 @@ export interface InstanceRecording {
   // claim that the run met the threshold, so it must never be written by anything
   // other than the gate.
   calibration_override?: string;
+  /**
+   * Whether the devices' clocks could be trusted while this ran (TEC-NATKIT-77).
+   *
+   * ⚠️ Read; never author. Sealed at record time because the status frames age
+   * out of Kafka retention and nothing else keeps a copy — a run recorded while a
+   * leaf had no valid fit is otherwise indistinguishable from a clean one, and
+   * "was the clock all right?" is asked months later or not at all.
+   */
+  clock_quality?: RecordedClockQuality;
   window_start_us?: number;
   window_end_us?: number | null;
   streams?: {
@@ -1195,6 +1204,39 @@ export interface SubscribeLogsAction {
 
 export interface UnsubscribeLogsAction {
   action: "unsubscribe_logs";
+}
+
+/**
+ * One device's clock, as a finished recording carries it.
+ *
+ * ⚠️ `status` is the field that matters. "no_status_frames" is a real answer and
+ * is NOT the same as a valid fit full of zeroes — most sources (a Muse, an EMG
+ * pill) publish no status frame at all, so the row is the record that the device
+ * was part of the run and could not be vouched for either way.
+ */
+export interface RecordedClockDevice {
+  device_id: string;
+  status: "reported" | "no_status_frames" | "went_quiet" | string;
+  valid?: boolean;
+  quality?: number;
+  epoch?: number;
+  residual_rms_ns?: number;
+  peak_residual_ns?: number;
+  skew_ppb?: number;
+  /** Differenced over the run, not the device's since-boot total. */
+  beacons_missed_in_run?: number;
+  beacons_missed_per_s?: number;
+  /**
+   * ⚠️ The most consequential field here: the fit was REBUILT mid-run, so
+   * timestamps either side of it sit on different fits. Invisible in either
+   * endpoint alone.
+   */
+  epoch_changed_during_run?: boolean;
+}
+
+export interface RecordedClockQuality {
+  run_seconds: number;
+  devices: RecordedClockDevice[];
 }
 
 export interface StreamGraphDiagnostic {
@@ -1602,6 +1644,15 @@ export interface StartExperimentInstanceAction {
   // Set when the operator recorded through the calibration gate (TEC-NATKIT-63).
   // The value is the reason they were shown, so the run says WHAT was overridden.
   calibration_override?: string;
+  /**
+   * Whether the devices' clocks could be trusted while this ran (TEC-NATKIT-77).
+   *
+   * ⚠️ Read; never author. Sealed at record time because the status frames age
+   * out of Kafka retention and nothing else keeps a copy — a run recorded while a
+   * leaf had no valid fit is otherwise indistinguishable from a clean one, and
+   * "was the clock all right?" is asked months later or not at all.
+   */
+  clock_quality?: RecordedClockQuality;
   window_start_us?: number;
 }
 

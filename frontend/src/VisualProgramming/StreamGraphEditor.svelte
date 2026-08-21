@@ -6134,6 +6134,57 @@
                             <p class="muted-text">{rec.message}</p>
                         {/if}
 
+                        <!-- Whether the clocks could be trusted while this ran
+                             (TEC-NATKIT-77). Shown on the sealed instance because
+                             this is the only copy: the status frames it came from
+                             have aged out of Kafka by the time anybody asks. -->
+                        {#if rec?.clock_quality}
+                            {@const clock = rec.clock_quality}
+                            {@const troubled = clock.devices.filter(
+                                (device) =>
+                                    device.status !== "reported" ||
+                                    device.valid === false ||
+                                    device.epoch_changed_during_run === true,
+                            )}
+                            <div class="clock-record">
+                                <div class="summary-row">
+                                    <span>Clocks</span>
+                                    <strong class={troubled.length === 0 ? "clock-clean" : "clock-troubled"}>
+                                        {troubled.length === 0
+                                            ? `all ${clock.devices.length} held`
+                                            : `${troubled.length} of ${clock.devices.length} in question`}
+                                    </strong>
+                                </div>
+                                {#each clock.devices as device (device.device_id)}
+                                    <div class="clock-device">
+                                        <span class="clock-device-id">{device.device_id}</span>
+                                        {#if device.status === "no_status_frames"}
+                                            <!-- Not a fault: most sources publish
+                                                 no status frame. But it IS the
+                                                 absence of a claim, and it must
+                                                 not read as a clean bill. -->
+                                            <span class="clock-note">no clock data — this device does not report one</span>
+                                        {:else if device.status === "went_quiet"}
+                                            <span class="clock-note bad">stopped reporting during the run</span>
+                                        {:else if device.valid === false}
+                                            <span class="clock-note bad">no usable fit — timestamps not comparable across devices</span>
+                                        {:else}
+                                            <span class="clock-note ok">
+                                                fit held{device.residual_rms_ns !== undefined
+                                                    ? `, residual ${(device.residual_rms_ns / 1000).toFixed(1)} µs`
+                                                    : ""}{device.beacons_missed_per_s !== undefined
+                                                    ? `, ${device.beacons_missed_per_s.toFixed(2)} beacons/s missed`
+                                                    : ""}
+                                            </span>
+                                        {/if}
+                                        {#if device.epoch_changed_during_run}
+                                            <span class="clock-note bad">the fit was rebuilt mid-run — timestamps before and after sit on different fits</span>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+
                         {#if artifacts?.data?.length}
                             <p class="eyebrow">Artifacts</p>
                             {#each artifacts.data as artifact}
@@ -7937,6 +7988,36 @@
 
     /* Position clash. Deliberately the warning colour rather than an error: the
        board is still savable, it is RECORDING that must be refused. */
+    .clock-record {
+        margin-top: 0.35rem;
+        padding-top: 0.35rem;
+        border-top: 1px solid #1e2632;
+    }
+
+    .clock-clean { color: #4ade80; }
+    .clock-troubled { color: #fbbf24; }
+
+    .clock-device {
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
+        margin-top: 0.25rem;
+        font-size: 0.74rem;
+    }
+
+    .clock-device-id {
+        color: #93c5fd;
+        font-family: ui-monospace, monospace;
+    }
+
+    .clock-note {
+        color: #7f8ea3;
+        line-height: 1.35;
+    }
+
+    .clock-note.ok { color: #94a3b8; }
+    .clock-note.bad { color: #fcd34d; }
+
     .clock-fit-row {
         display: grid;
         grid-template-columns: auto 1fr;
