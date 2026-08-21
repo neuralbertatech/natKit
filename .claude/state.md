@@ -98,15 +98,20 @@ newly-created instance to appear in the sidebar run tree to screenshot (wrong
 workspace in one attempt, absent from the tree in another). That second symptom
 may itself be a refresh bug — not diagnosed, not claimed.
 
-### Branch stack (each off the previous)
+### Branch stack
 
 ```
   trunk
-   ├── zach/419-participant-copy          a0b7113   (independent)
-   └── zach/377-device-health             c7c4e24
-        └── zach/318-stream-sync-quality  0ad9ff8
-             └── zach/442-recording-clock-quality  709d47b  <- tip
+   ├── zach/419-participant-copy       a0b7113   #69
+   ├── zach/443-one-streamtype         441c5e7   #78 + #79 + #19  <- three tickets
+   └── zach/377-device-health          c7c4e24   #33
+        └── zach/318-stream-sync-quality      0ad9ff8   #7
+             └── zach/442-recording-clock-quality  709d47b   #77
 ```
+
+⚠️ `zach/443-one-streamtype` carries THREE tickets (#78, #79, #19). Drift on my
+part — the convention is one branch per ticket. All three are small and mutually
+independent, so they merge together; flagged rather than rewriting pushed history.
 
 ### #443 (TEC-NATKIT-78) done — core/streams deleted
 
@@ -124,6 +129,20 @@ along with an orphan test and the Visual Studio solution entry that was keeping 
 nominally alive (checked standalone first; .sln left balanced 15/15).
 
 ⚠️ Not verified: Visual Studio opening the edited .sln (no Windows here).
+
+### #444/#79 and #342/#19 done
+
+- **#79** — the mqtt hello-world test reached `test.mosquitto.org`, a THIRD-PARTY
+  public broker, and failed after 133 s. `ctest` for the whole repo was red and
+  slow; it is now **green in 0.14 s** with that test opt-in behind
+  `NATKIT_TEST_PUBLIC_BROKER=1`. ⚠️ I had filed it saying localhost — I read the
+  wrong line of the file.
+- **#19** — the designer flashed the pre-edit protocol for the length of the save
+  round trip. A sent-but-unconfirmed edit is now held until the stored record's
+  `updated_at_us` advances (same clock on both sides), with a 10 s timeout that
+  says so rather than reverting silently. Verified by reproducing the ticket's
+  MutationObserver measurement AND by disabling the fix to watch the test fail:
+  `3,4,3,4` broken vs `3,4` fixed.
 
 ### Filed, not started
 
