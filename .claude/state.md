@@ -232,6 +232,29 @@ cover a different sample set than the derived figure, which is worse than wrong.
 **Follow-on:** `DeviceHealthTracker` already differences counters, so a windowed
 coherence figure in the rig pill is small — deliberately not built blind.
 
+### ⚠️ The health panel called a dead leaf live — fixed
+
+`libnatkit 60d3fe2`, `natKit 7f8fd95`. Found by USING the panel, not reading it.
+
+A leaf's status frame is composed and published **by the hub** from its registry
+entry, so when a leaf falls off the radio the hub keeps publishing that entry once a
+second forever: frames arrive fresh about a device that is gone, every counter
+frozen. `age_ms` measures backend receipt, so it stayed ~0 and `quiet` stayed false.
+My original comment said "a device that stops sending leaves a last frame that looks
+healthy forever" and handled that — I did not consider that something else might
+keep sending on its behalf.
+
+Liveness now derives from the **device's own clock** (`last_seen_us`). `unheard_ms`
+sits alongside `age_ms`, and `quiet_reason` separates `no_frames` (broker/bridge/hub)
+from `device_not_heard` (radio/board) because they send you to different halves of
+the system.
+
+**The generalisable lesson:** freshness of a message is not liveness of its subject
+whenever something can relay or compose on the subject's behalf. Ask whose clock the
+timestamp belongs to.
+
+Board itself + the hub never expiring the entry: **#448/#81**.
+
 ### Filed, not started
 
 - **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
