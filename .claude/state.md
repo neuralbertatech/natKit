@@ -211,6 +211,27 @@ Verification had never taken effect anywhere it was measured. After
 of 1 MB). Documented at the top of `sdkconfig.defaults`; memory note
 [[sdkconfig-defaults-read-once]].
 
+### #401/#52 done in code (not flashed) — V1 grown in place
+
+`natKit-IMU 39cf923`, `libnatkit-core b3ee455`. Zach chose to grow V1 rather than
+add a V2 (still developing; tests move with it). Sizes 168→192 and 144→168.
+
+⚠️ **Both sizes are accepted** — the fleet is flashed one board at a time, so
+refusing the deployed size would blank the health panel for the whole rig.
+⚠️ **`has_probe_sums` / `has_coherence_sums`** keep "this firmware does not report
+it" apart from "it measured zero". Verified against the live rig on OLD firmware:
+5 devices, real rates, flags false, sums zero.
+⚠️ **The offsets are now asserted by the TARGET compiler** (`offsetof` in
+`uplink.hpp`), so a field inserted in the firmware breaks the FIRMWARE build rather
+than silently shifting the host decoder in another repository.
+
+**After flashing, check first:** that a windowed mean from two samples matches the
+derived `coherence_typical_us` over the same interval. If they disagree the sums
+cover a different sample set than the derived figure, which is worse than wrong.
+
+**Follow-on:** `DeviceHealthTracker` already differences counters, so a windowed
+coherence figure in the rig pill is small — deliberately not built blind.
+
 ### Filed, not started
 
 - **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
