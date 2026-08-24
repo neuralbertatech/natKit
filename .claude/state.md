@@ -93,9 +93,9 @@ recording after a restart sealed "no clock data" for every device — accusing t
 hardware of our own cold start, on the one run nobody gets to redo. Hence
 `not_watching` as a distinct status from `no_status_frames`.
 
-The clock record's rendering is **verified** for the no-devices case by
-`e2e/98-recording-clock-record.spec.ts`. Per-device rows are still uncovered — that
-needs a fixture that can build a board with a bound source.
+The clock record's rendering is **fully verified** by
+`e2e/98-recording-clock-record.spec.ts` — the no-devices summary and a real
+device's row ("fit held, residual 48.7 µs") against the live rig.
 
 Writing that test also found: the summary read **"all 0 held"** with no devices (a
 reassurance about nothing — fixed, `db19219`), and TWO harness defects: the e2e
@@ -106,8 +106,8 @@ swallowed the error saying so.
 
 ```
   trunk
-   ├── zach/419-participant-copy       a0b7113   #69
-   ├── zach/443-one-streamtype         441c5e7   #78 + #79 + #19  <- three tickets
+   ├── zach/419-participant-copy       0ebef76   #69 (+ the e2e fixture, merged in)
+   ├── zach/443-one-streamtype         647587d   #78 + #79 + #19 + #80 + the fixture
    └── zach/377-device-health          c7c4e24   #33
         └── zach/318-stream-sync-quality      0ad9ff8   #7
              └── zach/442-recording-clock-quality  709d47b   #77
@@ -147,6 +147,29 @@ nominally alive (checked standalone first; .sln left balanced 15/15).
   says so rather than reverting silently. Verified by reproducing the ticket's
   MutationObserver measurement AND by disabling the fix to watch the test fail:
   `3,4,3,4` broken vs `3,4` fixed.
+
+### The e2e fixture that unblocked everything
+
+`VpApp.attachNodes()` writes nodes onto the scratch board through the socket. Until
+it existed the suite could create a board but not put anything on it, so nothing
+living on a node — a run surface, a source's clock — could be verified at all.
+Four traps, each of which silently produced an EMPTY CANVAS:
+
+1. **park the editor first** (`page.goto("about:blank")`) — its debounced auto-save
+   writes the draft it holds, overwriting a socket write;
+2. **drop `editor_metadata`** from the payload — it is the editor's composite tree
+   and takes precedence over the flattened `nodes` on load;
+3. **drop the editor's localStorage copy** (`natkit.streamviewer.editorGraphs.v1`)
+   — it takes precedence over the backend record, by design;
+4. **`inline_experiment` cannot be seeded** — the backend keeps only
+   id/kind/label/output_port_ids/position on a node, so use `showRunSurface()`.
+
+Also: `openParticipantView()` for the LARGE run surface. The inline one is the
+operator's thumbnail and does not carry the how-to lines at all — asserting it and
+calling the participant view verified is a mistake I made once.
+
+Device ids come from `viewer.devicesWithClockFit()`, never hardcoded, and
+hardware-dependent tests SKIP when the rig is absent.
 
 ### ⚠️ Verification lesson from today, three times over
 
