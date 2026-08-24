@@ -192,6 +192,25 @@ The e2e fixtures in `frontend/e2e/support` are the right harness for this — sc
 board, guaranteed cleanup, console-error guard, a WS client. Use them instead of
 throwaway scripts.
 
+### #432/#75 done in code (not flashed) — and the firmware did not build
+
+`natKit-IMU cd408de` on `zach/432-atomic-uplink-counters`. The four producer-side
+uplink counters are atomic now; the drain-side three stay plain words because
+drainTask is their only writer (and a 64-bit atomic is not lock-free on a 32-bit
+target). `uplinkStats()` returns a snapshot by value.
+
+⚠️ **COMPILED, NOT FLASHED.** Proof the race is gone needs a rig run where
+`frames_queued >= frames_sent`.
+
+⚠️ **The bigger find: `sdkconfig.defaults` is read ONCE.** The build was already
+broken — `ethernet_net.cpp` failed with `eth_w5500_config_t` undeclared, which
+looks like an IDF incompatibility and is not. FOUR options were inert on this box,
+including **TEC-NATKIT-49's `CONFIG_PARTITION_TABLE_CUSTOM`** — so a fix sitting in
+Verification had never taken effect anywhere it was measured. After
+`rm sdkconfig && idf.py reconfigure` the app is at 23% of 3 MB (the ticket had 93%
+of 1 MB). Documented at the top of `sdkconfig.defaults`; memory note
+[[sdkconfig-defaults-read-once]].
+
 ### Filed, not started
 
 - **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
@@ -199,7 +218,7 @@ throwaway scripts.
   after a 133 s timeout while a broker IS listening and `mosquitto_pub` works.
   Pre-existing, untracked, and it makes `ctest` red for everyone — which is how a
   real failure gets waved through.
-- **TEC-NATKIT-75** (#432) — `frames_queued` undercounts: a lost-update race,
+- ~~TEC-NATKIT-75 (#432)~~ — done in code, see above. Original note: — `frames_queued` undercounts: a lost-update race,
   plain `++` on a shared `uint32_t` from two tasks. Reads ~30 *below*
   `frames_sent` while `frames_dropped` is 0. `frames_dropped` has the same defect
   and is worse, being the counter the uplink is judged by.
