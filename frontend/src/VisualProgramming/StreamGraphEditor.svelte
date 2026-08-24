@@ -41,6 +41,8 @@
         ConnectionState,
     } from "../StreamViewer/websocket";
     import MuseViewer from "../StreamViewer/MuseViewer.svelte";
+    import DeviceHealthPanel from "./DeviceHealthPanel.svelte";
+    import { clockFitForStream } from "../StreamViewer/clockFit";
     import ImuViewer from "../StreamViewer/ImuViewer.svelte";
     import ChannelFrameViewer from "../StreamViewer/ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "../StreamViewer/FeatureVectorViewer.svelte";
@@ -158,6 +160,7 @@
         StreamGraphNode,
         StreamGraphPosition,
         StreamGraphStatusSummary,
+        DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
         NodeCatalogEntry,
@@ -192,6 +195,8 @@
         latestEdgeValidation: Record<string, StreamGraphDiagnostic[]>;
         latestGraphDiagnostics: StreamGraphDiagnostic[];
         connectionState: ConnectionState;
+        /** The rig's health, or null when nothing has been heard yet. */
+        deviceHealth: DeviceHealthMessage | null;
         listStreamGraphs: () => void;
         requestStreamGraphStatus: (graphId: string) => void;
         saveStreamGraph: (graph: StreamGraphDefinition) => boolean;
@@ -335,6 +340,7 @@
         latestEdgeValidation,
         latestGraphDiagnostics,
         connectionState,
+        deviceHealth,
         listStreamGraphs,
         requestStreamGraphStatus,
         saveStreamGraph,
@@ -633,12 +639,76 @@
     let pendingExperimentEdit = $state<Experiment | null>(null);
     let experimentSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // An edit that has been SENT but not yet echoed back by the backend
+    // (TEC-NATKIT-19).
+    //
+    // ⚠️ This exists because clearing the pending edit at SEND time made the
+    // designer render the PREVIOUS protocol for the length of the round trip. It
+    // was measured at ~11ms on this machine and is as long as the round trip
+    // anywhere else — so on a slow or failed save the author watches their edit
+    // vanish with nothing to explain it. It also reset anything holding a
+    // reference INTO the protocol: the canvas remembers its zoomed repeat group by
+    // step id, so opening a group just after "Convert to editable steps" zoomed in
+    // and then bounced back out.
+    //
+    // `storedUpdatedAtUs` is the stored record's timestamp AT SEND TIME, so the
+    // echo is recognised by that value advancing. Deliberately not "the backend's
+    // timestamp is newer than my clock": those are two different clocks, and
+    // comparing them is how this sort of fix breaks on a machine whose clock is a
+    // few seconds off.
+    interface InFlightExperimentEdit {
+        experiment: Experiment;
+        storedUpdatedAtUs: number;
+        timeout: ReturnType<typeof setTimeout>;
+    }
+    let inFlightExperimentEdit = $state<InFlightExperimentEdit | null>(null);
+
+    // How long to keep showing an unconfirmed edit before giving up on it.
+    // ⚠️ Not optional: without it a save that is never echoed leaves the edit on
+    // screen forever and the author believes it was stored. Long enough that a
+    // slow round trip is not mistaken for a failure.
+    const EXPERIMENT_ECHO_TIMEOUT_MS = 10000;
+
+    function clearInFlightExperimentEdit(): void {
+        if (inFlightExperimentEdit) {
+            clearTimeout(inFlightExperimentEdit.timeout);
+            inFlightExperimentEdit = null;
+        }
+    }
+
+    // The edit the UI should show: what is being typed, else what has been sent but
+    // not confirmed, else what the store holds. Ordered so a newer intention always
+    // wins over an older one.
     const boundExperimentView = $derived(
         pendingExperimentEdit &&
             pendingExperimentEdit.experiment_id === boundExperimentId
             ? pendingExperimentEdit
-            : boundExperiment,
+            : inFlightExperimentEdit &&
+                inFlightExperimentEdit.experiment.experiment_id === boundExperimentId
+              ? inFlightExperimentEdit.experiment
+              : boundExperiment,
     );
+
+    // The echo landed: the store's copy of this experiment is newer than it was
+    // when we sent, so it is now at least as new as our edit.
+    $effect(() => {
+        const inFlight = inFlightExperimentEdit;
+        if (!inFlight) {
+            return;
+        }
+        const stored = experiments.find(
+            (experiment) =>
+                experiment.experiment_id === inFlight.experiment.experiment_id,
+        );
+        if (!stored) {
+            // The record went away underneath us — nothing left to confirm.
+            clearInFlightExperimentEdit();
+            return;
+        }
+        if ((stored.updated_at_us ?? 0) > inFlight.storedUpdatedAtUs) {
+            clearInFlightExperimentEdit();
+        }
+    });
 
     function queueExperimentEdit(next: Experiment): void {
         pendingExperimentEdit = next;
@@ -660,9 +730,41 @@
         }
         const edit = pendingExperimentEdit;
         pendingExperimentEdit = null;
-        if (edit) {
-            saveExperiment(edit);
+        if (!edit) {
+            return;
         }
+        // Hold it as in-flight rather than dropping it: the store does not know
+        // about it until the echo arrives, and falling back to the store in the
+        // meantime is the flash this ticket is about.
+        const storedUpdatedAtUs =
+            experiments.find(
+                (experiment) => experiment.experiment_id === edit.experiment_id,
+            )?.updated_at_us ?? 0;
+        if (!saveExperiment(edit)) {
+            // Refused outright (a closed socket). The store is authoritative, so
+            // continuing to show the edit would be a lie — and saveExperiment has
+            // already set the error banner, so the disappearance is explained.
+            clearInFlightExperimentEdit();
+            return;
+        }
+        clearInFlightExperimentEdit();
+        inFlightExperimentEdit = {
+            experiment: edit,
+            storedUpdatedAtUs,
+            timeout: setTimeout(() => {
+                // No echo. Stop claiming the edit is stored, and SAY SO — silently
+                // reverting is exactly the "my edit vanished" this fix removes.
+                inFlightExperimentEdit = null;
+                showAlert({
+                    title: "That change may not have been saved",
+                    body:
+                        "The backend did not confirm the edit within ten seconds, " +
+                        "so the panel is showing the last version it did confirm. " +
+                        "Re-apply the change, and check the connection if it keeps " +
+                        "happening.",
+                });
+            }, EXPERIMENT_ECHO_TIMEOUT_MS),
+        };
     }
 
     // Drop a queued edit unsent — used when the record it targets is going away, so
@@ -673,6 +775,9 @@
             experimentSaveTimer = null;
         }
         pendingExperimentEdit = null;
+        // The in-flight one too: this is called when the record it targets is going
+        // away, and a late echo must not resurrect it on screen.
+        clearInFlightExperimentEdit();
     }
 
     // An immutable instance is read-only everywhere: the backend rejects a save
@@ -738,14 +843,42 @@
     }
     const experimentTree = $derived.by(() => {
         const instances = graphDefinitions.filter((graph) => !!graph.instance_id);
-        const byInstanceId = new Map<string, InstanceTreeNode>();
+        // ⚠️ Keyed by GRAPH ID, which is globally unique. Keyed by `instance_id`
+        // this silently LOST recordings (TEC-NATKIT-80): run numbering restarts
+        // per experiment, so "run-0001" is not one instance but one per
+        // experiment, and `Map.set` kept only whichever came last. On the dev
+        // store that meant 9 instances collapsing to 6 rows, all of them from a
+        // single experiment — every other experiment's history was simply absent
+        // from the tree, with no error and nothing to notice.
+        const byGraphId = new Map<string, InstanceTreeNode>();
         for (const graph of instances) {
-            byInstanceId.set(graph.instance_id as string, { graph, children: [] });
+            byGraphId.set(graph.graph_id, { graph, children: [] });
+        }
+        // Fork parents are named by `forked_from`, which holds an INSTANCE id and
+        // so carries the same ambiguity — resolved within the parent's own
+        // experiment rather than across all of them.
+        const forkKey = (experimentId: string | undefined, instanceId: string) =>
+            `${experimentId ?? ""}\u0000${instanceId}`;
+        const byExperimentInstance = new Map<string, InstanceTreeNode>();
+        for (const node of byGraphId.values()) {
+            byExperimentInstance.set(
+                forkKey(node.graph.experiment_id, node.graph.instance_id as string),
+                node,
+            );
         }
         const roots = new Map<string, InstanceTreeNode[]>();
-        for (const node of byInstanceId.values()) {
+        for (const node of byGraphId.values()) {
             const parentId = node.graph.forked_from;
-            const parent = parentId ? byInstanceId.get(parentId) : undefined;
+            const parent =
+                parentId && parentId !== node.graph.instance_id
+                    ? byExperimentInstance.get(
+                          forkKey(node.graph.experiment_id, parentId),
+                      )
+                    : undefined;
+            // ⚠️ `parentId !== own instance_id` above: a record naming itself as
+            // its parent would be pushed into its own children and never appear as
+            // a root, and the render is recursive — so it would hang the page
+            // rather than show a wrong tree.
             if (parent) {
                 parent.children.push(node);
                 continue;
@@ -5075,6 +5208,11 @@
 {/snippet}
 
 {#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
+    <!-- `data-graph-id` is an explicit, stable handle. The `title` below is the
+         run's MESSAGE when it has one, so keying on the title identifies a row
+         only for runs that finished cleanly — which is how a test looking for a
+         FAILED run concluded it was missing from the tree entirely
+         (TEC-NATKIT-80). -->
     {@const status = entry.graph.recording?.status ?? "unknown"}
     {@const rows = entry.graph.recording?.artifacts?.total_rows}
     <button
@@ -5082,6 +5220,7 @@
         class="tree-instance"
         class:selected={entry.graph.graph_id === selectedGraphId}
         style={`padding-left: ${0.5 + depth * 0.7}rem`}
+        data-graph-id={entry.graph.graph_id}
         title={entry.graph.recording?.message ?? entry.graph.graph_id}
         onclick={() => selectGraph(entry.graph.graph_id)}
     >
@@ -5590,6 +5729,10 @@
                           ? "Connecting…"
                           : "Disconnected"}
                 </span>
+                <!-- Next to the connection pill on purpose: "is the backend
+                     there?" and "is the rig there?" are the same question asked
+                     of two different things, and they are asked together. -->
+                <DeviceHealthPanel health={deviceHealth} {connectionState} />
             </div>
             <div class="toolbar-actions">
                 {#if boardIsImmutable}
@@ -5847,6 +5990,10 @@
                                   boundExperimentView.experiment_id
                                 : null}
                             {streamDeviceNames}
+                            clockFit={clockFitForStream(
+                                deviceHealth,
+                                node.stream_id,
+                            )}
                             inputPortLabels={combineInputLabels(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}
@@ -6122,6 +6269,70 @@
                         </div>
                         {#if rec?.message}
                             <p class="muted-text">{rec.message}</p>
+                        {/if}
+
+                        <!-- Whether the clocks could be trusted while this ran
+                             (TEC-NATKIT-77). Shown on the sealed instance because
+                             this is the only copy: the status frames it came from
+                             have aged out of Kafka by the time anybody asks. -->
+                        {#if rec?.clock_quality}
+                            {@const clock = rec.clock_quality}
+                            {@const troubled = clock.devices.filter(
+                                (device) =>
+                                    device.status !== "reported" ||
+                                    device.valid === false ||
+                                    device.epoch_changed_during_run === true,
+                            )}
+                            <div class="clock-record">
+                                <div class="summary-row">
+                                    <span>Clocks</span>
+                                    <!-- ⚠️ The empty case is its own answer. With no
+                                         devices this read "all 0 held", which is a
+                                         reassurance about nothing — and a run whose
+                                         sources were never resolved is exactly when
+                                         somebody needs telling. -->
+                                    <strong
+                                        class={clock.devices.length === 0
+                                            ? "clock-troubled"
+                                            : troubled.length === 0
+                                              ? "clock-clean"
+                                              : "clock-troubled"}
+                                    >
+                                        {clock.devices.length === 0
+                                            ? "no devices recorded"
+                                            : troubled.length === 0
+                                              ? `all ${clock.devices.length} held`
+                                              : `${troubled.length} of ${clock.devices.length} in question`}
+                                    </strong>
+                                </div>
+                                {#each clock.devices as device (device.device_id)}
+                                    <div class="clock-device">
+                                        <span class="clock-device-id">{device.device_id}</span>
+                                        {#if device.status === "no_status_frames"}
+                                            <!-- Not a fault: most sources publish
+                                                 no status frame. But it IS the
+                                                 absence of a claim, and it must
+                                                 not read as a clean bill. -->
+                                            <span class="clock-note">no clock data — this device does not report one</span>
+                                        {:else if device.status === "went_quiet"}
+                                            <span class="clock-note bad">stopped reporting during the run</span>
+                                        {:else if device.valid === false}
+                                            <span class="clock-note bad">no usable fit — timestamps not comparable across devices</span>
+                                        {:else}
+                                            <span class="clock-note ok">
+                                                fit held{device.residual_rms_ns !== undefined
+                                                    ? `, residual ${(device.residual_rms_ns / 1000).toFixed(1)} µs`
+                                                    : ""}{device.beacons_missed_per_s !== undefined
+                                                    ? `, ${device.beacons_missed_per_s.toFixed(2)} beacons/s missed`
+                                                    : ""}
+                                            </span>
+                                        {/if}
+                                        {#if device.epoch_changed_during_run}
+                                            <span class="clock-note bad">the fit was rebuilt mid-run — timestamps before and after sit on different fits</span>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
                         {/if}
 
                         {#if artifacts?.data?.length}
@@ -6439,6 +6650,41 @@
                                     A swapped limb cannot be seen in the data or
                                     fixed afterwards, so give each its own.
                                 </p>
+                            {/if}
+
+                            <!-- This stream's clock fit (TEC-NATKIT-7).
+                                 ⚠️ HERE rather than on the node card, and that is
+                                 a measurement, not a preference. A source node's
+                                 card is 220x92 and its header is over budget
+                                 before anything is added — its label wants 111px
+                                 in 62. A dot in the header collapsed `.node-kind`
+                                 to a 5px sliver; making that hold its width
+                                 overflowed the card by 31px; a third meta line
+                                 was clipped out of view entirely; and appended
+                                 after the truncating stream label it landed
+                                 outside the card. The inspector has room for the
+                                 numbers, which is what somebody diagnosing a
+                                 clock actually needs.
+                                 Rendered only when the device publishes a fit:
+                                 most sources (a Muse, an EMG pill) publish none,
+                                 and a row on every one of them would train people
+                                 to ignore it. -->
+                            {@const fit = clockFitForStream(
+                                deviceHealth,
+                                selectedSourceNode.stream_id,
+                            )}
+                            {#if fit.state !== "unknown"}
+                                <div class="clock-fit-row clock-{fit.state}">
+                                    <span class="clock-dot"></span>
+                                    <span class="clock-state">
+                                        {fit.state === "ok"
+                                            ? "Clock fit held"
+                                            : fit.state === "no_fit"
+                                              ? "No usable clock fit"
+                                              : "Clock fit is stale"}
+                                    </span>
+                                    <span class="clock-detail">{fit.detail}</span>
+                                </div>
                             {/if}
                         {/if}
 
@@ -7893,6 +8139,74 @@
 
     /* Position clash. Deliberately the warning colour rather than an error: the
        board is still savable, it is RECORDING that must be refused. */
+    .clock-record {
+        margin-top: 0.35rem;
+        padding-top: 0.35rem;
+        border-top: 1px solid #1e2632;
+    }
+
+    .clock-clean { color: #4ade80; }
+    .clock-troubled { color: #fbbf24; }
+
+    .clock-device {
+        display: flex;
+        flex-direction: column;
+        gap: 0.05rem;
+        margin-top: 0.25rem;
+        font-size: 0.74rem;
+    }
+
+    .clock-device-id {
+        color: #93c5fd;
+        font-family: ui-monospace, monospace;
+    }
+
+    .clock-note {
+        color: #7f8ea3;
+        line-height: 1.35;
+    }
+
+    .clock-note.ok { color: #94a3b8; }
+    .clock-note.bad { color: #fcd34d; }
+
+    .clock-fit-row {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        grid-template-areas: "dot state" ". detail";
+        gap: 0.15rem 0.4rem;
+        align-items: baseline;
+        margin-top: 0.4rem;
+        font-size: 0.78rem;
+    }
+
+    .clock-fit-row .clock-dot {
+        grid-area: dot;
+        width: 0.45rem;
+        height: 0.45rem;
+        border-radius: 50%;
+        background: #64748b;
+        align-self: center;
+    }
+
+    .clock-state {
+        grid-area: state;
+        color: #cbd5e1;
+    }
+
+    .clock-detail {
+        grid-area: detail;
+        color: #7f8ea3;
+        line-height: 1.4;
+    }
+
+    .clock-ok .clock-dot { background: #4ade80; }
+    /* Two colours: RED means the hub says there is no usable fit, AMBER means we
+       have stopped hearing from the device and cannot say. */
+    .clock-no_fit .clock-dot { background: #f87171; }
+    .clock-no_fit .clock-state { color: #fca5a5; }
+    .clock-stale .clock-dot { background: #fbbf24; }
+    .clock-stale .clock-state { color: #fcd34d; }
+
     .position-clash {
         margin: 0.2rem 0 0;
         font-size: 0.7rem;

@@ -9,6 +9,7 @@
   import StreamViewer from "./StreamViewer/page.svelte";
   import VisualProgramming from "./VisualProgramming/page.svelte";
   import MlPipeline from "./MlPipeline/page.svelte";
+  import Logs from "./Logs/page.svelte";
   import Admin from "./Admin/page.svelte";
   import {
     authSession,
@@ -208,6 +209,7 @@
       <a href="/StreamViewer" use:active>Stream Viewer</a>
       <a href="/VisualProgramming" use:active>Visual Programming</a>
       <a href="/MlPipeline" use:active>ML Pipeline</a>
+      <a href="/Logs" use:active>Logs</a>
       {#if session.user?.is_admin}
         <a href="/Admin" use:active>Admin</a>
       {/if}
@@ -248,6 +250,12 @@
     </Route>
     <Route path="/MlPipeline">
       <MlPipeline />
+    </Route>
+    <!-- A plain Route, unlike the experiment pages: nothing here is destroyed by
+         navigating away that matters. The backend's tail thread dies with the
+         socket and the page re-subscribes on mount. -->
+    <Route path="/Logs">
+      <Logs />
     </Route>
     <Route path="/Admin">
       <Admin />

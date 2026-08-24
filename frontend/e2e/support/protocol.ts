@@ -160,6 +160,34 @@ export class ViewerSocket {
         }
     }
 
+    /** One board record, as the store holds it. */
+    async getGraph(graphId: string): Promise<Record<string, unknown> | undefined> {
+        const graphs = (await this.listGraphs()) as unknown as Record<string, unknown>[];
+        return graphs.find((graph) => graph["graph_id"] === graphId);
+    }
+
+    async saveGraph(graph: Record<string, unknown>): Promise<void> {
+        await this.request("save_stream_graph", { graph });
+    }
+
+    /**
+     * Device ids that are publishing a clock fit right now.
+     *
+     * ⚠️ DISCOVERED, never hardcoded. These are hardware ids: they change when a
+     * board is swapped, and a test that pins one passes until the day somebody
+     * replaces a leaf and then fails for a reason that looks nothing like the
+     * cause. Empty when the rig is off, which callers should SKIP on rather than
+     * fail — "no hardware attached" is not a regression.
+     */
+    async devicesWithClockFit(): Promise<string[]> {
+        const message = await this.request("list_log_streams");
+        const topics = (message["topics"] as Record<string, unknown>[] | undefined) ?? [];
+        const ids = topics
+            .filter((topic) => topic["schema_name"] === "NatKitNodeStatusV1")
+            .map((topic) => String(topic["stream_id"]));
+        return [...new Set(ids)];
+    }
+
     close(): void {
         this.closed = true;
         try {

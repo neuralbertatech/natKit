@@ -824,6 +824,15 @@ export interface InstanceRecording {
   // claim that the run met the threshold, so it must never be written by anything
   // other than the gate.
   calibration_override?: string;
+  /**
+   * Whether the devices' clocks could be trusted while this ran (TEC-NATKIT-77).
+   *
+   * ⚠️ Read; never author. Sealed at record time because the status frames age
+   * out of Kafka retention and nothing else keeps a copy — a run recorded while a
+   * leaf had no valid fit is otherwise indistinguishable from a clean one, and
+   * "was the clock all right?" is asked months later or not at all.
+   */
+  clock_quality?: RecordedClockQuality;
   window_start_us?: number;
   window_end_us?: number | null;
   streams?: {
@@ -1072,6 +1081,170 @@ export interface DeviceCommandResultMessage {
   records: DeviceLogRecord[];
 }
 
+// --- device health (TEC-NATKIT-33) ----------------------------------------
+//
+// The rig's own health, pushed once a second while subscribed. Every figure in
+// `fields` is CUMULATIVE SINCE THE DEVICE BOOTED, which is why `rates` exists
+// separately: the backend differences two samples over at least 5 s of the
+// DEVICE's clock and reports per-second figures.
+//
+// ⚠️ `rates` is null when there is no rate to report, and that is not the same as
+// a rate of zero. Render a dash. The difference matters most in exactly the
+// moment somebody is staring at this panel to work out what is wrong.
+export type DeviceRateStatus =
+  | "available"
+  | "first_sample"
+  | "rebooted"
+  | "clock_not_advanced"
+  | "window_too_short";
+
+export interface DeviceHealthEntry {
+  /** A string, not a number: these ids exceed 2^53 and would round. */
+  device_id: string;
+  role: "hub" | "leaf";
+  /**
+   * Milliseconds since the BACKEND last received a frame from this device.
+   * ⚠️ The only field that can say a device has gone silent -- the frame itself
+   * cannot, because a device that stops sending leaves a last frame that looks
+   * healthy forever.
+   */
+  age_ms: number;
+  quiet: boolean;
+  /** The latest frame, keyed exactly as the schema descriptor names its fields. */
+  fields: Record<string, unknown>;
+  rate_status: DeviceRateStatus;
+  /** Per-second rates, or null. Null is not zero. */
+  rates: Record<string, number> | null;
+  /** How much device clock the rates span, so the figure can be weighed. */
+  rate_interval_us?: number;
+}
+
+export interface DeviceHealthMessage {
+  type: "device_health";
+  wall_ms: number;
+  quiet_after_ms: number;
+  /**
+   * How many status topics the backend is tailing. Distinguishes "the rig has
+   * never published" (0) from "every board went silent" (>0 with everything
+   * quiet), which look identical from the devices list alone.
+   */
+  topics_tailed: number;
+  devices: DeviceHealthEntry[];
+}
+
+// --- the log viewer (TEC-NATKIT-33) ---------------------------------------
+//
+// LOGGING_LOG topics are deliberately absent from the stream list: they are not
+// data a graph can consume, and listing them there would offer a "node status"
+// source node. They are reached through list_log_streams / subscribe_logs.
+
+export interface LogStreamTopic {
+  /** The full Kafka topic string; this is the identity used to subscribe. */
+  topic: string;
+  /** A string, not a number: these ids exceed 2^53 and would round. */
+  stream_id: string;
+  schema_name: string;
+  serialization_type: string;
+  /**
+   * Whether the schema has a descriptor, i.e. whether records arrive as
+   * labelled fields or only as text. Answered per TOPIC rather than discovered
+   * per record, so the UI can say which before anything arrives.
+   */
+  has_descriptor: boolean;
+  descriptor?: DataSchemaDescriptor;
+}
+
+export interface LogStreamListMessage {
+  type: "log_stream_list";
+  request_id: string;
+  topics: LogStreamTopic[];
+}
+
+/**
+ * How a record was made readable.
+ *
+ * ⚠️ "none" means the backend could not decode it and is telling you so rather
+ * than dropping it. A log viewer that shows nothing for a topic it cannot parse
+ * is indistinguishable from a device that is not logging.
+ */
+export type LogRecordDecoded = "schema" | "json" | "text" | "none";
+
+export interface LogRecord {
+  topic: string;
+  stream_id: string;
+  schema_name: string;
+  /** When the BACKEND received it. */
+  received_ms: number;
+  /** The record's own timestamp, when it has one (decoded === "schema"). */
+  device_ts_us?: number;
+  bytes: number;
+  decoded: LogRecordDecoded;
+  json?: unknown;
+  text?: string;
+  truncated?: boolean;
+}
+
+export interface LogRecordsMessage {
+  type: "log_records";
+  records: LogRecord[];
+  /** Records the backend walked away from in a burst, rather than silently. */
+  dropped?: number;
+  error?: string;
+}
+
+export interface ListLogStreamsAction {
+  action: "list_log_streams";
+  request_id: string;
+}
+
+/**
+ * Start, CHANGE or stop tailing. Re-sending it replaces the topic set without
+ * restarting the tail, so toggling a checkbox does not lose your place in the
+ * topics that stayed selected. An empty array stops.
+ */
+export interface SubscribeLogsAction {
+  action: "subscribe_logs";
+  topics: string[];
+  interval_ms?: number;
+}
+
+export interface UnsubscribeLogsAction {
+  action: "unsubscribe_logs";
+}
+
+/**
+ * One device's clock, as a finished recording carries it.
+ *
+ * ⚠️ `status` is the field that matters. "no_status_frames" is a real answer and
+ * is NOT the same as a valid fit full of zeroes — most sources (a Muse, an EMG
+ * pill) publish no status frame at all, so the row is the record that the device
+ * was part of the run and could not be vouched for either way.
+ */
+export interface RecordedClockDevice {
+  device_id: string;
+  status: "reported" | "no_status_frames" | "went_quiet" | string;
+  valid?: boolean;
+  quality?: number;
+  epoch?: number;
+  residual_rms_ns?: number;
+  peak_residual_ns?: number;
+  skew_ppb?: number;
+  /** Differenced over the run, not the device's since-boot total. */
+  beacons_missed_in_run?: number;
+  beacons_missed_per_s?: number;
+  /**
+   * ⚠️ The most consequential field here: the fit was REBUILT mid-run, so
+   * timestamps either side of it sit on different fits. Invisible in either
+   * endpoint alone.
+   */
+  epoch_changed_during_run?: boolean;
+}
+
+export interface RecordedClockQuality {
+  run_seconds: number;
+  devices: RecordedClockDevice[];
+}
+
 export interface StreamGraphDiagnostic {
   severity: "error" | "warning";
   code: string;
@@ -1278,7 +1451,10 @@ export type WebSocketMessage =
   | StreamGraphForkedMessage
   | ExperimentInstanceVerificationMessage
   | InstanceReplayMessage
-  | DeviceCommandResultMessage;
+  | DeviceCommandResultMessage
+  | DeviceHealthMessage
+  | LogStreamListMessage
+  | LogRecordsMessage;
 
 // Client-to-server messages
 export interface SubscribeAction {
@@ -1474,6 +1650,15 @@ export interface StartExperimentInstanceAction {
   // Set when the operator recorded through the calibration gate (TEC-NATKIT-63).
   // The value is the reason they were shown, so the run says WHAT was overridden.
   calibration_override?: string;
+  /**
+   * Whether the devices' clocks could be trusted while this ran (TEC-NATKIT-77).
+   *
+   * ⚠️ Read; never author. Sealed at record time because the status frames age
+   * out of Kafka retention and nothing else keeps a copy — a run recorded while a
+   * leaf had no valid fit is otherwise indistinguishable from a clean one, and
+   * "was the clock all right?" is asked months later or not at all.
+   */
+  clock_quality?: RecordedClockQuality;
   window_start_us?: number;
 }
 
@@ -1539,6 +1724,18 @@ export interface SendDeviceCommandAction {
   timeout_ms?: number;
 }
 
+// Start / stop the device_health push. The rig's status topics are LOGGING_LOG,
+// which the stream list does not carry, so this is the only way to reach them.
+export interface SubscribeDeviceHealthAction {
+  action: "subscribe_device_health";
+  interval_ms?: number;
+  quiet_after_ms?: number;
+}
+
+export interface UnsubscribeDeviceHealthAction {
+  action: "unsubscribe_device_health";
+}
+
 export type CreateEmgTransformAction = CreateTransformAction;
 export type ListEmgTransformsAction = ListTransformsAction;
 export type StopEmgTransformAction = StopTransformAction;
@@ -1578,4 +1775,9 @@ export type ClientAction =
   | ListProfilesAction
   | SaveProfileAction
   | DeleteProfileAction
-  | SendDeviceCommandAction;
+  | SendDeviceCommandAction
+  | SubscribeDeviceHealthAction
+  | UnsubscribeDeviceHealthAction
+  | ListLogStreamsAction
+  | SubscribeLogsAction
+  | UnsubscribeLogsAction;
