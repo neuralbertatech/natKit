@@ -209,6 +209,28 @@ export class VpApp {
         };
     }
 
+    /**
+     * Open the LARGE run surface — the participant-facing one.
+     *
+     * ⚠️ Not the same thing as the inline surface. The inline one is the
+     * operator's thumbnail on the node card; the large one is what a participant
+     * reads at full size during a recorded run, and it is the only place the
+     * how-to lines appear. Asserting the thumbnail and calling the participant
+     * view verified is the mistake this method exists to make hard.
+     */
+    async openParticipantView(): Promise<Locator> {
+        const toggle = this.page
+            .locator('.node button[title="Open the experiment in a large window"]')
+            .first();
+        await expect(toggle, "the markers node should offer a large window").toBeVisible({
+            timeout: 15_000,
+        });
+        await toggle.click();
+        const runner = this.page.locator(".experiment-runner.large").first();
+        await expect(runner).toBeVisible({ timeout: 15_000 });
+        return runner;
+    }
+
     /** Turn on the markers node's inline run surface, as a person would. */
     async showRunSurface(): Promise<Locator> {
         const toggle = this.page.locator('.node button[title="Run inline on node"]').first();
