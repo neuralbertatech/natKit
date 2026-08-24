@@ -185,3 +185,32 @@ describe("summary and detail", () => {
         expect(UNKNOWN_CLOCK_FIT.detail).toBe("");
     });
 });
+
+describe("a hub republishing a leaf it cannot hear", () => {
+    // ⚠️ Observed on the rig: the hub composes each leaf's status frame from its
+    // registry entry, so a leaf that falls off keeps having frames published about
+    // it, once a second, forever — arriving fresh with every counter frozen.
+    // `age_ms` is ~0, so quoting it would say "no status for 0s".
+    const stale = health([
+        {
+            device_id: "1",
+            age_ms: 0,
+            unheard_ms: 41000,
+            quiet: true,
+            quiet_reason: "device_not_heard",
+            fields: { sync: { valid: true, quality: 2, residual_rms_ns: 45767 } },
+        },
+    ]);
+
+    it("says how long since the DEVICE was heard, not since the frame arrived", () => {
+        const fit = clockFitForStream(stale, "1");
+        expect(fit.state).toBe("stale");
+        expect(fit.summary).toContain("41s");
+        expect(fit.summary).not.toContain("0s");
+        expect(fit.summary).toMatch(/republishing a stale entry/i);
+    });
+
+    it("still refuses to call the fit good, whatever the last frame said", () => {
+        expect(clockFitForStream(stale, "1").state).not.toBe("ok");
+    });
+});

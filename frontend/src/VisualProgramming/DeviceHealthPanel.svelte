@@ -104,9 +104,20 @@
         return "—";
     }
 
+    /**
+     * How long since we last learned anything NEW about this device.
+     *
+     * ⚠️ Not simply `age_ms`. When the hub has lost a leaf it keeps publishing that
+     * leaf's last known entry once a second, so `age_ms` reads ~0 while nothing has
+     * actually been heard for minutes — the panel said "now" about a device that
+     * had been gone for half an hour. When that is the case, quote the unheard
+     * time instead, because that is the number a person needs.
+     */
     function age(device: DeviceHealthEntry): string {
-        if (device.age_ms < 1500) return "now";
-        const seconds = Math.round(device.age_ms / 1000);
+        const notHeard = device.quiet_reason === "device_not_heard";
+        const ms = notHeard ? (device.unheard_ms ?? device.age_ms) : device.age_ms;
+        if (ms < 1500) return "now";
+        const seconds = Math.round(ms / 1000);
         if (seconds < 90) return `${seconds}s ago`;
         return `${Math.round(seconds / 60)}m ago`;
     }
@@ -209,6 +220,16 @@
                             <span class="id">{label(leaf)}</span>
                             <span class="age" class:stale={leaf.quiet}>{age(leaf)}</span>
                         </div>
+                        {#if leaf.quiet_reason === "device_not_heard"}
+                            <!-- ⚠️ Said out loud, because the frames ARE arriving:
+                                 without this the row looks like a reporting device
+                                 whose numbers happen not to move. -->
+                            <p class="quiet-note">
+                                The hub is still publishing this leaf's last known
+                                state, but has not heard from it — every figure below
+                                is frozen at whatever it was then.
+                            </p>
+                        {/if}
                         <div class="metrics">
                             <span title="Data frames the hub received from this leaf, per second. {rateReason(leaf)}">
                                 data <b>{rate(leaf, "data_frames")}/s</b>
@@ -378,6 +399,14 @@
 
     .metrics .alarm b {
         color: #f87171;
+    }
+
+    .quiet-note {
+        margin: 0.1rem 0 0;
+        padding-left: 2.9rem;
+        color: #fcd34d;
+        font-size: 0.72rem;
+        line-height: 1.35;
     }
 
     .note {

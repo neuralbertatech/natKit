@@ -124,12 +124,22 @@ export function clockFitForStream(
     // a last frame saying `valid: true` and it says so forever, so trusting the
     // flag first would render a dead leaf as a healthy clock.
     if (entry.quiet) {
-        const seconds = Math.round(entry.age_ms / 1000);
+        // ⚠️ Which clock to quote depends on WHY it is quiet. When the hub is still
+        // publishing about a leaf it can no longer hear, age_ms is ~0 and quoting
+        // it would say "no status for 0s" — the reassuring nonsense this whole
+        // distinction exists to prevent.
+        const notHeard = entry.quiet_reason === "device_not_heard";
+        const staleMs = notHeard ? (entry.unheard_ms ?? 0) : entry.age_ms;
+        const seconds = Math.round(staleMs / 1000);
         return {
             ...common,
             state: "stale",
-            detail: `No status for ${seconds}s, so whatever the last fit said, it is no longer current.`,
-            summary: `No status for ${seconds}s — the last fit is stale, whatever it said.`,
+            detail: notHeard
+                ? `The hub has not heard from this device for ${seconds}s, though it is still publishing its last known state.`
+                : `No status for ${seconds}s, so whatever the last fit said, it is no longer current.`,
+            summary: notHeard
+                ? `Not heard from for ${seconds}s — the hub is republishing a stale entry.`
+                : `No status for ${seconds}s — the last fit is stale, whatever it said.`,
         };
     }
 

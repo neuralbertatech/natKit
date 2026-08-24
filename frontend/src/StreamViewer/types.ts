@@ -1103,13 +1103,26 @@ export interface DeviceHealthEntry {
   device_id: string;
   role: "hub" | "leaf";
   /**
-   * Milliseconds since the BACKEND last received a frame from this device.
-   * ⚠️ The only field that can say a device has gone silent -- the frame itself
-   * cannot, because a device that stops sending leaves a last frame that looks
-   * healthy forever.
+   * Milliseconds since the BACKEND last received a frame ABOUT this device.
+   *
+   * ⚠️ Not the same as "the device is alive". A leaf's status frame is composed
+   * and published BY THE HUB, so a leaf that falls off the radio keeps having
+   * frames published about it, once a second, forever.
    */
   age_ms: number;
+  /**
+   * How long the DEVICE's own clock has been frozen (its `last_seen_us`, i.e. when
+   * the hub last actually heard it). ⚠️ This is what says whether a leaf is still
+   * there; `age_ms` cannot.
+   */
+  unheard_ms?: number;
   quiet: boolean;
+  /**
+   * Which kind of quiet, because they need different actions: `no_frames` means
+   * nothing is arriving at all; `device_not_heard` means the hub is still talking
+   * about a device it can no longer hear. Empty when the device is fine.
+   */
+  quiet_reason?: "no_frames" | "device_not_heard" | "";
   /** The latest frame, keyed exactly as the schema descriptor names its fields. */
   fields: Record<string, unknown>;
   rate_status: DeviceRateStatus;
