@@ -26,7 +26,7 @@
         connectionState: ConnectionState;
         /**
          * Send a command to a device over EXECUTION_COMMAND. Used here for the
-         * indicator LED (TEC-NATKIT-82) — this panel is the one place that lists
+         * indicator LED (TEC-NATKIT-83) — this panel is the one place that lists
          * every device by MAC, which is exactly the context for "make that one
          * blue".
          */
@@ -288,7 +288,7 @@
                             <span class="age" class:stale={leaf.quiet}>{age(leaf)}</span>
                         </div>
                         {#if sendDeviceCommand}
-                            <!-- The indicator LED (TEC-NATKIT-82). Offered on every
+                            <!-- The indicator LED (TEC-NATKIT-83). Offered on every
                                  device row because this panel is the only place
                                  that lists them all by MAC. -->
                             <div class="led-row">
