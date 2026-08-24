@@ -255,6 +255,34 @@ timestamp belongs to.
 
 Board itself + the hub never expiring the entry: **#448/#81**.
 
+### #450/#83 — an indicator LED set from the frontend
+
+`natKit-IMU 85478f2`, `natKit d5c08ae`. Zach redirected from a firmware-side colour
+table to an operator-set colour over EXECUTION_COMMAND: `get_led`/`set_led`,
+persisted in NVS, restored at boot; swatches per device in the rig-health panel.
+
+⚠️ **Set once, not per loop** — the Arduino firmware disabled its pixels because
+`Adafruit_NeoPixel::show()` re-installed the RMT driver every call and rebooted the
+board after ~11 calls. Its own note asks for "install the driver once".
+⚠️ GPIO **4** (the soldered pixel). NOT GPIO 0 — that is the onboard pixel, needs
+its power rail via GPIO 2, and is the download-mode strapping pin.
+⚠️ Compiled, not flashed — but the path either side IS proven: the swatch reached
+the leaf and it answered `unknown command "set_led"`.
+
+### ⚠️ #449/#82 — device commands from the UI have NEVER worked
+
+The bridge does not forward Kafka topics **created after it started**. `Command-…`
+topics are created by the backend on the first command, so they were never
+republished to `natKit/receiving/` where the hub listens. Every UI command timed out
+with a message blaming the DEVICE — the one part of the path that was fine.
+
+Proven by elimination: publishing by hand to the hub's topic gave
+`commands_received 0→1, relayed 1, delivered 1, answers 3`; after
+`podman restart natkit_natkit-v0-bridge_1` the UI path returned
+`"pong from device 13793649553360, up 330221 s"`.
+
+**Workaround:** restart the bridge after any device's command topic is first created.
+
 ### Filed, not started
 
 - **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
