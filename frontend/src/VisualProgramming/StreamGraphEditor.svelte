@@ -269,7 +269,11 @@
         restartStreamGraphNode: (graphId: string, nodeId: string) => boolean;
         // Device commands (EXECUTION_COMMAND): ask a sensor to do something and
         // show what it says back on its log channel. Used by the calibration node.
-        sendDeviceCommand: (streamId: string, command: string) => boolean;
+        sendDeviceCommand: (
+            streamId: string,
+            command: string,
+            args?: Record<string, unknown>,
+        ) => boolean;
         deviceCommandPending: Record<string, boolean>;
         deviceCommandResults: Record<
             string,
@@ -5732,7 +5736,13 @@
                 <!-- Next to the connection pill on purpose: "is the backend
                      there?" and "is the rig there?" are the same question asked
                      of two different things, and they are asked together. -->
-                <DeviceHealthPanel health={deviceHealth} {connectionState} />
+                <DeviceHealthPanel
+                    health={deviceHealth}
+                    {connectionState}
+                    {sendDeviceCommand}
+                    {deviceCommandPending}
+                    {deviceCommandResults}
+                />
             </div>
             <div class="toolbar-actions">
                 {#if boardIsImmutable}

@@ -744,7 +744,14 @@
     // Send a command to a device (EXECUTION_COMMAND) and wait for its answer on
     // the log channel. The backend does the correlating, so the reply that lands
     // here is already the device's own words.
-    function sendDeviceCommand(streamId: string, command: string): boolean {
+    function sendDeviceCommand(
+        streamId: string,
+        command: string,
+        // Command arguments, for the commands that take them (`set_led`,
+        // `set_reports`). The backend action has always accepted these; the
+        // callers that existed first simply had none.
+        args?: Record<string, unknown>,
+    ): boolean {
         if (wsManager?.getConnectionState() !== "connected") {
             return false;
         }
@@ -759,6 +766,7 @@
             request_id: `device-command:${Date.now()}`,
             stream_id: streamId,
             command,
+            ...(args ? { args } : {}),
         });
         return true;
     }

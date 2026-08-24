@@ -17,15 +17,82 @@
     import type {
         DeviceHealthMessage,
         DeviceHealthEntry,
-        ConnectionState,
+        DeviceCommandResultMessage,
     } from "../StreamViewer/types";
+    import type { ConnectionState } from "../StreamViewer/websocket";
 
     interface Props {
         health: DeviceHealthMessage | null;
         connectionState: ConnectionState;
+        /**
+         * Send a command to a device over EXECUTION_COMMAND. Used here for the
+         * indicator LED (TEC-NATKIT-82) — this panel is the one place that lists
+         * every device by MAC, which is exactly the context for "make that one
+         * blue".
+         */
+        sendDeviceCommand?: (
+            streamId: string,
+            command: string,
+            args?: Record<string, unknown>,
+        ) => boolean;
+        deviceCommandPending?: Record<string, boolean>;
+        deviceCommandResults?: Record<string, DeviceCommandResultMessage>;
     }
 
-    let { health, connectionState }: Props = $props();
+    let {
+        health,
+        connectionState,
+        sendDeviceCommand,
+        deviceCommandPending = {},
+        deviceCommandResults = {},
+    }: Props = $props();
+
+    /**
+     * The colours offered, and why these.
+     *
+     * ⚠️ Widely separated hues, NOT a gradient. The job is telling boards apart
+     * across a bench, so neighbouring swatches have to be unmistakable under warm
+     * room light — a palette that steps smoothly through a hue wheel fails exactly
+     * when it is needed, with two boards a shade apart.
+     *
+     * Red is absent on purpose: it is what a person reads as "fault", and an
+     * identity colour means nothing of the kind.
+     */
+    const LED_COLOURS = [
+        { name: "green", r: 0, g: 255, b: 0 },
+        { name: "blue", r: 0, g: 0, b: 255 },
+        { name: "yellow", r: 255, g: 200, b: 0 },
+        { name: "magenta", r: 255, g: 0, b: 255 },
+        { name: "cyan", r: 0, g: 255, b: 255 },
+        { name: "white", r: 255, g: 255, b: 255 },
+    ];
+
+    function ledPending(streamId: string): boolean {
+        return deviceCommandPending[`${streamId}:set_led`] === true;
+    }
+
+    /**
+     * The device's own answer to the last command, when it was an LED one.
+     *
+     * ⚠️ Deliberately shows what the DEVICE said rather than what was clicked. A
+     * swatch that highlights on click would claim the board is blue whether or not
+     * the command ever arrived — and a board whose LED is not soldered on replies
+     * "no indicator on this node", which is worth reading.
+     */
+    function ledReply(streamId: string): { ok: boolean; text: string } | null {
+        const result = deviceCommandResults[streamId];
+        if (!result || !result.command.startsWith("set_led")) {
+            return null;
+        }
+        // Same precedence the calibration commands use: what the device said, then
+        // why it said nothing, then a bare outcome. ⚠️ `timed_out` is its own case —
+        // a board that never answered is not a board that answered "no".
+        const text =
+            result.records.at(-1)?.message ??
+            result.error ??
+            (result.timed_out ? "no answer" : result.ok ? "done" : "refused");
+        return { ok: result.ok, text };
+    }
 
     let expanded = $state(false);
 
@@ -220,6 +287,50 @@
                             <span class="id">{label(leaf)}</span>
                             <span class="age" class:stale={leaf.quiet}>{age(leaf)}</span>
                         </div>
+                        {#if sendDeviceCommand}
+                            <!-- The indicator LED (TEC-NATKIT-82). Offered on every
+                                 device row because this panel is the only place
+                                 that lists them all by MAC. -->
+                            <div class="led-row">
+                                <span class="led-label">LED</span>
+                                {#each LED_COLOURS as colour}
+                                    <button
+                                        type="button"
+                                        class="led-swatch"
+                                        style={`background: rgb(${colour.r}, ${colour.g}, ${colour.b})`}
+                                        title={`Set this board's LED to ${colour.name}`}
+                                        disabled={ledPending(leaf.device_id)}
+                                        onclick={() =>
+                                            sendDeviceCommand?.(
+                                                leaf.device_id,
+                                                "set_led",
+                                                { r: colour.r, g: colour.g, b: colour.b },
+                                            )}
+                                        aria-label={`Set LED to ${colour.name}`}
+                                    ></button>
+                                {/each}
+                                <button
+                                    type="button"
+                                    class="led-off"
+                                    title="Turn this board's LED off"
+                                    disabled={ledPending(leaf.device_id)}
+                                    onclick={() =>
+                                        sendDeviceCommand?.(leaf.device_id, "set_led", {
+                                            off: true,
+                                        })}
+                                >
+                                    off
+                                </button>
+                                {#if ledPending(leaf.device_id)}
+                                    <span class="led-reply">sending…</span>
+                                {:else if ledReply(leaf.device_id)}
+                                    {@const reply = ledReply(leaf.device_id)}
+                                    <span class="led-reply" class:bad={!reply?.ok}>
+                                        {reply?.text}
+                                    </span>
+                                {/if}
+                            </div>
+                        {/if}
                         {#if leaf.quiet_reason === "device_not_heard"}
                             <!-- ⚠️ Said out loud, because the frames ARE arriving:
                                  without this the row looks like a reporting device
@@ -399,6 +510,61 @@
 
     .metrics .alarm b {
         color: #f87171;
+    }
+
+    .led-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin-top: 0.2rem;
+        padding-left: 2.9rem;
+    }
+
+    .led-label {
+        color: #64748b;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .led-swatch {
+        width: 0.85rem;
+        height: 0.85rem;
+        border-radius: 50%;
+        border: 1px solid #2f3b4a;
+        padding: 0;
+        cursor: pointer;
+    }
+
+    .led-swatch:hover:not(:disabled) {
+        border-color: #e2e8f0;
+    }
+
+    .led-swatch:disabled,
+    .led-off:disabled {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .led-off {
+        border: 1px solid #2f3b4a;
+        border-radius: 0.3rem;
+        background: #161c24;
+        color: #94a3b8;
+        font: inherit;
+        font-size: 0.66rem;
+        padding: 0 0.3rem;
+        cursor: pointer;
+    }
+
+    .led-reply {
+        color: #7f8ea3;
+        font-size: 0.68rem;
+        font-family: ui-monospace, monospace;
+    }
+
+    .led-reply.bad {
+        color: #fca5a5;
     }
 
     .quiet-note {
