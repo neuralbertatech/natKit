@@ -47,6 +47,18 @@ export interface StreamTreeNode {
    * say "derived, source unavailable" instead of implying it is a device.
    */
   orphaned: boolean;
+  /**
+   * Whether this stream carries a `Data` topic, i.e. whether subscribing to it
+   * can ever yield a sample (TEC-NATKIT-90).
+   *
+   * ⚠️ FALSE IS NORMAL, NOT BROKEN. The ESP-NOW hub has no sensor and publishes
+   * only health, and `sendStreamList` deliberately does not carry LOGGING_LOG
+   * topics because they are not data a graph can consume -- so the hub arrives
+   * with an EMPTY topic array. Rendered naively that is a blank row with a live
+   * checkbox that binds a messenger to a stream physically incapable of
+   * producing a sample, and a card reading "NO DATA" forever.
+   */
+  hasDataTopic: boolean;
 }
 
 export interface StreamTree {
@@ -130,6 +142,9 @@ export function buildStreamTree(
       children,
       depth,
       orphaned: depth === 0 && orphanIds.includes(streamId),
+      hasDataTopic: (availableStreams[streamId]?.topics ?? []).some(
+        (topic) => topic.type === "Data",
+      ),
     };
   }
 

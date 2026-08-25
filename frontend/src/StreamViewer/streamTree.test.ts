@@ -6,6 +6,21 @@ function streams(...ids: string[]): Record<string, StreamInfo> {
   return Object.fromEntries(ids.map((id) => [id, { topics: [] }]));
 }
 
+/** A stream carrying one Data topic, i.e. one that can actually deliver samples. */
+function dataStream(id: string): Record<string, StreamInfo> {
+  return {
+    [id]: {
+      topics: [
+        {
+          schema_name: "NatImuBulkDataSchema",
+          type: "Data",
+          serialization_type: "Binary",
+        },
+      ],
+    },
+  };
+}
+
 function transform(source: string, output: string): TransformSummary {
   // Only the two lineage fields matter here; the rest is the worker bookkeeping
   // the panel shows, and pinning it in every fixture would make these tests
@@ -152,6 +167,43 @@ describe("buildStreamTree", () => {
       "orphan",
     ]);
     expect(new Set(flat).size).toBe(flat.length); // exactly once, no duplicates
+  });
+
+  // TEC-NATKIT-90: the hub publishes only LOGGING_LOG topics, which
+  // sendStreamList deliberately omits, so it arrives with an empty topic array.
+  it("marks a stream with no Data topic as not deliverable", () => {
+    const tree = buildStreamTree(
+      { ...dataStream("leaf"), ...streams("hub") },
+      [],
+    );
+    const byId = Object.fromEntries(tree.roots.map((n) => [n.streamId, n]));
+    expect(byId["leaf"].hasDataTopic).toBe(true);
+    expect(byId["hub"].hasDataTopic).toBe(false);
+  });
+
+  it("treats a meta-only stream as having no Data topic", () => {
+    const tree = buildStreamTree(
+      {
+        stale: {
+          topics: [
+            {
+              schema_name: "MetaRecord",
+              type: "Meta",
+              serialization_type: "Json",
+            },
+          ],
+        },
+      },
+      [],
+    );
+    expect(tree.roots[0].hasDataTopic).toBe(false);
+  });
+
+  it("still shows an undeliverable stream rather than hiding it", () => {
+    // Hiding these would lose the hub, which an operator legitimately wants
+    // to see -- the same instinct the orphan handling exists to resist.
+    const tree = buildStreamTree(streams("hub"), []);
+    expect(flattenStreamTree(tree.roots)).toEqual(["hub"]);
   });
 
   it("handles a stream id that would collide with Object prototype keys", () => {

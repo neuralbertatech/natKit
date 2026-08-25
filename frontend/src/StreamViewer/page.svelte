@@ -828,15 +828,40 @@
             buildStreamTree() guarantees the recursion terminates.
         -->
         {#snippet streamRow(node: StreamTreeNode)}
-            <li class="stream-item" class:derived={node.depth > 0}>
+            {@const subscribed = subscribedStreams.has(node.streamId)}
+            <li
+                class="stream-item"
+                class:derived={node.depth > 0}
+                class:no-data={!node.hasDataTopic}
+            >
                 <label class="stream-label">
+                    <!--
+                        ⚠️ Blocked only for NEW subscriptions, never for an
+                        existing one. Disabling it outright while a stream is
+                        already checked would strand that subscription with no
+                        way to undo it.
+                    -->
                     <input
                         type="checkbox"
-                        checked={subscribedStreams.has(node.streamId)}
+                        checked={subscribed}
+                        disabled={!node.hasDataTopic && !subscribed}
                         onchange={() =>
                             toggleStreamSubscription(node.streamId)}
                     />
                     <span class="stream-id">Stream {node.streamId}</span>
+                    {#if !node.hasDataTopic}
+                        <!--
+                            The hub and any status-only device land here: no Data
+                            topic, so subscribing could never yield a sample. Say
+                            so on the row rather than leaving it blank and letting
+                            the live card read "NO DATA" forever.
+                        -->
+                        <span
+                            class="stream-nodata"
+                            title="This device publishes status only — no data topic to subscribe to. Its health is on the Logs page and the device-health pill."
+                            >status only</span
+                        >
+                    {/if}
                     {#if node.orphaned}
                         <!--
                             Derived, but the stream it came from is not in the
@@ -1470,6 +1495,30 @@
         list-style: none;
         padding: 0;
         margin: 0;
+    }
+
+    /* Status-only devices (the hub, TEC-NATKIT-90). Dimmed and tagged so the row
+       reads as "nothing to subscribe to here" rather than as a broken device. */
+    .stream-item.no-data > .stream-label .stream-id {
+        opacity: 0.65;
+    }
+
+    .stream-nodata {
+        margin-left: 6px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: #e8eaed;
+        color: #57655f;
+        /* Never wrap to two lines, and never steal width from the id -- without
+           these the tag broke "Stream 203376942053180" across two rows while the
+           data streams beside it stayed on one, which reads as a layout fault
+           rather than as a label. */
+        white-space: nowrap;
+        flex-shrink: 0;
+        align-self: center;
     }
 
     /* Derived streams sit under their source: indented, with a rule down the
