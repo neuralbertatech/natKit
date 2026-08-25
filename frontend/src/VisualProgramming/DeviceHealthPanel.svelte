@@ -20,6 +20,7 @@
         DeviceCommandResultMessage,
     } from "../StreamViewer/types";
     import type { ConnectionState } from "../StreamViewer/websocket";
+    import { hubFleet } from "../StreamViewer/hubFleet";
 
     interface Props {
         health: DeviceHealthMessage | null;
@@ -120,6 +121,9 @@
 
     const leaves = $derived(health?.devices.filter((d) => d.role === "leaf") ?? []);
     const hub = $derived(health?.devices.find((d) => d.role === "hub") ?? null);
+    // ⚠️ Roster, not fleet: see hubFleet. `nodes_known` alone read 4 for hours
+    // with a board dead on the bench (TEC-NATKIT-81).
+    const hubFleetState = $derived(hubFleet(hub?.fields));
     const quietCount = $derived(health?.devices.filter((d) => d.quiet).length ?? 0);
     const liveCount = $derived((health?.devices.length ?? 0) - quietCount);
 
@@ -264,8 +268,10 @@
                             <span title="Frames the hub discarded because its queue was full. Anything above zero is loss.">
                                 dropped <b>{rate(hub, "frames_dropped")}/s</b>
                             </span>
-                            <span title="Leaves in the hub's registry right now (a count, not a rate)">
-                                nodes <b>{num(hub, "nodes_known")}</b>
+                            <span
+                                title="Leaves the hub can HEAR, over leaves on its roster (a count, not a rate). The roster is persistent and does not fall when a board dies, so the two disagreeing is the signal — a node on the roster and off the air. One number means this hub does not report presence yet."
+                            >
+                                nodes <b class:short={hubFleetState.state === "short"}>{hubFleetState.text}</b>
                             </span>
                             <span title="The bound on rig-wide clock agreement — the figure to quote as the rig's synchronisation">
                                 coherence <b>{num(hub, "coherence_bound_us")}µs</b>
@@ -509,6 +515,13 @@
     }
 
     .metrics .alarm b {
+        color: #f87171;
+    }
+
+    /* Fewer nodes heard than on the roster: a board is registered and off the
+       air. The same red as .alarm, because it is the same severity — a rig
+       reporting three of four is not a rig you start a recording on. */
+    .metrics b.short {
         color: #f87171;
     }
 
