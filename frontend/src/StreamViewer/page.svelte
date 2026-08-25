@@ -19,6 +19,7 @@
         findCompatibleTransformInputMappingId,
     } from "./schemaDescriptor";
     import { chooseViewerRenderer, MARKER_SCHEMA_NAME } from "./viewerRegistry";
+    import { buildStreamTree, type StreamTreeNode } from "./streamTree";
     import type {
         DataSchemaDescriptor,
         StreamListMessage,
@@ -774,6 +775,13 @@
             .sort((left, right) => left.streamId.localeCompare(right.streamId)),
     );
 
+    // The Available Streams panel as a tree rather than a flat list
+    // (TEC-NATKIT-89). Edges come from the running transforms, which the page
+    // already holds for the transforms tab -- so this needs no new round trip,
+    // and it costs nothing before `list_transforms` lands: with no edges every
+    // stream is a root and the panel looks exactly as it always did.
+    let streamTree = $derived(buildStreamTree(availableStreams, emgTransforms));
+
     let transformSourceStreams = $derived(
         Object.entries(availableStreams)
             .map(([streamId, info]) => ({
@@ -813,6 +821,61 @@
     {/if}
 
     <div class="main-content">
+        <!--
+            One row, and its derived streams beneath it. Recursive on purpose:
+            a transform output can itself be another transform's source, and a
+            chain flattened to one level would misstate what came from what.
+            buildStreamTree() guarantees the recursion terminates.
+        -->
+        {#snippet streamRow(node: StreamTreeNode)}
+            <li class="stream-item" class:derived={node.depth > 0}>
+                <label class="stream-label">
+                    <input
+                        type="checkbox"
+                        checked={subscribedStreams.has(node.streamId)}
+                        onchange={() =>
+                            toggleStreamSubscription(node.streamId)}
+                    />
+                    <span class="stream-id">Stream {node.streamId}</span>
+                    {#if node.orphaned}
+                        <!--
+                            Derived, but the stream it came from is not in the
+                            list. Shown at the top level rather than dropped --
+                            and labelled, so it is not mistaken for a device.
+                        -->
+                        <span
+                            class="stream-orphan"
+                            title="Derived from a stream that is no longer available"
+                            >source gone</span
+                        >
+                    {/if}
+                </label>
+                <ul class="topic-list">
+                    {#each node.info.topics ?? [] as topic}
+                        <li class="topic-item">
+                            <span class="topic-type {topic.type.toLowerCase()}"
+                                >{topic.type}</span
+                            >
+                            <span class="topic-schema">{topic.schema_name}</span>
+                            {#if topic.descriptor}
+                                <span class="topic-descriptor">
+                                    descriptor v{topic.descriptor
+                                        .descriptor_version}
+                                </span>
+                            {/if}
+                        </li>
+                    {/each}
+                </ul>
+                {#if node.children.length > 0}
+                    <ul class="stream-list stream-children">
+                        {#each node.children as child (child.streamId)}
+                            {@render streamRow(child)}
+                        {/each}
+                    </ul>
+                {/if}
+            </li>
+        {/snippet}
+
         <!-- Stream Selection Panel -->
         <aside class="stream-panel">
             <div class="panel-header">
@@ -830,39 +893,8 @@
                 <p class="no-streams">No streams available</p>
             {:else}
                 <ul class="stream-list">
-                    {#each Object.entries(availableStreams) as [streamIdStr, streamInfo]}
-                        <li class="stream-item">
-                            <label class="stream-label">
-                                <input
-                                    type="checkbox"
-                                    checked={subscribedStreams.has(streamIdStr)}
-                                    onchange={() =>
-                                        toggleStreamSubscription(streamIdStr)}
-                                />
-                                <span class="stream-id"
-                                    >Stream {streamIdStr}</span
-                                >
-                            </label>
-                            <ul class="topic-list">
-                                {#each streamInfo.topics ?? [] as topic}
-                                    <li class="topic-item">
-                                        <span
-                                            class="topic-type {topic.type.toLowerCase()}"
-                                            >{topic.type}</span
-                                        >
-                                        <span class="topic-schema"
-                                            >{topic.schema_name}</span
-                                        >
-                                        {#if topic.descriptor}
-                                            <span class="topic-descriptor">
-                                                descriptor v{topic.descriptor
-                                                    .descriptor_version}
-                                            </span>
-                                        {/if}
-                                    </li>
-                                {/each}
-                            </ul>
-                        </li>
+                    {#each streamTree.roots as node (node.streamId)}
+                        {@render streamRow(node)}
                     {/each}
                 </ul>
             {/if}
@@ -1438,6 +1470,33 @@
         list-style: none;
         padding: 0;
         margin: 0;
+    }
+
+    /* Derived streams sit under their source: indented, with a rule down the
+       left so a long chain still reads as a chain rather than as margin. */
+    .stream-children {
+        list-style: none;
+        margin: 4px 0 0 0;
+        padding-left: 14px;
+        border-left: 2px solid var(--line, #d9e1dc);
+    }
+
+    .stream-item.derived > .stream-label .stream-id {
+        font-weight: 400;
+        opacity: 0.85;
+    }
+
+    /* Not decoration: this row is at the top level despite being derived, and
+       without the label it reads as a device. */
+    .stream-orphan {
+        margin-left: 6px;
+        padding: 0 5px;
+        border-radius: 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: #f6e3df;
+        color: #9a3324;
     }
 
     .stream-item {
