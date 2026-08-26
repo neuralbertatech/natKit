@@ -1,0 +1,45 @@
+[Unit]
+# The natKit dev stack, so it survives a reboot (TEC-NATKIT-71).
+#
+# ⚠️ ROOTLESS PODMAN IS THE WHOLE PROBLEM. A container's `restart:` policy is
+# honoured only while the user's podman session is alive, so a logout, reboot or
+# session restart takes every container down and NOTHING brings them back. It
+# happened twice on 2026-08-19/20, both times leaving a frontend that still
+# loaded, a conn pill that still went green against a stale port forward, and
+# failures that read as "the template is broken".
+#
+# This file is TRACKED IN THE REPO and installed by deploy/install-stack-unit.sh.
+# The previous copy existed only in ~/.config/systemd/user on one machine, which
+# is how it sat written-but-never-enabled for five days.
+Description=natKit dev stack (podman-compose)
+Documentation=https://tasks.nat.ltd/tasks/424
+# ⚠️ NOT network-online.target. That target does not exist in the USER manager --
+# only the system one -- so `Wants=network-online.target` in a user unit silently
+# resolves to nothing and the stack can start before the network is up. Podman
+# ships this shim for exactly that reason (containers/podman#22197).
+Wants=podman-user-wait-network-online.service
+After=podman-user-wait-network-online.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/zach/code/natKit
+# One file, standalone. Passing both compose files binds host 8080 twice and
+# creates shadow containers that write the same volumes -- see TEC-NATKIT-70.
+ExecStart=/usr/bin/podman-compose -f docker-compose.dev.yml up -d
+# `down` keeps named volumes, so the stores and recorded data survive: as of
+# TEC-NATKIT-66/-67 every piece of state in this stack (graphs, instances, auth,
+# models, kafka) is on a named volume or a bind mount, and nothing worth keeping
+# is in a container's writable layer. It DOES remove containers, so stopping the
+# unit mid-recording interrupts it -- the trade for systemd knowing the real state.
+ExecStop=/usr/bin/podman-compose -f docker-compose.dev.yml down
+# Generous: a cold start may rebuild the backend and control-plane images.
+TimeoutStartSec=1800
+TimeoutStopSec=300
+# ⚠️ No `Restart=` here, and it is not an oversight: systemd rejects any value
+# other than `no` for Type=oneshot. If the boot-time `up -d` fails, nothing
+# retries it -- check `systemctl --user status natkit-stack` before concluding
+# the stack is merely slow.
+
+[Install]
+WantedBy=default.target

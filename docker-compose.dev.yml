@@ -1,5 +1,15 @@
 services:
   natkit-v0-bridge:
+    # ⚠️ The three core services had NO restart policy at all, while the frontend,
+    # control plane, worker, mosquitto and ntp all had one -- so a crashed bridge,
+    # backend or broker stayed down while the rest of the stack looked healthy.
+    # TEC-NATKIT-71's premise ("every service declares a restart policy") was
+    # checked against docker-compose.yml and was never true of this file.
+    #
+    # `unless-stopped` rather than `always`: a container you stopped BY HAND while
+    # debugging must stay stopped. `always` brings it back on the next podman
+    # restart regardless, which is the wrong answer on a dev stack.
+    restart: unless-stopped
     image: natkit-bridge:dev
     build:
       context: ./libnatkit
@@ -42,6 +52,7 @@ services:
     # silently removed host access that development depends on (TEC-NATKIT-70).
     ports:
       - "7409:7409"
+    restart: unless-stopped
     image: natkit-backend:dev
     build:
       context: ./libnatkit
@@ -223,6 +234,9 @@ services:
   # now alternatives, not layers -- do not pass both.
 
   natkit-v0-kafka:
+    # ⚠️ The broker had no restart policy either, and it is the one every other
+    # service depends on. See the note on natkit-v0-bridge.
+    restart: unless-stopped
     image: confluentinc/cp-kafka:7.8.0
     hostname: natkit-v0-kafka
     ports:
