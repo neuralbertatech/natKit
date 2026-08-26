@@ -17,6 +17,16 @@ services:
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
     environment:
+      # ⚠️ WITHOUT THESE THE BROKER ADDRESS SILENTLY FALLS BACK TO
+      # localhost:29093 (TEC-NATKIT-76). That is wrong here: podman-compose gives
+      # each service its own netns and its own IP on natkit-v0-kafka-network, so
+      # `localhost` is this container, not the broker -- and nothing reports it as
+      # an error. The backend serves an empty stream list and the bridge forwards
+      # nothing, both looking healthy. 9092 is the DOCKER_NETWORK_LISTENER, which
+      # is the one advertised as natkit-v0-kafka:9092 and therefore the only one
+      # whose advertised address resolves from inside this network.
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: "9092"
       # Per-message wire tracing, OFF by default: it printed every frame's fully
       # decoded payload in both directions (~100 lines per bulk IMU frame) and
       # drowned every other service in `compose logs`. Set to 1 to debug the wire.
@@ -39,6 +49,16 @@ services:
       args:
         NATKIT_CMAKE_BUILD_PARALLEL: ${NATKIT_CMAKE_BUILD_PARALLEL:-}
     environment:
+      # ⚠️ WITHOUT THESE THE BROKER ADDRESS SILENTLY FALLS BACK TO
+      # localhost:29093 (TEC-NATKIT-76). That is wrong here: podman-compose gives
+      # each service its own netns and its own IP on natkit-v0-kafka-network, so
+      # `localhost` is this container, not the broker -- and nothing reports it as
+      # an error. The backend serves an empty stream list and the bridge forwards
+      # nothing, both looking healthy. 9092 is the DOCKER_NETWORK_LISTENER, which
+      # is the one advertised as natkit-v0-kafka:9092 and therefore the only one
+      # whose advertised address resolves from inside this network.
+      LIBNATKIT_KAFKA_BROKER_ADDRESS: natkit-v0-kafka
+      LIBNATKIT_KAFKA_BROKER_PORT: "9092"
       # Dev-only: bypass authentication so the panel/WebSocket need no login in
       # the local dev stack. NEVER set this in prod (see docker-compose.portainer.yml).
       NATKIT_AUTH_DISABLED: "true"
