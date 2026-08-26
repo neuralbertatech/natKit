@@ -1772,26 +1772,48 @@
         closeContextMenu();
     }
 
+    /**
+     * Add a Stream node.
+     *
+     * ⚠️ THE STREAM IS OPTIONAL, and that is the point. The palette used to offer
+     * one entry PER LIVE STREAM, so the menu changed shape with the rig and a
+     * board could not be laid out before the hardware was on. There is one
+     * generic "Stream" node now; which stream it carries is chosen from the
+     * inspector dropdown, which has always existed.
+     *
+     * An unbound source is already a first-class state — `stream_id` is optional
+     * and OMITTED rather than "" when absent (TEC-NATKIT-66) — so this needed no
+     * new concept, only for this function to stop insisting.
+     */
     function addSourceNode(
-        streamId: string,
+        streamId: string | null = null,
         position: StreamGraphPosition = contextMenu.open
             ? contextMenu.graphPosition
             : getDefaultInsertionPosition(),
     ) {
-        const stream =
-            availableStreams.find((item) => item.streamId === streamId) ?? null;
-        if (!stream) {
+        const stream = streamId
+            ? (availableStreams.find((item) => item.streamId === streamId) ?? null)
+            : null;
+        // ⚠️ Only refuse a stream id that was ASKED FOR and does not exist. A null
+        // id is a deliberate "pick it later", not a lookup failure.
+        if (streamId && !stream) {
             return;
         }
         const nextGraph = cloneGraph(draftGraph);
-        const nodeId = `source/${sanitizeIdentifier(streamId)}-${Date.now()}`;
+        const nodeId = streamId
+            ? `source/${sanitizeIdentifier(streamId)}-${Date.now()}`
+            : `source/unbound-${Date.now()}`;
         nextGraph.nodes.push({
             id: nodeId,
             kind: "stream_source",
-            label: `Stream ${streamId}`,
+            label: streamId ? `Stream ${streamId}` : "Stream",
             position: { ...position },
-            stream_id: streamId,
-            schema_name: stream.schemaName,
+            // ⚠️ OMITTED, not "", when unbound. The backend parses stream_id only
+            // if the key is PRESENT and then demands a non-negative integer, so
+            // "" makes the whole board unsavable (TEC-NATKIT-66). Same for the
+            // schema, which is not known until a stream is chosen.
+            ...(streamId ? { stream_id: streamId } : {}),
+            ...(stream ? { schema_name: stream.schemaName } : {}),
             output_port_ids: ["data"],
         });
         selectedNodeId = nodeId;
@@ -5624,16 +5646,22 @@
             <div class="library-group">
                 <span class="library-title">Streams</span>
                 <div class="library-actions">
-                    {#each availableStreams as stream}
-                        <button
-                            type="button"
-                            class="graph-list-item"
-                            onclick={() => addSourceNode(stream.streamId)}
-                        >
-                            <span class="graph-list-title">Stream {stream.streamId}</span>
-                            <span class="graph-list-meta">{stream.schemaName}</span>
-                        </button>
-                    {/each}
+                    <!-- ⚠️ ONE ENTRY, not one per live stream. The old palette
+                         changed shape with the rig, so a board could not be laid
+                         out before the hardware was on and the same board offered
+                         different nodes on different days. Which stream this
+                         carries is chosen in the inspector. -->
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        onclick={() => addSourceNode()}
+                    >
+                        <span class="graph-list-title">Stream</span>
+                        <span class="graph-list-meta">
+                            {availableStreams.length} available — pick one after
+                            adding
+                        </span>
+                    </button>
                 </div>
             </div>
         </div>
@@ -8017,16 +8045,14 @@
         >
             <div class="context-group">
                 <span class="context-title">Streams</span>
-                {#each availableStreams as stream}
-                    <button
-                        type="button"
-                        class="context-item"
-                        onclick={() => addSourceNode(stream.streamId)}
-                    >
-                        <span>Stream {stream.streamId}</span>
-                        <small>{stream.schemaName}</small>
-                    </button>
-                {/each}
+                <button
+                    type="button"
+                    class="context-item"
+                    onclick={() => addSourceNode()}
+                >
+                    <span>Stream</span>
+                    <small>pick the stream in the inspector</small>
+                </button>
             </div>
             <div class="context-group">
                 <span class="context-title">Transforms</span>

@@ -11,6 +11,11 @@
 // enum: the wire format IS the label.
 export const SENSOR_POSITION_NAMES = [
     "N/A",
+    // Distal to proximal down each arm, then the body, then the reference. The
+    // order is the order the dropdown shows, so it reads like an arm rather than
+    // like the order features were added.
+    "Left Hand",
+    "Right Hand",
     "Left Forearm",
     "Right Forearm",
     "Left Upper Arm",
@@ -18,7 +23,18 @@ export const SENSOR_POSITION_NAMES = [
     "Left Shoulder",
     "Right Shoulder",
     "Trunk",
+    // ⚠️ Not worn. The stationary reference sensor every other position is
+    // measured against; a rig without one has no way to separate the
+    // participant's motion from the room's.
+    "Base",
 ] as const;
+
+// ⚠️ THE UPPER ARMS ARE KEPT DELIBERATELY. The IMU ADL template does not use
+// them, but a position name is written into a recording's `sensor_positions` and
+// into live board configs — so removing one orphans every reference to it, and
+// the value would render as a position the dropdown can no longer offer. Checked
+// 2026-08-26: no sealed instance uses them, but two live boards do. Adding is
+// free; removing is a migration.
 
 export type SensorPositionName = (typeof SENSOR_POSITION_NAMES)[number];
 

@@ -34,10 +34,21 @@ describe("every starter template with no stream to bind", () => {
         });
     }
 
-    it("still binds a real stream when one is passed", () => {
+    // ⚠️ THE ADL TEMPLATE DELIBERATELY DOES NOT BIND, and this replaces a test
+    // that asserted it did. Its eight nodes are PLACEMENTS — Left Hand, Trunk,
+    // Base — and binding a passed stream would attach an arbitrary sensor to
+    // whichever placement happened to be first. A wrong mapping that looks
+    // deliberate is worse than an empty one the operator must fill in, because
+    // the empty one is visible and the wrong one is not.
+    it("leaves every ADL placement unbound, even when a stream is offered", () => {
         const graph = template("imu-adl-session").build("13793649670644");
-        const source = graph.nodes.find((n) => n.kind === "stream_source");
-        expect((source as { stream_id?: string })?.stream_id).toBe("13793649670644");
+        const sources = graph.nodes.filter((n) => n.kind === "stream_source");
+        expect(sources).toHaveLength(8);
+        for (const node of sources) {
+            expect(
+                Object.prototype.hasOwnProperty.call(node, "stream_id"),
+            ).toBe(false);
+        }
     });
 });
 
@@ -90,39 +101,41 @@ describe("IMU ADL session template", () => {
         expect(cues.every((c) => c.image_url?.includes("placeholder-"))).toBe(true);
     });
 
-    it("wires data AND markers into combine, and combine into export", () => {
-        const graph = template("imu-adl-session").build("imu-live-1");
-        const source = graph.nodes.find((n) => n.id === "source");
-        expect(source && "stream_id" in source ? source.stream_id : null).toBe(
-            "imu-live-1",
-        );
-        expect(graph.nodes.map((n) => n.id).sort()).toEqual(
-            [
-                "calibration",
-                "combine",
-                "export",
-                "live",
-                "markers",
-                "source",
-            ].sort(),
-        );
+    it("wires every sensor AND the markers into combine, and combine into export", () => {
+        const graph = template("imu-adl-session").build(null);
+
+        const sources = graph.nodes
+            .filter((n) => n.kind === "stream_source")
+            .map((n) => n.id)
+            .sort();
+        expect(sources).toHaveLength(8);
 
         const pairs = graph.edges
             .filter((e) => e.edge_kind !== "provenance")
-            .map((e) => `${e.source_node_id}->${e.target_node_id}`)
-            .sort();
-        // ⚠️ source->combine AND markers->combine are the load-bearing pair. That
-        // bundle is the join the exporter needs; drop either and the Parquet comes
-        // back with an empty label column, which reads as a successful export.
-        expect(pairs).toEqual(
-            [
-                "source->calibration",
-                "source->live",
-                "source->combine",
-                "markers->combine",
-                "combine->export",
-            ].sort(),
-        );
+            .map((e) => `${e.source_node_id}->${e.target_node_id}`);
+
+        // ⚠️ EVERY sensor reaches the combine. Wiring only the first would export
+        // one limb out of eight and still produce a file that looks complete.
+        for (const id of sources) {
+            expect(pairs).toContain(`${id}->combine`);
+        }
+        // ⚠️ …and the markers with them. That bundle IS the join the exporter
+        // needs; drop it and the Parquet comes back with an empty label column,
+        // which reads as a successful export.
+        expect(pairs).toContain("markers->combine");
+        expect(pairs).toContain("combine->export");
+
+        // The calibration and live readouts hang off ONE device's own frames.
+        // Pointed at the combine they would see a bundle and report no
+        // calibration at all.
+        expect(pairs).toContain("source-0->calibration");
+        expect(pairs).toContain("source-0->live");
+
+        // ⚠️ The combine must have a port per incoming edge. A fixed in1/in2
+        // would silently drop six of the eight sensors.
+        const combine = graph.nodes.find((n) => n.id === "combine");
+        const ports = (combine as { input_port_ids?: string[] })?.input_port_ids;
+        expect(ports).toHaveLength(sources.length + 1);
     });
 
     it("exports parquet with the label column named", () => {

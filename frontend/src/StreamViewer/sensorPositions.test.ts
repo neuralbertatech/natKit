@@ -10,12 +10,34 @@ import {
 } from "./sensorPositions";
 
 describe("sensor positions", () => {
-    it("offers the seven body positions plus an explicit not-stated", () => {
-        // The seven are the ADL study's sensor set; "N/A" is not one of them.
-        expect(ASSIGNABLE_SENSOR_POSITIONS).toHaveLength(7);
-        expect(SENSOR_POSITION_NAMES).toHaveLength(8);
+    it("offers every placement plus an explicit not-stated", () => {
         expect(SENSOR_POSITION_NAMES).toContain("N/A");
         expect(ASSIGNABLE_SENSOR_POSITIONS).not.toContain("N/A");
+        expect(ASSIGNABLE_SENSOR_POSITIONS).toHaveLength(
+            SENSOR_POSITION_NAMES.length - 1,
+        );
+    });
+
+    it("covers the eight the IMU ADL template lays out", () => {
+        // The template drops one stream node per placement, so a missing name
+        // here is a node the operator cannot map.
+        for (const position of [
+            "Left Hand", "Right Hand",
+            "Left Forearm", "Right Forearm",
+            "Left Shoulder", "Right Shoulder",
+            "Trunk", "Base",
+        ]) {
+            expect(ASSIGNABLE_SENSOR_POSITIONS).toContain(position);
+        }
+    });
+
+    // ⚠️ The template does not use these, and they are kept anyway. A position
+    // name is written into a recording's `sensor_positions` and into live board
+    // configs, so deleting one orphans every reference and renders as a value the
+    // dropdown can no longer offer. Adding is free; removing is a migration.
+    it("keeps the upper arms even though the ADL template does not use them", () => {
+        expect(ASSIGNABLE_SENSOR_POSITIONS).toContain("Left Upper Arm");
+        expect(ASSIGNABLE_SENSOR_POSITIONS).toContain("Right Upper Arm");
     });
 
     it("treats absent, empty and N/A alike as not stated", () => {

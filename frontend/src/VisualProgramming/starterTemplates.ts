@@ -199,7 +199,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     id: "classify-viewer",
                     kind: "viewer",
                     label: "Prediction",
-                    position: { x: 700, y: 300 },
+                    position: { x: 620, y: 300 },
                     input_port_ids: ["input"],
                 },
                 // The bound experiment's cue timeline as a stream.
@@ -373,13 +373,48 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
             // canvas is a narrow middle column, not the full width. Spread these
             // out like the other templates and half the board sits behind a panel
             // with its titles clipped, which is not "ready to run".
+            // ⚠️ EIGHT SENSORS, ONE NODE EACH, PLACED NOT BOUND. The rig's
+            // sensor set is a property of the STUDY, not of whatever happens to
+            // be streaming when somebody opens the template — so the board
+            // arrives with every placement already laid out and the operator
+            // maps each to a real stream. A template that only had the streams
+            // that were live at build time could not describe the study at all.
+            //
+            // ⚠️ `Base` is not worn. It is the stationary reference every other
+            // placement is measured against; without it there is no way to tell
+            // the participant's motion from the room's.
+            const PLACEMENTS = [
+                "Left Hand",
+                "Right Hand",
+                "Left Forearm",
+                "Right Forearm",
+                "Left Shoulder",
+                "Right Shoulder",
+                "Trunk",
+                "Base",
+            ] as const;
+
+            // ⚠️ ONE COLUMN AT x=330, AND THE x MATTERS. This template lands
+            // with the board library open on the left AND the experiment panel on
+            // the right, so the usable canvas is a narrow middle strip — the note
+            // below has said so since the single-source version. A first attempt
+            // put these in two columns at x=40 and x=210 and half of them
+            // rendered *behind* the library panel, which is not "ready to run".
+            const sensorNodes = PLACEMENTS.map((placement, index) => ({
+                ...source(null),
+                id: `source-${index}`,
+                label: placement,
+                sensor_position: placement,
+                position: { x: 330, y: 40 + index * 115 },
+            }));
+
             graph.nodes = [
-                { ...source(sourceStreamId), position: { x: 360, y: 180 } },
+                ...sensorNodes,
                 {
                     id: "markers",
                     kind: "markers",
                     label: "Markers",
-                    position: { x: 360, y: 560 },
+                    position: { x: 620, y: 460 },
                     input_port_ids: [],
                     output_port_ids: ["markers"],
                 },
@@ -390,7 +425,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     id: "calibration",
                     kind: "viewer",
                     label: "IMU Calibration",
-                    position: { x: 700, y: 40 },
+                    position: { x: 620, y: 40 },
                     input_port_ids: ["input"],
                     inline_graph: true,
                     display_mode: "imu_calibration",
@@ -408,7 +443,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     id: "combine",
                     kind: "combine",
                     label: "Combine",
-                    position: { x: 700, y: 560 },
+                    position: { x: 620, y: 620 },
                     input_port_ids: ["in1", "in2"],
                     output_port_ids: ["data"],
                     output_identifier: `adl-session-combine-${suffix()}`,
@@ -417,7 +452,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     id: "export",
                     kind: "export",
                     label: "Export",
-                    position: { x: 700, y: 800 },
+                    position: { x: 620, y: 860 },
                     input_port_ids: ["in1", "in2"],
                     output_port_ids: [],
                     config: {
@@ -427,11 +462,32 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     },
                 },
             ];
+            // ⚠️ EVERY sensor into the combine, so the export carries the whole
+            // rig rather than whichever node happened to be wired first. The
+            // combine's input ports are generated to match — a fixed in1/in2
+            // would silently drop six of the eight.
+            graph.nodes = graph.nodes.map((node) =>
+                node.id === "combine"
+                    ? {
+                          ...node,
+                          input_port_ids: [
+                              ...sensorNodes.map((_, i) => `in${i + 1}`),
+                              `in${sensorNodes.length + 1}`,
+                          ],
+                      }
+                    : node,
+            );
+
             graph.edges = [
-                edge("source", "data", "calibration", "input"),
-                edge("source", "data", "live", "input"),
-                edge("source", "data", "combine", "in1"),
-                edge("markers", "markers", "combine", "in2"),
+                // The calibration and live readouts hang off the FIRST sensor.
+                // They read one device's own frames; pointing them at the
+                // combine would show a bundle and report no calibration at all.
+                edge("source-0", "data", "calibration", "input"),
+                edge("source-0", "data", "live", "input"),
+                ...sensorNodes.map((node, i) =>
+                    edge(node.id, "data", "combine", `in${i + 1}`),
+                ),
+                edge("markers", "markers", "combine", `in${sensorNodes.length + 1}`),
                 edge("combine", "data", "export", "in1"),
             ];
             return graph;
