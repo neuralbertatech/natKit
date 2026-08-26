@@ -1934,7 +1934,21 @@
             label: "Combine",
             position: { ...position },
             input_port_ids: ["in1", "in2"],
-            output_port_ids: ["data"],
+            // ⚠️ MARKERS GO OUT AS WELL AS IN. Combine accepted a markers
+            // input and emitted only `data`, so markers went in and never came
+            // out — they were folded into the data channel as a bundle, which is
+            // why export's data port resolved as "markers" and why nobody could
+            // tell what was flowing where.
+            //
+            // The output costs nothing to expose: channelTopicsForNode already
+            // computes a combine's channel as the per-type UNION of its inputs,
+            // so the marker topic is already there. This surfaces it instead of
+            // hiding it inside the data link.
+            //
+            // ⚠️ Boards saved before this keep their single `data` output and
+            // still work — the bundle path is unchanged. This only affects
+            // combines created from now on.
+            output_port_ids: ["data", "markers"],
             output_identifier: sanitizeIdentifier(
                 `${draftGraph.graph_id}-combine-${Date.now()}`,
             ),
@@ -2019,7 +2033,14 @@
             kind: "export",
             label: "Export",
             position: { ...position },
-            input_port_ids: ["in1", "in2"],
+            // ⚠️ NAMED, not in1/in2. This node needs two SPECIFIC and different
+            // things — a data stream for the rows, an experiment's markers for
+            // the session window and the label joined onto each row — and the
+            // backend already distinguishes them (ParquetExport takes an explicit
+            // markerStreamId). Ports called in1/in2 said none of that, and wiring
+            // them the wrong way round yields a Parquet file with an empty label
+            // column, which reads as a successful export.
+            input_port_ids: ["data", "markers"],
             output_port_ids: [],
             config: buildDefaultExportConfig(),
         });
@@ -4657,24 +4678,37 @@
      * round produces a Parquet file with an empty label column, which reads as a
      * successful export.
      */
+    /**
+     * True when a link carries MARKERS rather than data.
+     *
+     * ⚠️ Taken from the PORT ID, not from the channel's resolved topics. A
+     * channel resolves only once the graph runs or a stream is bound, and the
+     * whole point of colouring the line is to see the wiring while it is being
+     * made. `markers` is the port id every marker output uses.
+     */
+    function edgeCarriesMarkers(edge: {
+        source_port?: string;
+        target_port?: string;
+    }): boolean {
+        return edge.source_port === "markers" || edge.target_port === "markers";
+    }
+
     function inputPortLabelsFor(
         node: EditorGraphNode,
     ): Record<string, string> | undefined {
-        if (node.kind !== "combine" && node.kind !== "export") return undefined;
+        // ⚠️ COMBINE ONLY. Export's ports are now NAMED `data` and `markers`, and
+        // relabelling them from the incoming channel actively hid that: the
+        // combine feeding export's `data` port carries a BUNDLE, whose channel
+        // kind resolves as "markers", so the override renamed the data port to
+        // "markers" and the node rendered `markers markers`. A port that states
+        // its own contract must not be renamed by what happens to be plugged
+        // into it. Combine's in1..inN say nothing on their own, so they still are.
+        if (node.kind !== "combine") return undefined;
         const labels: Record<string, string> = {};
         for (const portId of node.input_port_ids ?? []) {
             const kind = inputChannelKind(node.id, portId);
             if (kind !== "empty") {
                 labels[portId] = kind;
-            } else if (node.kind === "export") {
-                // ⚠️ An EMPTY export port is labelled too, and that is the whole
-                // point of the change. A port called "in2" tells you nothing
-                // about what belongs in it, and this node needs two specific and
-                // different things: a data stream for the rows, and an
-                // experiment's markers for the session window and labels. Combine
-                // is left unlabelled when empty because its ports are genuinely
-                // interchangeable — export's are not.
-                labels[portId] = "data or markers";
             }
         }
         return Object.keys(labels).length > 0 ? labels : undefined;
@@ -6128,6 +6162,7 @@
                                     "provenance"}
                                 class:edge-running={selectedGraphStatus?.run_state ===
                                     "running" && edge.edge_kind !== "provenance"}
+                                class:edge-markers={edgeCarriesMarkers(edge)}
                                 class="graph-edge"
                                 role="button"
                                 tabindex="0"
@@ -9353,6 +9388,16 @@
         stroke: #89f4ff;
         stroke-width: 4;
         filter: drop-shadow(0 0 4px rgba(137, 244, 255, 0.55));
+    }
+
+    /* Markers travel a different kind of link, and it is worth seeing at a
+       glance. The same purple the marker PORTS use, so a line and the dots it
+       joins read as one thing rather than two conventions. */
+    .graph-edge.edge-markers {
+        stroke: #b491ff;
+    }
+    .graph-edge.edge-markers.edge-running {
+        stroke: #c9b0ff;
     }
 
     .graph-edge.edge-invalid {

@@ -21,6 +21,20 @@
     import type { EditorGraphNode } from "./composites";
     import { onMount, type Snippet } from "svelte";
 
+    /**
+     * A port that carries MARKERS rather than data.
+     *
+     * ⚠️ Marker ports were the same grey as data ports everywhere EXCEPT the
+     * viewer's phantom input, which already had this purple — so the one place
+     * that distinguished them was the one place they were optional. Wiring
+     * markers where data belongs produces an export with an empty label column,
+     * which reads as a successful export, so the colour is here to make that
+     * mistake visible before it is made.
+     */
+    function isMarkerPort(portId: string): boolean {
+        return portId === "markers" || inputPortLabels?.[portId] === "markers";
+    }
+
     export interface PortAnchor {
         portId: string;
         side: "input" | "output";
@@ -325,6 +339,7 @@
                     <span
                         class="port-dot"
                         class:port-dot-provenance={isProvenancePort(portId)}
+                        class:port-dot-marker={isMarkerPort(portId)}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="input"
@@ -494,6 +509,7 @@
                     <span
                         class="port-dot"
                         class:port-dot-provenance={isProvenancePort(portId)}
+                        class:port-dot-marker={isMarkerPort(portId)}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="output"

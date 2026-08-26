@@ -445,7 +445,11 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     label: "Combine",
                     position: { x: 620, y: 620 },
                     input_port_ids: ["in1", "in2"],
-                    output_port_ids: ["data"],
+                    // Markers go out as well as in — see addCombineNode. ⚠️ The
+                    // export below still takes the DATA link, which carries the
+                    // bundle: that is the path the label column is tested on, and
+                    // rewiring it to the markers port is a separate change.
+                    output_port_ids: ["data", "markers"],
                     output_identifier: `adl-session-combine-${suffix()}`,
                 },
                 {
@@ -453,7 +457,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     kind: "export",
                     label: "Export",
                     position: { x: 620, y: 860 },
-                    input_port_ids: ["in1", "in2"],
+                    input_port_ids: ["data", "markers"],
                     output_port_ids: [],
                     config: {
                         format: "parquet",
@@ -488,7 +492,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     edge(node.id, "data", "combine", `in${i + 1}`),
                 ),
                 edge("markers", "markers", "combine", `in${sensorNodes.length + 1}`),
-                edge("combine", "data", "export", "in1"),
+                edge("combine", "data", "export", "data"),
             ];
             return graph;
         },
