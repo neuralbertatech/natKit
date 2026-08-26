@@ -4815,6 +4815,32 @@
         return [{ type: types[0] ?? "Data", d: curve(sourcePoint.y, targetPoint.y) }];
     }
 
+    /**
+     * What a viewer or sink is reading — or, when it is reading nothing, WHICH
+     * of the several possible reasons applies.
+     *
+     * ⚠️ The reasons matter more than the absence. "Connect an upstream stream"
+     * was shown for all of them, including the common one on a fresh ADL board:
+     * the viewer IS connected, and the Stream node upstream simply has no stream
+     * picked yet. The same distinction the calibration readout already draws
+     * (TEC-NATKIT-98), so both surfaces answer the question the same way.
+     */
+    function viewerSourceLabel(node: EditorGraphNode): string | null {
+        const streamId = viewableStreamId(node.id);
+        if (streamId) return `Stream ${displayStream(String(streamId))}`;
+        const view = resolveSourceView(node.id, draftGraph.nodes, draftGraph.edges);
+        switch (view.reason) {
+            case "unbound_source":
+                return "Pick a stream on the upstream Stream node";
+            case "no_source":
+                return "Connect an upstream stream";
+            case "needs_worker":
+                return "Start the graph — this reads through a transform";
+            default:
+                return null;
+        }
+    }
+
     function outputPortLabelsFor(
         node: EditorGraphNode,
     ): Record<string, string> | undefined {
@@ -6437,6 +6463,10 @@
                             {streamDeviceNames}
                             inputPortLabels={inputPortLabelsFor(node)}
                             outputPortLabels={outputPortLabelsFor(node)}
+                            sourceLabel={node.kind === "viewer" ||
+                            node.kind === "sink"
+                                ? viewerSourceLabel(node)
+                                : undefined}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}
                             onPortLayout={handlePortLayout}

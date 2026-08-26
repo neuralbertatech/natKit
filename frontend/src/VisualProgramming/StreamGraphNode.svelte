@@ -83,6 +83,10 @@
         // relabels its single output "data and markers" rather than growing a
         // second port — the channel is one channel; it just has two things in it.
         outputPortLabels?: Record<string, string>;
+        // What this viewer/sink is actually reading, or why it is reading
+        // nothing — resolved upstream, since a viewer shows a source-bound
+        // stream without the graph running.
+        sourceLabel?: string | null;
         // Part D: a viewer's phantom markers input — shown only when the incoming
         // channel carries markers. "available" = overlay off, "on" = enabled.
         markersPhantom?: "on" | "available";
@@ -127,6 +131,7 @@
         streamDeviceNames,
         inputPortLabels,
         outputPortLabels,
+        sourceLabel,
         markersPhantom,
         onToggleMarkers,
         onPortLayout,
@@ -398,13 +403,13 @@
                 <span>{node.output_identifier ?? "Output id pending"}</span>
             {:else if node.kind === "viewer"}
                 <span>Live inspector</span>
-                <span
-                    title={runtimeStreamId
-                        ? `Stream ${runtimeStreamId}`
-                        : undefined}
-                    >{runtimeStreamId
-                        ? `Stream ${runtimeStreamId}`
-                        : "Connect an upstream stream"}</span
+                <!-- ⚠️ runtimeStreamId is set only while the graph RUNS, so this
+                     line read "Connect an upstream stream" over a viewer that was
+                     connected, bound, and drawing live traces — the one reading
+                     that makes a working node look broken. sourceLabel is
+                     resolved the same way the viewer resolves what to draw. -->
+                <span title={sourceLabel ?? undefined}
+                    >{sourceLabel ?? "Connect an upstream stream"}</span
                 >
                 <button
                     type="button"
@@ -425,13 +430,8 @@
                 </button>
             {:else if node.kind === "sink"}
                 <span>Terminal node</span>
-                <span
-                    title={runtimeStreamId
-                        ? `Stream ${runtimeStreamId}`
-                        : undefined}
-                    >{runtimeStreamId
-                        ? `Stream ${runtimeStreamId}`
-                        : "Connect an upstream stream"}</span
+                <span title={sourceLabel ?? undefined}
+                    >{sourceLabel ?? "Connect an upstream stream"}</span
                 >
             {:else if node.kind === "composite"}
                 <span>Composite</span>
