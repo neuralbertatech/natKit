@@ -137,9 +137,20 @@ services:
     ports:
       - "7409:7409"
     volumes:
-      - ./natkit-backend/log:/logs:Z
-      - ./natkit-backend/data:/graphs:Z
-      - ./natkit-backend/instances:/instances:Z
+      # ⚠️ These three were bind mounts into the repo tree (./natkit-backend/{log,
+      # data,instances}) until TEC-NATKIT-70. `~/code` is Syncthing-synced, and the
+      # standing rule is that live databases, runtime state and build artifacts do
+      # not live under it: Syncthing resolving a conflict on stream_graphs.json
+      # while the backend has it open leaves a .sync-conflict-* copy and whichever
+      # version won, which the backend's atomic temp+rename cannot defend against.
+      # The instances directory is worse — that is participant data, and it would
+      # cross to every machine holding ~/code by a decision nobody made.
+      #
+      # Named volumes, matching docker-compose.dev.yml and .portainer.yml, so all
+      # three stacks now agree and there is no host path to get wrong.
+      - natkit-v0-backend-log:/logs
+      - natkit-v0-graphs:/graphs
+      - natkit-v0-instances:/instances
     networks:
       - natkit-v0-kafka-network
     depends_on:
@@ -160,6 +171,14 @@ volumes:
   # The broker's KRaft log dir (topic data + cluster metadata). Named, not a bind
   # mount, so it needs no :Z relabel and survives container recreation.
   natkit-v0-kafka-data:
+  # The backend's four JSON stores (graphs, experiments, workspaces, profiles).
+  natkit-v0-graphs:
+  # Materialized instance artifacts (Parquet + markers sidecar) — the permanence
+  # guarantee for a sealed recording, and sha256-verified read-only content. If an
+  # existing deployment has data at ./natkit-backend/instances, COPY it in; never
+  # let anything rewrite it. See TEC-NATKIT-70 for the migration.
+  natkit-v0-instances:
+  natkit-v0-backend-log:
 
 networks:
   natkit-v0-kafka-network:
