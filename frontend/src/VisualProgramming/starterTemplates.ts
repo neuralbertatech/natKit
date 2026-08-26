@@ -445,11 +445,14 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
                     label: "Combine",
                     position: { x: 620, y: 620 },
                     input_port_ids: ["in1", "in2"],
-                    // Markers go out as well as in — see addCombineNode. ⚠️ The
-                    // export below still takes the DATA link, which carries the
-                    // bundle: that is the path the label column is tested on, and
-                    // rewiring it to the markers port is a separate change.
-                    output_port_ids: ["data", "markers"],
+                    // ⚠️ ONE output, carrying BOTH types. A combine's channel is the
+            // per-type union of its inputs (see channelTopicsForNode), so when
+            // markers are wired in they are already in this channel — the port
+            // relabels itself "data and markers" and the link renders as a blue
+            // and a violet line running together. A previous pass grew a second
+            // `markers` port instead, which split one channel into two ports
+            // that nothing downstream treated as separate.
+            output_port_ids: ["data"],
                     output_identifier: `adl-session-combine-${suffix()}`,
                 },
                 {

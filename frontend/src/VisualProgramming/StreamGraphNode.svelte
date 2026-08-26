@@ -16,23 +16,39 @@
         getNodeHeight,
         graphRunStateClass,
         isProvenancePort,
+        BOTH_LABEL,
     } from "./streamGraph";
     import type { StreamGraphNodeStatus } from "../StreamViewer/types";
     import type { EditorGraphNode } from "./composites";
     import { onMount, type Snippet } from "svelte";
 
     /**
-     * A port that carries MARKERS rather than data.
+     * What a port carries: data, markers, or BOTH.
      *
-     * ⚠️ Marker ports were the same grey as data ports everywhere EXCEPT the
-     * viewer's phantom input, which already had this purple — so the one place
-     * that distinguished them was the one place they were optional. Wiring
-     * markers where data belongs produces an export with an empty label column,
-     * which reads as a successful export, so the colour is here to make that
-     * mistake visible before it is made.
+     * ⚠️ Three states, not two. A combine's single output is a bundle — data and
+     * markers travelling together — and calling that either "data" or "markers"
+     * loses half of it. An earlier pass gave combine two separate output ports
+     * instead; this says the same thing without splitting a channel that is not
+     * actually split.
+     *
+     * The LABEL wins over the port id when there is one: port ids are fixed at
+     * creation (`data`, `in1`), while the label is computed from what the
+     * channel actually resolved to.
      */
-    function isMarkerPort(portId: string): boolean {
-        return portId === "markers" || inputPortLabels?.[portId] === "markers";
+    function portTone(
+        portId: string,
+        side: "input" | "output",
+    ): "data" | "markers" | "both" {
+        const label =
+            side === "input"
+                ? inputPortLabels?.[portId]
+                : outputPortLabels?.[portId];
+        if (label) {
+            if (label === BOTH_LABEL) return "both";
+            if (label === "markers") return "markers";
+            return "data";
+        }
+        return portId === "markers" ? "markers" : "data";
     }
 
     export interface PortAnchor {
@@ -63,6 +79,10 @@
         // port id — e.g. a combine input relabels itself data/markers/stream from
         // the channel it is fed. Falls back to the raw port id when absent.
         inputPortLabels?: Record<string, string>;
+        // Same, for OUTPUT ports. A combine whose inputs carry both types
+        // relabels its single output "data and markers" rather than growing a
+        // second port — the channel is one channel; it just has two things in it.
+        outputPortLabels?: Record<string, string>;
         // Part D: a viewer's phantom markers input — shown only when the incoming
         // channel carries markers. "available" = overlay off, "on" = enabled.
         markersPhantom?: "on" | "available";
@@ -106,6 +126,7 @@
         boundExperimentLabel,
         streamDeviceNames,
         inputPortLabels,
+        outputPortLabels,
         markersPhantom,
         onToggleMarkers,
         onPortLayout,
@@ -339,7 +360,9 @@
                     <span
                         class="port-dot"
                         class:port-dot-provenance={isProvenancePort(portId)}
-                        class:port-dot-marker={isMarkerPort(portId)}
+                        class:port-dot-marker={portTone(portId, "input") ===
+                            "markers"}
+                        class:port-dot-both={portTone(portId, "input") === "both"}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="input"
@@ -505,11 +528,13 @@
                         onPortClick(node.id, portId, "output");
                     }}
                 >
-                    <span>{portId}</span>
+                    <span>{outputPortLabels?.[portId] ?? portId}</span>
                     <span
                         class="port-dot"
                         class:port-dot-provenance={isProvenancePort(portId)}
-                        class:port-dot-marker={isMarkerPort(portId)}
+                        class:port-dot-marker={portTone(portId, "output") ===
+                            "markers"}
+                        class:port-dot-both={portTone(portId, "output") === "both"}
                         data-port-anchor
                         data-port-id={portId}
                         data-port-side="output"
@@ -851,6 +876,11 @@
         box-shadow: 0 0 0 3px rgba(180, 145, 255, 0.18);
         outline: 1px dashed rgba(180, 145, 255, 0.7);
         outline-offset: 2px;
+    }
+    /* A bundle port is literally half of each: data below, markers above. */
+    .port-dot-both {
+        background: linear-gradient(135deg, #b491ff 0 50%, #68d7ff 50% 100%);
+        box-shadow: 0 0 0 3px rgba(140, 180, 255, 0.18);
     }
     .port-phantom-on .port-dot-marker {
         outline-style: solid;

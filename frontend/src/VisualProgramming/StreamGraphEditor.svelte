@@ -136,6 +136,7 @@
         getPortPosition,
         graphRunStateClass,
         isProvenancePort,
+        BOTH_LABEL,
         sanitizeIdentifier,
         PROVENANCE_PORT_MODELS,
         PROVENANCE_PORT_MODEL,
@@ -1934,21 +1935,14 @@
             label: "Combine",
             position: { ...position },
             input_port_ids: ["in1", "in2"],
-            // ⚠️ MARKERS GO OUT AS WELL AS IN. Combine accepted a markers
-            // input and emitted only `data`, so markers went in and never came
-            // out — they were folded into the data channel as a bundle, which is
-            // why export's data port resolved as "markers" and why nobody could
-            // tell what was flowing where.
-            //
-            // The output costs nothing to expose: channelTopicsForNode already
-            // computes a combine's channel as the per-type UNION of its inputs,
-            // so the marker topic is already there. This surfaces it instead of
-            // hiding it inside the data link.
-            //
-            // ⚠️ Boards saved before this keep their single `data` output and
-            // still work — the bundle path is unchanged. This only affects
-            // combines created from now on.
-            output_port_ids: ["data", "markers"],
+            // ⚠️ ONE output, carrying BOTH types. A combine's channel is the
+            // per-type union of its inputs (see channelTopicsForNode), so when
+            // markers are wired in they are already in this channel — the port
+            // relabels itself "data and markers" and the link renders as a blue
+            // and a violet line running together. A previous pass grew a second
+            // `markers` port instead, which split one channel into two ports
+            // that nothing downstream treated as separate.
+            output_port_ids: ["data"],
             output_identifier: sanitizeIdentifier(
                 `${draftGraph.graph_id}-combine-${Date.now()}`,
             ),
@@ -4583,8 +4577,33 @@
             case "markers":
             case "experiment":
                 return [{ type: "Marker", id: "", schema: "MarkerEventV1" }];
-            case "transform":
-                return [{ type: "Data", id: "", schema: "" }];
+            case "transform": {
+                // ⚠️ A transform PASSES MARKERS THROUGH. It used to answer a bare
+                // Data topic, which silently dropped the marker half of an
+                // incoming bundle: markers wired through a transform vanished
+                // from everything downstream that asks this function what a
+                // channel holds — the viewer's overlay, the port labels, the
+                // edge colours. A transform reshapes samples; it has no opinion
+                // about the marker timeline riding alongside them.
+                const passthrough = new Map<string, OutputChannelTopic>();
+                passthrough.set("Data", { type: "Data", id: "", schema: "" });
+                for (const e of draftGraph.edges) {
+                    if (e.target_node_id !== node.id) continue;
+                    const src = draftGraph.nodes.find(
+                        (n) => n.id === e.source_node_id,
+                    );
+                    for (const t of channelTopicsForNode(src, depth + 1)) {
+                        if (t.type !== "Data" && !passthrough.has(t.type)) {
+                            passthrough.set(t.type, {
+                                type: t.type,
+                                id: "",
+                                schema: t.schema,
+                            });
+                        }
+                    }
+                }
+                return [...passthrough.values()];
+            }
             case "combine": {
                 // Per-type union of the input source channels (one per type).
                 const byType = new Map<string, OutputChannelTopic>();
@@ -4679,18 +4698,150 @@
      * successful export.
      */
     /**
-     * True when a link carries MARKERS rather than data.
+     * The channel types a single LINK actually carries: data, markers, or both.
      *
-     * ⚠️ Taken from the PORT ID, not from the channel's resolved topics. A
-     * channel resolves only once the graph runs or a stream is bound, and the
-     * whole point of colouring the line is to see the wiring while it is being
-     * made. `markers` is the port id every marker output uses.
+     * ⚠️ Port ids win over resolved topics, and the fallback is Data. A channel
+     * resolves only once the graph runs or a stream is bound, so keying purely
+     * off topics would leave every link grey while it is being wired — which is
+     * exactly when the colour is worth having. A port literally named `data` or
+     * `markers` states its own contract and settles it without asking.
      */
-    function edgeCarriesMarkers(edge: {
+    function edgeChannelTypes(edge: {
+        source_node_id?: string;
         source_port?: string;
+        target_node_id?: string;
         target_port?: string;
-    }): boolean {
-        return edge.source_port === "markers" || edge.target_port === "markers";
+    }): ("Data" | "Marker")[] {
+        const named = (port: string | undefined): "Data" | "Marker" | null =>
+            port === "markers" ? "Marker" : port === "data" ? "Data" : null;
+
+        const srcNamed = named(edge.source_port);
+        const tgtNamed = named(edge.target_port);
+        // A named port at EITHER end pins the link, and a named port at both
+        // ends that disagree means the link is miswired — draw the target's
+        // expectation, which is what the receiving node will try to read.
+        if (tgtNamed) return [tgtNamed];
+        if (srcNamed) return [srcNamed];
+
+        const source = draftGraph.nodes.find((n) => n.id === edge.source_node_id);
+        const types = new Set<"Data" | "Marker">();
+        for (const topic of channelTopicsForNode(source)) {
+            if (topic.type === "Data") types.add("Data");
+            if (topic.type === "Marker") types.add("Marker");
+        }
+        if (types.size === 0) return ["Data"];
+        // Data first so the pair always stacks the same way round.
+        return [...(types.has("Data") ? ["Data" as const] : []),
+                ...(types.has("Marker") ? ["Marker" as const] : [])];
+    }
+
+    /**
+     * Output port labels — a bundle port says so instead of claiming to be one
+     * of its halves.
+     *
+     * ⚠️ Only for a node with EXACTLY ONE output port. With several ports the
+     * ids already partition the channel by type, and relabelling them from the
+     * node's whole channel would tell every one of them it carries everything.
+     */
+    /**
+     * The drawn line(s) for one link, and where each runs.
+     *
+     * Three shapes, all of which say the same thing — what is in this link:
+     *  - one type              → one curve;
+     *  - a bundle into one port → two curves running side by side the whole way,
+     *    meeting at the two ports because the ports really are single points;
+     *  - a bundle FANNED OUT into several ports of one node → the curves run
+     *    together as a trunk and split only at the last ~46px, so the shared
+     *    stretch reads as one cable rather than two coincidental links.
+     */
+    function edgeLines(
+        edge: StreamGraphEdge,
+        sourcePoint: { x: number; y: number },
+        targetPoint: { x: number; y: number },
+    ): { type: "Data" | "Marker"; d: string }[] {
+        const types = edgeChannelTypes(edge);
+        const curve = (
+            sy: number,
+            ty: number,
+        ) =>
+            `M ${sourcePoint.x} ${sourcePoint.y} C ${sourcePoint.x + 90} ${sy}, ${
+                targetPoint.x - 90
+            } ${ty}, ${targetPoint.x} ${targetPoint.y}`;
+
+        // Siblings: same source PORT, same target NODE, different target port.
+        const siblings = draftGraph.edges.filter(
+            (other) =>
+                other.source_node_id === edge.source_node_id &&
+                other.source_port === edge.source_port &&
+                other.target_node_id === edge.target_node_id,
+        );
+        if (siblings.length > 1) {
+            const index = siblings.findIndex((other) => other.id === edge.id);
+            const points = siblings.map((other) => {
+                const node = draftGraph.nodes.find(
+                    (n) => n.id === other.target_node_id,
+                );
+                return node
+                    ? getPortPoint(node, other.target_port, "input")
+                    : targetPoint;
+            });
+            const spread = (index - (siblings.length - 1) / 2) * 7;
+            const forkY =
+                points.reduce((sum, p) => sum + p.y, 0) / points.length + spread;
+            const forkX = Math.min(...points.map((p) => p.x)) - 46;
+            return [
+                {
+                    type: types[0] ?? "Data",
+                    d:
+                        `M ${sourcePoint.x} ${sourcePoint.y} C ${
+                            sourcePoint.x + 90
+                        } ${sourcePoint.y}, ${forkX - 60} ${forkY}, ${forkX} ${forkY} ` +
+                        `C ${forkX + 20} ${forkY}, ${targetPoint.x - 32} ${
+                            targetPoint.y
+                        }, ${targetPoint.x} ${targetPoint.y}`,
+                },
+            ];
+        }
+
+        if (types.length > 1) {
+            return types.map((type, index) => {
+                const offset = (index - (types.length - 1) / 2) * 9;
+                return {
+                    type,
+                    d: curve(sourcePoint.y + offset, targetPoint.y + offset),
+                };
+            });
+        }
+        return [{ type: types[0] ?? "Data", d: curve(sourcePoint.y, targetPoint.y) }];
+    }
+
+    function outputPortLabelsFor(
+        node: EditorGraphNode,
+    ): Record<string, string> | undefined {
+        const ports = node.output_port_ids ?? [];
+        if (ports.length !== 1) return undefined;
+        const portId = ports[0];
+        if (isProvenancePort(portId)) return undefined;
+        // ⚠️ Read from the INCOMING LINKS, not from channelTopicsForNode, for
+        // any node that has them. An unbound stream source resolves to no
+        // topics at all, so a combine fed by eight unbound sources and one
+        // markers node resolved as markers-ONLY and its output kept the default
+        // "data" label — the one case where the label mattered most. The links
+        // know their own types (edgeChannelTypes falls back to Data), and using
+        // them is also what makes the label agree with the line colours, which
+        // are computed the same way.
+        const incoming = draftGraph.edges.filter(
+            (edge) => edge.target_node_id === node.id,
+        );
+        const types = new Set<string>(
+            incoming.length > 0
+                ? incoming.flatMap((edge) => edgeChannelTypes(edge))
+                : channelTopicsForNode(node)
+                      .map((t) => t.type)
+                      .filter((t) => t === "Data" || t === "Marker"),
+        );
+        if (types.size < 2) return undefined;
+        return { [portId]: BOTH_LABEL };
     }
 
     function inputPortLabelsFor(
@@ -6129,7 +6280,7 @@
                 <!-- contextmenu bubbles to .graph-canvas above, and openContextMenu
                      reads only clientX/clientY — inner handlers would be redundant. -->
                 <div class="canvas-grid"></div>
-                <svg class="graph-edges" aria-hidden="true">
+                <svg class="graph-edges">
                     <g
                         transform={`translate(${draftGraph.ui?.viewport?.x ?? 0}, ${
                             draftGraph.ui?.viewport?.y ?? 0
@@ -6155,22 +6306,35 @@
                                 edge.target_port,
                                 "input",
                             )}
+                            {@const lines = edgeLines(edge, sourcePoint, targetPoint)}
+                            {#each lines as line, lineIndex}
+                                <path
+                                    class:selected={edge.id === selectedEdgeId}
+                                    class:edge-invalid={edgeDiagnostics(edge.id)
+                                        .length > 0}
+                                    class:edge-provenance={edge.edge_kind ===
+                                        "provenance"}
+                                    class:edge-running={selectedGraphStatus?.run_state ===
+                                        "running" && edge.edge_kind !== "provenance"}
+                                    class:edge-markers={line.type === "Marker"}
+                                    class="graph-edge"
+                                    d={line.d}
+                                />
+                            {/each}
+                            <!-- ⚠️ The CLICK TARGET is this invisible 18px-wide
+                                 path, not the 3px line above. Selecting an edge
+                                 was the only way to delete one and it needed a
+                                 pixel-perfect hit; edges were effectively
+                                 undeletable. Drawn after the visible lines so it
+                                 sits on top, and with no stroke of its own so it
+                                 never changes what is seen. -->
                             <path
-                                class:selected={edge.id === selectedEdgeId}
-                                class:edge-invalid={edgeDiagnostics(edge.id).length > 0}
-                                class:edge-provenance={edge.edge_kind ===
-                                    "provenance"}
-                                class:edge-running={selectedGraphStatus?.run_state ===
-                                    "running" && edge.edge_kind !== "provenance"}
-                                class:edge-markers={edgeCarriesMarkers(edge)}
-                                class="graph-edge"
+                                class="graph-edge-hit"
                                 role="button"
                                 tabindex="0"
-                                d={`M ${sourcePoint.x} ${sourcePoint.y} C ${
-                                    sourcePoint.x + 90
-                                } ${sourcePoint.y}, ${targetPoint.x - 90} ${
-                                    targetPoint.y
-                                }, ${targetPoint.x} ${targetPoint.y}`}
+                                aria-label={`Link ${edge.source_node_id} to ${edge.target_node_id}`}
+                                d={lines[0].d}
+                                onmousedown={(event) => event.stopPropagation()}
                                 onclick={(event) => {
                                     event.stopPropagation();
                                     selectEdge(edge.id);
@@ -6183,6 +6347,47 @@
                                     }
                                 }}
                             />
+                            {#if edge.id === selectedEdgeId && !boardIsImmutable}
+                                {@const midX = (sourcePoint.x + targetPoint.x) / 2}
+                                {@const midY = (sourcePoint.y + targetPoint.y) / 2}
+                                <g
+                                    class="edge-delete"
+                                    role="button"
+                                    tabindex="0"
+                                    aria-label="Delete this link"
+                                    onmousedown={(event) => {
+                                        // ⚠️ Without this the canvas's mousedown
+                                        // runs FIRST and clears the selection, so
+                                        // the click that follows asks to remove
+                                        // the selected item and finds none — the
+                                        // button appeared to do nothing at all.
+                                        event.stopPropagation();
+                                    }}
+                                    onclick={(event) => {
+                                        event.stopPropagation();
+                                        removeSelectedItem();
+                                    }}
+                                    onkeydown={(event) => {
+                                        if (
+                                            event.key === "Enter" ||
+                                            event.key === " "
+                                        ) {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            removeSelectedItem();
+                                        }
+                                    }}
+                                >
+                                    <circle cx={midX} cy={midY} r="10" />
+                                    <path
+                                        d={`M ${midX - 3.5} ${midY - 3.5} L ${
+                                            midX + 3.5
+                                        } ${midY + 3.5} M ${midX + 3.5} ${
+                                            midY - 3.5
+                                        } L ${midX - 3.5} ${midY + 3.5}`}
+                                    />
+                                </g>
+                            {/if}
                         {/if}
                     {/each}
                     {#if connectionDrag}
@@ -6231,6 +6436,7 @@
                                 : null}
                             {streamDeviceNames}
                             inputPortLabels={inputPortLabelsFor(node)}
+                            outputPortLabels={outputPortLabelsFor(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}
                             onPortLayout={handlePortLayout}
@@ -9265,6 +9471,24 @@
 
     .graph-stage {
         transform-origin: 0 0;
+        /* ⚠️ THE STAGE IS A FULL-CANVAS OVERLAY. It is `position: absolute;
+           inset: 0` and comes after the edge <svg> in the DOM, so it covered
+           every link and ate the click — which is why edges could never be
+           selected, and so never deleted, even though the handler to do it has
+           been there all along. The stage itself is empty space between the node
+           cards; only the cards should take a click, so it opts out and its
+           children opt back in. Clicks that fall through land on .graph-canvas
+           below, which is what clicking empty canvas already did. */
+        pointer-events: none;
+    }
+
+    /* ⚠️ :global() is load-bearing. The stage's children are <StreamGraphNode>
+       components, and Svelte's scoped CSS does not cross a component boundary —
+       a plain `.graph-stage > *` compiled to a scope class those cards never
+       carry, so pointer-events stayed `none` on every node and the whole canvas
+       went dead to the mouse. */
+    .graph-stage > :global(*) {
+        pointer-events: auto;
     }
 
     .graph-edge {
@@ -9393,6 +9617,35 @@
     /* Markers travel a different kind of link, and it is worth seeing at a
        glance. The same purple the marker PORTS use, so a line and the dots it
        joins read as one thing rather than two conventions. */
+    /* Invisible, wide, and on top: the thing a click actually lands on. */
+    .graph-edge-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 18;
+        cursor: pointer;
+    }
+    .graph-edge-hit:focus-visible {
+        outline: none;
+        stroke: rgba(137, 244, 255, 0.25);
+    }
+    .edge-delete {
+        cursor: pointer;
+    }
+    .edge-delete circle {
+        fill: rgba(18, 24, 38, 0.92);
+        stroke: rgba(255, 121, 121, 0.9);
+        stroke-width: 1.5;
+    }
+    .edge-delete path {
+        stroke: #ff9d9d;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        fill: none;
+    }
+    .edge-delete:hover circle,
+    .edge-delete:focus-visible circle {
+        fill: rgba(120, 30, 40, 0.95);
+    }
     .graph-edge.edge-markers {
         stroke: #b491ff;
     }

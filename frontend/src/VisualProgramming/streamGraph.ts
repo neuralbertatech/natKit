@@ -1,3 +1,12 @@
+/**
+ * The label a port wears when its channel carries BOTH data and markers.
+ *
+ * ⚠️ Shared between the node card and the editor's edge renderer on purpose —
+ * both compare against it, and a copy in each would let the two drift into
+ * disagreeing about whether a port is a bundle.
+ */
+export const BOTH_LABEL = "data and markers";
+
 // Pure helpers for the Stream Graph editor. Kept free of Svelte state so they
 // stay unit-testable without a browser.
 import type {
