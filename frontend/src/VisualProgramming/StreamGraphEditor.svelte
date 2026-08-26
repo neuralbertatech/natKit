@@ -4648,14 +4648,34 @@
 
     // Part B: relabel each connected combine input port data/markers/stream from
     // the channel it is fed, so the merge type is visible on the node itself.
-    function combineInputLabels(
+    /**
+     * Per-input-port labels, from the channel actually feeding each port.
+     *
+     * ⚠️ EXPORT NEEDS THIS AS MUCH AS COMBINE DOES, and only combine had it. An
+     * export node's two ports rendered as "in1" and "in2" with nothing saying
+     * which was the data and which the markers — and getting them the wrong way
+     * round produces a Parquet file with an empty label column, which reads as a
+     * successful export.
+     */
+    function inputPortLabelsFor(
         node: EditorGraphNode,
     ): Record<string, string> | undefined {
-        if (node.kind !== "combine") return undefined;
+        if (node.kind !== "combine" && node.kind !== "export") return undefined;
         const labels: Record<string, string> = {};
         for (const portId of node.input_port_ids ?? []) {
             const kind = inputChannelKind(node.id, portId);
-            if (kind !== "empty") labels[portId] = kind;
+            if (kind !== "empty") {
+                labels[portId] = kind;
+            } else if (node.kind === "export") {
+                // ⚠️ An EMPTY export port is labelled too, and that is the whole
+                // point of the change. A port called "in2" tells you nothing
+                // about what belongs in it, and this node needs two specific and
+                // different things: a data stream for the rows, and an
+                // experiment's markers for the session window and labels. Combine
+                // is left unlabelled when empty because its ports are genuinely
+                // interchangeable — export's are not.
+                labels[portId] = "data or markers";
+            }
         }
         return Object.keys(labels).length > 0 ? labels : undefined;
     }
@@ -4910,14 +4930,27 @@
     // Resolve the calibration state for a calibration node: its upstream stream's
     // per-sensor accuracies, plus the worst-case overall.
     function calibrationViewFor(node: EditorGraphNode) {
-        const streamId = nodeRuntimeStatus(node.id)?.output_stream_id;
+        // ⚠️ Not nodeRuntimeStatus alone. Calibration is exactly the reading you
+        // want BEFORE pressing Record — the Record gate refuses an uncalibrated
+        // rig, so "start the graph to find out whether you may start" was a loop.
+        // viewableStreamId walks upstream to the bound source the same way the
+        // live viewer does (TEC-NATKIT-98), and still prefers the runtime id when
+        // the graph IS running, so a replay-rebound source stays correct.
+        const streamId = viewableStreamId(node.id);
         const raw = streamId ? sensorAccuracies[String(streamId)] : undefined;
         const overall = calibration_status_for_accuracies(raw);
         const parts =
             typeof raw === "object" && raw !== null && "accelerometer" in raw
                 ? (raw as SensorAccuracies)
                 : null;
+        // ⚠️ WHY there is no stream, not just that there is none. "Start the
+        // graph" was the only message, and after TEC-NATKIT-98 it became wrong in
+        // the common case: on a fresh ADL board every source is deliberately
+        // UNBOUND, so the honest answer is "pick a stream", and telling somebody
+        // to press Start sends them to a button that will not help.
+        const view = resolveSourceView(node.id, draftGraph.nodes, draftGraph.edges);
         return {
+            unresolvedReason: streamId ? null : view.reason,
             streamId: streamId ? String(streamId) : null,
             // Distinguish "the backend has no IMU selection" from "this stream is
             // not one of the selected ones" -- the fixes differ.
@@ -5252,7 +5285,19 @@
     {@const view = calibrationViewFor(node)}
     <div class="calib-panel">
         {#if !view.streamId}
-            <p class="inline-note">Start the graph to read calibration.</p>
+            <p class="inline-note">
+                {#if view.unresolvedReason === "unbound_source"}
+                    Pick a stream on the upstream Stream node to read its
+                    calibration.
+                {:else if view.unresolvedReason === "no_source"}
+                    Wire this to a Stream node to read its calibration.
+                {:else if view.unresolvedReason === "needs_worker"}
+                    Start the graph to read calibration — this reads through a
+                    transform, which needs the graph running.
+                {:else}
+                    Start the graph to read calibration.
+                {/if}
+            </p>
         {:else if view.selectionMissing}
             <p class="inline-note">
                 No IMU streams selected. Pick them under IMU Experiment → Stream
@@ -6150,7 +6195,7 @@
                                   boundExperimentView.experiment_id
                                 : null}
                             {streamDeviceNames}
-                            inputPortLabels={combineInputLabels(node)}
+                            inputPortLabels={inputPortLabelsFor(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}
                             onPortLayout={handlePortLayout}
