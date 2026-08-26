@@ -128,6 +128,34 @@ export function getValueAtSchemaPath(
       continue;
     }
 
+    // A TEMPLATE PLACEHOLDER -- "{index}" -- meaning "any element of this
+    // array", not a literal key (TEC-NATKIT-32).
+    //
+    // ⚠️ This is why the Schema Inspector read "Unavailable" for all nine fields
+    // of an IMU stream while the Rolling Trace and the numeric readouts beside
+    // it, fed by the same records, worked perfectly. expandFieldLeaves() emits
+    // "{index}" only when it expands an array WITHOUT a sample value to hand;
+    // those paths were then resolved against real records, matched neither the
+    // numeric-index branch above nor the object-key branch below, and fell
+    // through to undefined. For a channel-major schema like
+    // NatImuBulkDataSchema that is every field carrying data, so the panel was
+    // dead rather than partly wrong -- and it correctly reported "9 fields"
+    // throughout, which is what made it look like a value problem.
+    //
+    // ⚠️ Resolves to the LAST element, deliberately. The live readouts rendered
+    // immediately next to this panel show the newest sample, and an inspector
+    // disagreeing with the number beside it is worse than one that says nothing.
+    // Matching any {...} rather than "{index}" specifically so a future
+    // placeholder spelling degrades to this branch instead of silently
+    // reverting to "Unavailable".
+    if (/^\{[^}]*\}$/.test(segment)) {
+      if (!Array.isArray(currentValue) || currentValue.length === 0) {
+        return undefined;
+      }
+      currentValue = currentValue[currentValue.length - 1];
+      continue;
+    }
+
     if (Array.isArray(currentValue) || typeof currentValue !== "object") {
       return undefined;
     }

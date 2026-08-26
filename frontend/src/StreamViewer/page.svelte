@@ -19,6 +19,7 @@
         findCompatibleTransformInputMappingId,
     } from "./schemaDescriptor";
     import { chooseViewerRenderer, MARKER_SCHEMA_NAME } from "./viewerRegistry";
+    import { buildStreamTree, type StreamTreeNode } from "./streamTree";
     import type {
         DataSchemaDescriptor,
         StreamListMessage,
@@ -774,6 +775,13 @@
             .sort((left, right) => left.streamId.localeCompare(right.streamId)),
     );
 
+    // The Available Streams panel as a tree rather than a flat list
+    // (TEC-NATKIT-89). Edges come from the running transforms, which the page
+    // already holds for the transforms tab -- so this needs no new round trip,
+    // and it costs nothing before `list_transforms` lands: with no edges every
+    // stream is a root and the panel looks exactly as it always did.
+    let streamTree = $derived(buildStreamTree(availableStreams, emgTransforms));
+
     let transformSourceStreams = $derived(
         Object.entries(availableStreams)
             .map(([streamId, info]) => ({
@@ -813,6 +821,86 @@
     {/if}
 
     <div class="main-content">
+        <!--
+            One row, and its derived streams beneath it. Recursive on purpose:
+            a transform output can itself be another transform's source, and a
+            chain flattened to one level would misstate what came from what.
+            buildStreamTree() guarantees the recursion terminates.
+        -->
+        {#snippet streamRow(node: StreamTreeNode)}
+            {@const subscribed = subscribedStreams.has(node.streamId)}
+            <li
+                class="stream-item"
+                class:derived={node.depth > 0}
+                class:no-data={!node.hasDataTopic}
+            >
+                <label class="stream-label">
+                    <!--
+                        ⚠️ Blocked only for NEW subscriptions, never for an
+                        existing one. Disabling it outright while a stream is
+                        already checked would strand that subscription with no
+                        way to undo it.
+                    -->
+                    <input
+                        type="checkbox"
+                        checked={subscribed}
+                        disabled={!node.hasDataTopic && !subscribed}
+                        onchange={() =>
+                            toggleStreamSubscription(node.streamId)}
+                    />
+                    <span class="stream-id">Stream {node.streamId}</span>
+                    {#if !node.hasDataTopic}
+                        <!--
+                            The hub and any status-only device land here: no Data
+                            topic, so subscribing could never yield a sample. Say
+                            so on the row rather than leaving it blank and letting
+                            the live card read "NO DATA" forever.
+                        -->
+                        <span
+                            class="stream-nodata"
+                            title="This device publishes status only — no data topic to subscribe to. Its health is on the Logs page and the device-health pill."
+                            >status only</span
+                        >
+                    {/if}
+                    {#if node.orphaned}
+                        <!--
+                            Derived, but the stream it came from is not in the
+                            list. Shown at the top level rather than dropped --
+                            and labelled, so it is not mistaken for a device.
+                        -->
+                        <span
+                            class="stream-orphan"
+                            title="Derived from a stream that is no longer available"
+                            >source gone</span
+                        >
+                    {/if}
+                </label>
+                <ul class="topic-list">
+                    {#each node.info.topics ?? [] as topic}
+                        <li class="topic-item">
+                            <span class="topic-type {topic.type.toLowerCase()}"
+                                >{topic.type}</span
+                            >
+                            <span class="topic-schema">{topic.schema_name}</span>
+                            {#if topic.descriptor}
+                                <span class="topic-descriptor">
+                                    descriptor v{topic.descriptor
+                                        .descriptor_version}
+                                </span>
+                            {/if}
+                        </li>
+                    {/each}
+                </ul>
+                {#if node.children.length > 0}
+                    <ul class="stream-list stream-children">
+                        {#each node.children as child (child.streamId)}
+                            {@render streamRow(child)}
+                        {/each}
+                    </ul>
+                {/if}
+            </li>
+        {/snippet}
+
         <!-- Stream Selection Panel -->
         <aside class="stream-panel">
             <div class="panel-header">
@@ -830,39 +918,8 @@
                 <p class="no-streams">No streams available</p>
             {:else}
                 <ul class="stream-list">
-                    {#each Object.entries(availableStreams) as [streamIdStr, streamInfo]}
-                        <li class="stream-item">
-                            <label class="stream-label">
-                                <input
-                                    type="checkbox"
-                                    checked={subscribedStreams.has(streamIdStr)}
-                                    onchange={() =>
-                                        toggleStreamSubscription(streamIdStr)}
-                                />
-                                <span class="stream-id"
-                                    >Stream {streamIdStr}</span
-                                >
-                            </label>
-                            <ul class="topic-list">
-                                {#each streamInfo.topics ?? [] as topic}
-                                    <li class="topic-item">
-                                        <span
-                                            class="topic-type {topic.type.toLowerCase()}"
-                                            >{topic.type}</span
-                                        >
-                                        <span class="topic-schema"
-                                            >{topic.schema_name}</span
-                                        >
-                                        {#if topic.descriptor}
-                                            <span class="topic-descriptor">
-                                                descriptor v{topic.descriptor
-                                                    .descriptor_version}
-                                            </span>
-                                        {/if}
-                                    </li>
-                                {/each}
-                            </ul>
-                        </li>
+                    {#each streamTree.roots as node (node.streamId)}
+                        {@render streamRow(node)}
                     {/each}
                 </ul>
             {/if}
@@ -1438,6 +1495,57 @@
         list-style: none;
         padding: 0;
         margin: 0;
+    }
+
+    /* Status-only devices (the hub, TEC-NATKIT-90). Dimmed and tagged so the row
+       reads as "nothing to subscribe to here" rather than as a broken device. */
+    .stream-item.no-data > .stream-label .stream-id {
+        opacity: 0.65;
+    }
+
+    .stream-nodata {
+        margin-left: 6px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: #e8eaed;
+        color: #57655f;
+        /* Never wrap to two lines, and never steal width from the id -- without
+           these the tag broke "Stream 203376942053180" across two rows while the
+           data streams beside it stayed on one, which reads as a layout fault
+           rather than as a label. */
+        white-space: nowrap;
+        flex-shrink: 0;
+        align-self: center;
+    }
+
+    /* Derived streams sit under their source: indented, with a rule down the
+       left so a long chain still reads as a chain rather than as margin. */
+    .stream-children {
+        list-style: none;
+        margin: 4px 0 0 0;
+        padding-left: 14px;
+        border-left: 2px solid var(--line, #d9e1dc);
+    }
+
+    .stream-item.derived > .stream-label .stream-id {
+        font-weight: 400;
+        opacity: 0.85;
+    }
+
+    /* Not decoration: this row is at the top level despite being derived, and
+       without the label it reads as a device. */
+    .stream-orphan {
+        margin-left: 6px;
+        padding: 0 5px;
+        border-radius: 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: #f6e3df;
+        color: #9a3324;
     }
 
     .stream-item {
