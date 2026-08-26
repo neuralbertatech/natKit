@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit — Device Control Discovery (registry-driven)</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <p class="eyebrow">Plan · TEC-NATKIT-10 (#321) · TEC-NATKIT-102</p>
+  <h1>Device control discovery, driven by a registry</h1>
+  <p class="meta">Drafted 2026-08-26 · depends on TEC-NATKIT-101 (#469) for its end state</p>
+  <span class="status">PROPOSED — not started</span>
+</header>
+
+<main>
+
+<section class="callout">
+  <h2>The problem, stated exactly</h2>
+  <p>The Controls section on a Visual Programming node is <strong>hardcoded</strong>.
+  <code>SOURCE_BUTTON_CONTROLS</code> and <code>SOURCE_TOGGLE_GROUPS</code> are static
+  constants shown for any node of kind <code>stream_source</code>, regardless of what
+  device is behind it.</p>
+  <p>Concretely: a Muse headband or an EMG pill source node renders four BNO08x report
+  toggles it does not have, and "Read from device" sits there until it times out. The
+  same shape as an un-flashed leaf offering an Identify button that answers nothing.</p>
+  <p>Only the <em>values</em> are device-driven today (the on/off states come from
+  <code>get_reports</code>). The <em>menu</em> is an assumption compiled into the frontend.</p>
+</section>
+
+<section>
+  <h2>What the device advertises</h2>
+  <p>A device publishes what it can do on the <strong>HARDWARE_CONFIGURATION</strong>
+  channel, which already exists in <code>StreamType</code> and maps to the topic prefix
+  <code>Configuration</code>:</p>
+  <pre>Configuration-&lt;device_id&gt;-Json-NatKitDeviceControlsV1</pre>
+  <h3>Why that channel and not the two obvious candidates</h3>
+  <ul>
+    <li><strong>META</strong> is per-<em>stream</em> naming — <code>BasicMetaInfoSchema</code>
+    carries only a <code>streamName</code>. Controls belong to a <em>device</em>, so the
+    granularity is wrong.</li>
+    <li><strong>EXECUTION_COMMAND</strong> is the imperative direction, server&rarr;device.
+    A descriptive advertisement travelling the other way on the same channel mixes two
+    meanings on one topic.</li>
+    <li><strong>HARDWARE_CONFIGURATION</strong> is already named and reserved for exactly
+    this, and TEC-NATKIT-10 already asked for it: <em>"we should have a way to enable
+    those from the UI, or at least show that they are possible."</em></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Three control kinds, and nothing else</h2>
+  <ul>
+    <li><strong>button</strong> — a one-shot action. <code>identify</code>.</li>
+    <li><strong>toggle</strong> — a boolean, in a group READ together and WRITTEN one at a
+    time. The four BNO08x reports.</li>
+    <li><strong>input</strong> — a typed value, using the <em>existing</em>
+    <code>FieldValueType</code> vocabulary (<code>Bool, Int16, Uint32, Uint64, Float32,
+    Float64, String, Enum</code>) rather than a parallel one. <code>set_tx_power</code>.</li>
+  </ul>
+  <div class="prov" style="padding:12px 14px;border-radius:8px;margin-top:12px">
+    <p style="margin:0"><strong>The read/write asymmetry is load-bearing.</strong> A group is
+    read whole and written one field at a time, because the device starts from its current
+    state and applies only the field it was sent. That is what makes two in-flight toggles
+    safe and stops a write resetting its neighbours. It is already how
+    <code>set_reports</code> behaves — confirmed on hardware 2026-08-26.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The registry is the extension point</h2>
+  <p>The device advertises control <strong>ids</strong> and their wiring. The human-facing
+  descriptor — label, description, unit, range — is resolved through a registry, exactly as
+  <code>DataSchemaDescriptorRegistry</code> already resolves schema field descriptors:</p>
+  <pre>class DeviceControlDescriptorRegistry {
+public:
+  void registerDescriptor(const std::shared_ptr&lt;const DeviceControlDescriptor&gt; &amp;);
+  Optional&lt;std::shared_ptr&lt;const DeviceControlDescriptor&gt;&gt; findByControlId(
+      const std::string &amp;controlId) const;
+  static DeviceControlDescriptorRegistry &amp;getDefault();
+};</pre>
+  <p>A third party ships a library and calls:</p>
+  <pre>MyDeviceControlsDescriptor::registerWithRegistry(
+    DeviceControlDescriptorRegistry::getDefault());</pre>
+  <p><strong>No natKit source is modified to add a device.</strong> That is the requirement
+  this plan exists to satisfy, and the pattern is already proven in-tree by
+  <code>DataSchemaDescriptorRegistry</code>, <code>Registry::registerDecoder</code> and
+  <code>MetaRecord::registerMetaRecordType</code>.</p>
+</section>
+
+<section class="warn">
+  <h2>An unknown control id must still render</h2>
+  <p>If a board advertises <code>foo.bar</code> and no library has registered a descriptor
+  for it, the UI shows a button labelled <code>foo.bar</code> — not nothing.</p>
+  <p>The alternative is a control that vanishes silently, which is indistinguishable from a
+  device that does not have it, and which turns "you forgot to load the library" into a
+  hardware-looking bug. Same instinct as <code>nodes_present_valid</code>: make the unknown
+  case <em>representable</em> rather than identical to a known one.</p>
+</section>
+
+<section>
+  <h2>The server enforces the allowlist</h2>
+  <p>The backend caches the latest advertisement per device and refuses a
+  <code>send_device_command</code> whose command is not in that device's advertised set. The
+  advertisement drives <em>both</em> what the UI offers and what the server will send —
+  one source of truth, not two.</p>
+  <div class="risk" style="padding:12px 14px;border-radius:8px;margin-top:12px">
+    <p style="margin:0"><strong>Migration, and it is not optional.</strong> Three leaves, the
+    primary and the gateway will not advertise until they are reflashed. Strict enforcement
+    from day one silently removes the calibration node's buttons and every other existing
+    control. <strong>Proposal:</strong> the UI fails closed (shows only what is advertised),
+    while the backend validates only where an advertisement <em>exists</em> and
+    counts-but-allows otherwise. Flip to strict once the fleet is flashed, and make the
+    counter the evidence that it is safe to flip.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Wire budget</h2>
+  <p>ESP-NOW v2 on these chips refuses anything over <strong>1470 bytes</strong>; the largest
+  payload in use today is a 1016-byte IMU frame, and the existing command <em>reply</em>
+  field is only 224 bytes — so an advertisement needs its own packet type rather than riding
+  the command channel.</p>
+  <p>Ids, kinds, types and command wiring for identify + four toggles + tx_power land around
+  <strong>300&ndash;400 bytes</strong>. Carrying the prose labels as well would put it at
+  600&ndash;900 and growing with every added control. Keeping labels in the registry is what
+  buys the headroom — and it is also what lets a third party translate or re-word a control
+  without reflashing anything.</p>
+</section>
+
+<section class="callout">
+  <h2>Relationship to TEC-NATKIT-101</h2>
+  <p>Today the firmware does not link <code>libnatkit-core</code>, so a control id list on the
+  device and a descriptor table on the server are two artefacts kept in step by hand — a
+  third such boundary, alongside the frame layout and the status structs.</p>
+  <p>Once #469 lands and the library is on the ESP32, the id list and the descriptors become
+  <strong>one shared declaration</strong>, and this design converges on "the device is the
+  single source of truth" with nothing to undo. Whether the label strings ship to the board
+  is then a <code>LIBNATKIT_ESP_BUILD</code> decision, not an architectural one.</p>
+  <p>So this plan is not a compromise awaiting reversal. It is the same design with the
+  shared declaration temporarily living in two places.</p>
+</section>
+
+<section>
+  <h2>Slices</h2>
+  <ul>
+    <li><strong>1 — the descriptor and its registry.</strong> <code>DeviceControlDescriptor</code>,
+    <code>DeviceControlDescriptorRegistry</code>, natKit's own descriptors registered by
+    default. Pure libnatkit-core, unit-tested, ships nothing user-visible.</li>
+    <li><strong>2 — the schema.</strong> <code>NatKitDeviceControlsV1</code> encode/decode plus
+    its golden fixture, registered with the Registry so a log viewer resolves it by topic.</li>
+    <li><strong>3 — firmware advertises.</strong> A Configuration publish on boot, on change,
+    and at a low periodic rate. ⚠️ Retained on MQTT, or a late subscriber sees nothing until
+    something changes.</li>
+    <li><strong>4 — backend caches and enforces.</strong> Per-device advertisement, the
+    count-but-allow migration path, and the cache exposed over the StreamViewer WebSocket.</li>
+    <li><strong>5 — the UI discovers.</strong> Delete <code>SOURCE_BUTTON_CONTROLS</code> and
+    <code>SOURCE_TOGGLE_GROUPS</code>; render from the advertisement. This slice is where the
+    hardcoding actually dies, and it should not land before slice 4 or the UI has nothing to
+    read.</li>
+  </ul>
+</section>
+
+<section class="warn">
+  <h2>Open questions</h2>
+  <ul>
+    <li>Does the <strong>gateway</strong> advertise on behalf of leaves behind it, or does each
+    leaf publish its own Configuration topic through the uplink? The latter is more honest and
+    costs more airtime.</li>
+    <li>Should <code>Configuration</code> carry <strong>typed records with a registered type
+    id</strong>, mirroring <code>MetaRecord::registerMetaRecordType</code>, so a third-party
+    device can define its own configuration record on the same channel rather than only its
+    own control descriptors? This is probably yes, and probably belongs in slice 2.</li>
+    <li>What advertises for a device that is <em>not</em> an ESP32 — a Muse, an EMG pill? Its
+    advertisement has to come from whatever software fronts it, which is the first real test
+    of whether the registry is genuinely open.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer style="padding:24px 0;color:var(--muted);font-size:12px">
+  <p>Supersedes the hardcoded catalogue added in TEC-NATKIT-40/-99 (natKit 9b6858b), which
+  this plan exists to delete.</p>
+</footer>
+</body>
+</html>
