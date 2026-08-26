@@ -2,120 +2,106 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-26
 
 ## Where things stand
 
-**The two-board WiFi rig works and does everything the Ethernet rig does.** Four
-leaves at 10.0 frames/s through an ESP32 hub → a physical UART wire → a C3
-gateway → WiFi → MQTT → bridge → Kafka, with device commands reaching a leaf and
-answering back. No functional gap left between the two architectures.
-
-Plan: `plans/wifi-gateway-two-board-plan.html`. Epic **TEC-NATKIT-20 (#343)**.
-
-### The rig, as it physically is
-
-| Role | Board | Device id | Port |
-|---|---|---|---|
-| primary (hub) | ESP32-D0WD-V3 `30:c9:22:33:0c:ec` | 53640420330732 | CP2102 `0001` |
-| gateway | ESP32-C3 `dc:da:0c:d1:49:38` | 242829076023608 | CP2102N `f46f1cbd…` |
-| leaf ×4 | `…bc:4c`, `…b9:f4`, `…ef:d0`, `4c:75:25:a4:45:3c` | see README | CH340 |
-| **powered down** | ESP32-S3 + W5500 `b8:f8:62:62:f7:3c` | 203376942053180 | native USB |
-
-Wire: **ESP32 GPIO 26 → C3 GPIO 6**, **C3 GPIO 5 → ESP32 GPIO 25**, GND↔GND.
-Crossover. The README's board table is now current — it had missed four boards.
-
-⚠️ The S3 is **off deliberately**: two hubs on one ESP-NOW channel adopt each
-other as nodes. Measured, not predicted.
-
-## Branch stack — six branches, nothing pushed or merged
+**Everything is merged.** All four repos are on `trunk`, and every outstanding
+branch that should land has landed:
 
 ```
-natKit-IMU
-  trunk cf9cef0
-   ├── zach/379-esp32c3-build          c55d369  TEC-NATKIT-34
-   │    └── zach/454-uplink-pin-defaults      a70848e  TEC-NATKIT-87
-   │         └── zach/455-gateway-status-republish  451ee1f  TEC-NATKIT-88
-   │              └── zach/459-command-over-serial  76b5810 + 1639b17 (README)
-   │                   └── zach/460-gateway-health       a7c8244  TEC-NATKIT-93
-   └── zach/84-set-tx-power (PRE-EXISTING, unmerged, 9 commits)
-
-natKit
-  trunk dd87a8c
-   ├── zach/437-kafka-broker-address   106afb7  TEC-NATKIT-76
-   ├── zach/456-stream-tree            ff82ad6  TEC-NATKIT-89
-   │    └── zach/457-status-only-streams   97b01ee  TEC-NATKIT-90
-   └── zach/343-wifi-gateway-plan      42db829  the plan + this file
+natKit                        trunk @ 81b8099
+libnatkit                     trunk @ 068ca6b
+libnatkit/lib/libnatkit-core  trunk @ e3d6f2b
+natKit-IMU                    trunk @ df95891
 ```
 
-**8 tickets in Verification** awaiting greenlight: -34, -87, -88, -92, -93, -76,
--89, -90. **Filed and deferred:** -91 (rig grouping), -94 (stale streams).
+`npm run check` is **clean** across all three passes and **224 frontend tests**
+pass. libnatkit builds green with 3/3 ctest. All three firmware roles build green.
 
-## ⚠️ Traps this work bought — do not re-learn these
+### ⚠️ Three branches deliberately NOT merged — they need a decision, not a merge
 
-- **`:Z` on a live service's volume crash-loops that service.** Inspecting the
-  auth/graphs/instances volumes with throwaway `podman run -v vol:/d:Z`
-  containers stole the SELinux label and the backend died in a loop on
-  `Failed to open auth database`. Use `:z`. Compare `ls -Zd` against a volume you
-  did not touch: `container_file_t:s0` is healthy, `:s0:c499,c588` is stolen.
-  ⚠️ `podman unshare` is unavailable here (remote client), so `chcon` is not the
-  escape hatch — a lowercase-`z` run is.
-- **`/dev/tcp/host/port` does not work in these container images.** A probe using
-  it reports EVERY port refused, including ones demonstrably open. It claimed the
-  backend could not reach its own listener. **Control any negative against
-  something known to be listening** before believing it; use `curl`.
-- **`mosquitto_sub -W <n>` under `podman exec` silently returns nothing** on a
-  live topic. Twice I nearly reported the rig as down. Use
-  `podman exec -d … > /tmp/f` then read the file.
-- **`0 bytes` and `0 frames` are different faults.** Baud mismatch, floating line
-  and missing ground all produce *edges*, which land in `bytes_skipped`. Exactly
-  zero bytes read means an open circuit or the wrong pin. Read `bytes_read`
-  before suspecting the baud rate.
-- **The primary console's `+N/s` figures are inflated ~1.4×** — its status loop
-  runs slower than 1 s but labels the per-tick delta as per-second. The broker
-  count is authoritative.
-- **`sdkconfig.defaults` is read once.** Two stale C3 build dirs failed on
-  `eth_w5500_config_t undeclared`, which reads like an IDF incompatibility and is
-  the read-once trap. `rm -rf build/<target>-<role>`.
-- **Combining both compose files breaks the frontend.** podman-compose *appends*
-  port lists → `8080:80` and `8080:5173` at once → `rootlessport conflict`.
-  `docker-compose.dev.yml` is self-contained now (all 8 services, own `networks:`
-  block). Use it **alone**. TEC-NATKIT-73's premise is stale; commented there.
-- **A silent `.replace()` in a patch script is a no-op you will not notice.** One
-  edit today didn't apply because the file used 4-space indents, not 6, and the
-  build still went green because a *different* file carried the change. Assert
-  every anchor, and audit that each piece landed.
+| branch | why |
+|---|---|
+| `natKit/vp-rework-phases-0-2` | 20 commits, **605 files, 99,683 insertions**, last touched 2026-07-22. Carries its own ESP-IDF firmware and natVR Python. Merging it blind would resurrect deleted files and fight the firmware work. |
+| `natKit/zach/fixing-fixation-cross` | last commit **2023-06-11**. Edits `natKit/common/kafka/*.py` — Python that predates the C++ rewrite. Dead. |
+| `natKit-IMU/experimental` | pins `platform = espressif32@6.12.0`, the OLD official platform. Trunk deliberately re-baselined `embeded/` to **pioarduino** (arduino-esp32 3.3.11 / IDF 5.5.5). Merging it would undo that. |
+
+## ⚠️ Why the merge mattered: the firmware stacks had diverged
+
+There were **three** divergent firmware stacks off trunk, not one line. The LED
+work (`set_led`, link-fault colours, tx power) was on one; the C3 pin fixes
+(TEC-NATKIT-87) were on another. **`gateway/esp32c3` did not build on the LED
+stack** — `GPIO_NUM_32` does not exist on the C3 — so identify could not be
+flashed to a gateway rig at all. One tree now has all of it:
+
+```
+leaf / esp32        0xb2770 (77% free)
+primary / esp32s3   0xf4df0 (68% free)
+gateway / esp32c3   0xf3410 (68% free)
+```
+
+⚠️ **The wire format survived a two-stack merge and that was not free.** Both
+stacks independently extended `UplinkNodeStatus`/`UplinkPrimaryStatus`, and
+TEC-NATKIT-81 had already spent the primary's last two `reserved` bytes. Git
+auto-merged with no conflict — the exact situation that has silently shifted a
+decoder on this rig twice. It is correct (192/168, both `sizeof` asserts hold,
+all **19 `offsetof` asserts** pass), and those asserts are the only reason that
+is verifiable rather than hoped for.
+
+## ⚠️ The 11 type errors were a merge symptom, not a bug
+
+`npm run check` reported 13 errors on trunk. **Eleven fixed themselves in the
+merge**: the Logs feature had landed without the types it needed
+(`unsubscribe_logs` missing from the action union), and those types were on the
+unmerged branches. An error in a file nobody touched, in a feature that works at
+runtime, is a merge-state symptom before it is a code defect.
+
+The three real ones (TEC-NATKIT-96, `81b8099`): a dead `clockFit` prop on
+`StreamGraphNodeCard` — leftover from an approach the code itself documents as
+abandoned, the clock fit having been moved to the inspector because on the card
+it "was clipped out of view entirely"; a missing `GraphRecord.workspace_id` in
+the e2e helper; and an unread `Designer.app` property.
+
+## What shipped today
+
+- **TEC-NATKIT-81** the hub notices a silent leaf: `nodes_present` beside
+  `nodes_known`, plus a WARN on the edge. Roster is NOT aged out — a seal would
+  evict the node it exists to accept.
+- **TEC-NATKIT-70/-71** prod stores off the Syncthing tree; the stack now
+  survives a reboot (unit tracked in `deploy/`, enabled, linger already on).
+- **TEC-NATKIT-76** the dev stack tells the backend and bridge where Kafka is.
+- **TEC-NATKIT-98** a plain source can be watched **without starting the board**.
+- **TEC-NATKIT-99** exposed Controls on the node inspector + `identify` flashing
+  the leaf's LED.
 
 ## What is left
 
-1. **README/docs are done; Phase 3 soak is not.** Four leaves are running now.
-   A real soak wants hours and matched windows.
-2. **TEC-NATKIT-27 (#350) still open at 100%** — the adopt-or-discard decision.
-   It is what blocks the epic from closing.
-3. **Wired vs wireless comparison was deliberately deferred.** ⚠️ It is NOT
-   currently a fair comparison: different hub board, different leaf count,
-   unverified-equal radio settings, and TEC-NATKIT-76 landed in between. The
-   clean experiment is the **S3 with Ethernet off** on serial pins 9/10 feeding
-   the C3 — same hub, only the uplink changes. ⚠️ Those S3 pins are reasoned,
-   not measured.
-4. **The LED command cannot be tested here** — `status_led.*` is on the unmerged
-   `zach/84-set-tx-power`. Phase 2 was verified with `ping` and `version`.
-5. **-91 and -94 are both blocked on `zach/377-device-health` merging**, which
-   holds the hub→leaf mapping and is not on trunk.
+1. ⚠️ **Nothing is flashed and nothing is hardware-verified.** `identify`,
+   `nodes_present` and the whole merged firmware have never run on a board.
+2. **The backend image needs rebuilding** for the merged libnatkit to take
+   effect — the backend source is baked into the image (the frontend is mounted).
+3. Decide on the three unmerged branches above.
+4. The natKit-IMU→trunk merge has **not been pushed**.
 
-## ⚠️ Things I got wrong today, recorded because the corrections are the value
+## ⚠️ Traps this session bought — do not re-learn these
 
-- **Built TEC-NATKIT-89's stream tree for the wrong cause.** The 45 noisy rows
-  contained **zero** transform outputs; 36 were stale metadata-only streams. The
-  tree is correct and did not address the complaint. The Kafka wipe did.
-- **Proposed a backend fix for TEC-NATKIT-90 that Zach approved, then did not
-  ship it** — a comment showed `sendStreamList` omits `LOGGING_LOG` *deliberately*.
-  The frontend-only fix was smaller and contradicted nothing.
-- **Claimed the backend could not reach Kafka by any address.** False; broken
-  probe. It reaches it fine by service name.
-- **Crash-looped the backend** with `:Z`, as above.
-
----
+- **`podman-compose up -d --force-recreate <svc>` silently restarts the OLD
+  container when it has dependents.** It errors about dependents, then prints the
+  container name like success; `podman ps` shows it fresh while `podman inspect`
+  shows the old env. Use `podman rm -f --depend`, then `up -d`. **Verify a config
+  change with `inspect`, never with uptime.**
+- **`/bin/sh` in the backend image is dash — no `/dev/tcp`.** A reachability
+  probe there reports *everything* refused. Use `/usr/bin/bash`.
+- **`kafka.tools.GetOffsetShell` no longer exists** (moved in Kafka 3.x). It
+  returns **nothing and exit 0**, which reads as "no data". Use `kafka-get-offsets`.
+- **Flashing the LED is safe**, despite `status_led.hpp` reading as a
+  prohibition. That warning is about *Arduino's* `Adafruit_NeoPixel::show()`
+  reinstalling the RMT driver per call; the IDF `led_strip` path creates the
+  device once.
+- **Hub telemetry cannot distinguish "all leaves lost power" from "the hub's
+  receive path died".** Both produce identical frozen counters. Filed
+  TEC-NATKIT-97 for the missing beacon-TX counter that would separate them.
 
 # Prior sessions (retained)
 
