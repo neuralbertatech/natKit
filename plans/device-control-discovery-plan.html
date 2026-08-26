@@ -203,20 +203,56 @@ public:
   </ul>
 </section>
 
-<section class="warn">
-  <h2>Open questions</h2>
+<section class="callout">
+  <h2>Decided (2026-08-26)</h2>
+
+  <h3>Each leaf publishes its own advertisement</h3>
+  <p>Not the gateway on their behalf. A Configuration topic per device, through the
+  uplink. The airtime is small next to a 100&nbsp;Hz data stream, and it means the
+  advertisement comes from the thing it describes.</p>
+
+  <h3>Configuration carries typed records with a registered type id</h3>
+  <p>Mirroring <code>MetaRecord::registerMetaRecordType(recordTypeId, decoder)</code>.
+  <code>NatKitDeviceControlsV1</code> becomes <em>one</em> record type on the channel rather
+  than the channel's only meaning, so a third party can define its own configuration record
+  — not merely its own control descriptors. This is the difference between an extensible
+  channel and an extensible label table, and it belongs in slice 2.</p>
+
+  <h3>An advertisement always originates from flashable hardware</h3>
+  <p>There is no software-only advertiser. Either the device itself can be flashed (ESP32,
+  Arduino), or a <strong>bridge microcontroller acts on behalf of</strong> a non-flashable end
+  device. Nothing on the server invents an advertisement for hardware that cannot speak for
+  itself.</p>
+  <p>That keeps the registry honest: the server resolves ids to labels and never authors the
+  id list, so "what exists" and "what it is called" cannot drift into the same place.</p>
+</section>
+
+<section class="risk">
+  <h2>⚠️ "Acting on behalf of" is the exact shape of TEC-NATKIT-81</h2>
+  <p>The bridge-microcontroller case reintroduces the failure this rig spent a morning on.
+  On 2026-08-26 the ESP-NOW hub was found <strong>republishing status frames for four leaves
+  it had not heard for 16.8 hours</strong> — every counter frozen, every frame arriving
+  fresh, <code>nodes_known</code> still reporting a complete rig. A proxy that keeps speaking
+  for something it has lost is indistinguishable, from the outside, from a healthy system.</p>
+  <p>A bridge advertising for an end device it can no longer reach would do the same thing:
+  publish a capability set forever for hardware that is unplugged, and the UI would offer
+  controls for a device that is gone. Worse than the status case, because the operator can
+  <em>press</em> these.</p>
+  <p><strong>So an advertisement made on behalf of another device must carry liveness.</strong>
+  Two acceptable shapes:</p>
   <ul>
-    <li>Does the <strong>gateway</strong> advertise on behalf of leaves behind it, or does each
-    leaf publish its own Configuration topic through the uplink? The latter is more honest and
-    costs more airtime.</li>
-    <li>Should <code>Configuration</code> carry <strong>typed records with a registered type
-    id</strong>, mirroring <code>MetaRecord::registerMetaRecordType</code>, so a third-party
-    device can define its own configuration record on the same channel rather than only its
-    own control descriptors? This is probably yes, and probably belongs in slice 2.</li>
-    <li>What advertises for a device that is <em>not</em> an ESP32 — a Muse, an EMG pill? Its
-    advertisement has to come from whatever software fronts it, which is the first real test
-    of whether the registry is genuinely open.</li>
+    <li>the bridge <strong>stops advertising</strong> when it loses the end device (clean, and
+    the topic simply goes stale — but MQTT retain will keep serving the last one, so the
+    retained message must be cleared); or</li>
+    <li>the advertisement carries <strong>when the advertiser last heard the device</strong>,
+    the way <code>last_seen_us</code> does for a leaf, so staleness is <em>visible</em> rather
+    than inferred.</li>
   </ul>
+  <p>⚠️ The second is preferred for the same reason TEC-NATKIT-81 landed on
+  <code>nodes_present</code> beside <code>nodes_known</code> rather than aging the roster:
+  silence cannot be told from "never existed", and a device that <em>was</em> here is worth
+  saying so about. A device advertising <em>for itself</em> has no such problem — its
+  advertisement stops when it does.</p>
 </section>
 
 </main>
