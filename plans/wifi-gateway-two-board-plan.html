@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>natKit-IMU — WiFi rig: primary + serial + gateway, for boards with no Ethernet</title>
+<style>
+  :root {
+    --bg: #f5f7f6; --panel: #ffffff; --ink: #16211c; --muted: #57655f;
+    --line: #d9e1dc; --accent: #0b7a53; --accent-soft: #e1f2ea;
+    --warn: #9b5c12; --warn-soft: #f7ecd9; --risk: #9a3324; --risk-soft: #f6e3df;
+    --prov: #3b5bdb; --prov-soft: #e5eaff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); }
+  header, main, footer { width: min(1080px, calc(100vw - 32px)); margin: 0 auto; }
+  header { padding: 32px 0 16px; }
+  h1, h2, h3 { margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.1; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 16px; margin-top: 14px; }
+  p { margin: 10px 0 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; margin: 18px 0; }
+  .eyebrow, .meta, code, pre { font-family: var(--mono); }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+  .meta { color: var(--muted); margin-top: 10px; font-size: 12px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-soft); }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .prov { border-left: 4px solid var(--prov); background: var(--prov-soft); }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; margin-top: 10px; }
+  .phase-tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-family: var(--mono); margin-left: 8px; vertical-align: middle; }
+  .gap { background: var(--risk-soft); color: var(--risk); }
+  .partial { background: var(--warn-soft); color: var(--warn); }
+  .have { background: var(--accent-soft); color: var(--accent); }
+  ul { margin: 10px 0 0 20px; padding: 0; }
+  li { margin: 8px 0; }
+  code { background: #edf3ef; border-radius: 4px; padding: 0.08em 0.35em; font-size: 12px; }
+  pre { margin: 12px 0 0; padding: 14px; border-radius: 8px; background: #132019; color: #d7eee2; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  table { border-collapse: collapse; margin: 12px 0 0; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); }
+  footer { padding: 0 0 40px; color: var(--muted); font-size: 13px; }
+  .q { font-weight: 600; color: var(--warn); }
+  .lede { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">natKit-IMU · firmware · plan · August 25 2026</div>
+  <h1>A WiFi rig: primary + serial + gateway</h1>
+  <p class="meta lede">
+    The rig today needs a board with an Ethernet port. This plan produces the
+    <strong>two-chip WiFi alternative</strong>: one ESP32 is the ESP-NOW hub and timing
+    master, a wire carries its framed stream to a second ESP32, and only that second chip
+    associates with WiFi and talks to the broker. That is the architecture
+    <strong>EPIC TEC-NATKIT-20 was designed around</strong> and it is already ~80% built —
+    what this plan is really about is the <strong>20% that was never wired up</strong> and
+    the <strong>drift</strong> that accumulated in the gateway while the Ethernet primary
+    got all the new work.
+  </p>
+  <span class="status">Status: planned, not started · plan written 2026-08-25</span>
+</header>
+
+<main>
+
+<section class="callout">
+  <h2>The one-sentence answer to "which serial protocol"</h2>
+  <p>
+    <strong>UART, three wires, 921600 baud 8N1, no flow control</strong> — and it is
+    already implemented on both sides. See <a href="#wiring">What to wire</a> for the
+    exact pins and <a href="#why-uart">Why UART and not SPI or I<sup>2</sup>C</a> for the
+    reasoning and the bandwidth arithmetic.
+  </p>
+</section>
+
+<section>
+  <h2>Why two chips and not one</h2>
+  <p>
+    The obvious cheap answer — leave the primary as the hub and just give it WiFi — was
+    <strong>already built and already measured</strong>, as
+    <code>CONFIG_NATKIT_PRIMARY_WIFI_UPLINK</code> (TEC-NATKIT-30 / #373). It does not work:
+    one chip doing ESP-NOW plus an associated WiFi station <strong>lost ~85% of its ESP-NOW
+    frames</strong>. They were acknowledged at the MAC layer and then dropped above it by a
+    WiFi task busy servicing the association. There is a second, structural problem behind
+    the throughput one: ESP-NOW needs every peer on one channel, and an associated station
+    does not choose its channel — the AP does — so the leaves have to go hunting for
+    whichever channel the AP moved the hub onto.
+  </p>
+  <p>
+    Ethernet solved it by getting the uplink <em>off the radio entirely</em>. Two chips solve
+    it the same way: the hub's radio does nothing but ESP-NOW on a channel we pin, and the
+    association lives on a different piece of silicon with a wire between them. This is the
+    same fix, without requiring an Ethernet daughterboard.
+  </p>
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 14px; border-radius: 6px;">
+    <strong>⚠️ So the WiFi rig is one board MORE than the Ethernet rig, not one fewer.</strong>
+    Ethernet is primary + N leaves. WiFi is primary + gateway + N leaves. The saving is the
+    W5500 daughterboard and an Ethernet drop, not a board — worth saying out loud before
+    anyone counts on it as the cheap option.
+  </div>
+</section>
+
+<section>
+  <h2>What already exists</h2>
+  <p>
+    This is not a green-field build. TEC-NATKIT-25 (#348) and TEC-NATKIT-26 (#349) shipped the
+    whole path in August 2026 and <strong>demonstrated a leaf's data reaching Kafka through
+    primary → serial → gateway → MQTT → bridge</strong>, rendering in the Stream Viewer with no
+    server-side change. What is in the tree today:
+  </p>
+  <table>
+    <tr><th>Piece</th><th>Where</th><th>State</th></tr>
+    <tr><td>Framed uplink protocol (magic, version, type, stream id, sequence, length, CRC32)</td><td><code>main/uplink.hpp</code></td><td><span class="phase-tag have">have</span> documented, versioned, both sequence numbers</td></tr>
+    <tr><td>Primary's writer + drop-oldest queue + counters</td><td><code>main/uplink.cpp</code></td><td><span class="phase-tag have">have</span> atomic producer counters since TEC-NATKIT-75</td></tr>
+    <tr><td>Gateway's reader, byte-at-a-time resync, CRC gate</td><td><code>main/uplink_reader.cpp</code></td><td><span class="phase-tag have">have</span> counts skipped bytes and uplink seq gaps</td></tr>
+    <tr><td>Gateway WiFi + SNTP + esp-mqtt with real reconnect</td><td><code>main/gateway_net.cpp</code></td><td><span class="phase-tag have">have</span> also used by the Eth primary</td></tr>
+    <tr><td>Timestamp rewrite: leaf device time → primary time → wall clock</td><td><code>main/gateway.cpp</code></td><td><span class="phase-tag have">have</span> refuses uncorrectable frames rather than publishing raw</td></tr>
+    <tr><td>Three-role build (<code>./build-role.sh gateway esp32</code>), per-role sdkconfig</td><td><code>build-role.sh</code>, <code>roles/</code></td><td><span class="phase-tag have">have</span></td></tr>
+    <tr><td><strong>The physical wire between the two boards</strong></td><td>—</td><td><span class="phase-tag gap">never tested</span> a host <code>relay.py</code> carried the bytes over USB</td></tr>
+    <tr><td><strong>Gateway republishing device-health status frames</strong></td><td><code>main/gateway.cpp</code></td><td><span class="phase-tag gap">missing</span> consumed and discarded</td></tr>
+    <tr><td><strong>Downward command path (server → leaf)</strong></td><td>—</td><td><span class="phase-tag gap">missing</span> declared out of scope in #349</td></tr>
+    <tr><td><strong>More than one leaf through a gateway</strong></td><td>—</td><td><span class="phase-tag gap">never tested</span> only three boards existed at the time</td></tr>
+    <tr><td>Gateway's own health on the broker</td><td>—</td><td><span class="phase-tag gap">missing</span> console only, and its console is readable</td></tr>
+  </table>
+</section>
+
+<section class="risk" style="border-left: 4px solid var(--risk);">
+  <h2>The real problem: the gateway has drifted, and it will drift silently</h2>
+  <p>
+    <code>gateway.cpp</code> has not been touched since <code>0fb6d57</code>, before the
+    Ethernet primary existed. Everything the rig has gained since — the device-health pill,
+    the Logs page, the recording clock record, the indicator LED, the command relay — was
+    built on the <em>primary-publishes-directly</em> path and <strong>none of it was carried
+    across</strong>. Concretely:
+  </p>
+  <ul>
+    <li>
+      <strong>The health panel would be blank behind a gateway.</strong>
+      <code>gateway.cpp</code> receives <code>kNodeStatus</code> and <code>kPrimaryStatus</code>
+      frames and uses them <em>internally</em> — the node's clock fit, the primary→wall offset —
+      and then <strong>drops them</strong>. It never republishes them on
+      <code>Log-&lt;id&gt;-Binary-NatKitNodeStatusV1</code> /
+      <code>-NatKitPrimaryStatusV1</code>, which is where <code>DeviceHealthTracker</code>
+      (TEC-NATKIT-33) and the recording clock record (TEC-NATKIT-77) read from. A WiFi rig
+      would stream data perfectly and report nothing at all about its own health — and
+      TEC-NATKIT-77's whole point is that a recording <em>seals</em> that judgement, so it
+      would seal "no clock data" on every run.
+    </li>
+    <li>
+      <strong>Every device button in Visual Programming would stop working.</strong>
+      <code>commandRelayStart()</code> is called unconditionally on the primary, but it works
+      by <em>subscribing over MQTT</em>. With no network on the primary there is no
+      subscription, so the LED (TEC-NATKIT-83), calibration and the runtime report toggles
+      (TEC-NATKIT-40) never reach a node. Nothing errors — the backend publishes and the
+      command is simply unsubscribed, which is <em>exactly</em> the failure the README already
+      warns about for the Arduino rollback path.
+    </li>
+    <li>
+      <strong>The frame got 23% bigger and nobody re-measured.</strong> #349's evidence is a
+      <strong>524-byte v1 frame</strong>. The fork now emits <strong>v2 at 644 bytes</strong>
+      (13 floats, magnetometer). The bandwidth budget below is redone at v2.
+    </li>
+    <li>
+      <strong>Two silent drops in the gateway.</strong> <code>if (length &gt; sizeof(sFrame))
+      return;</code> appears twice with no counter — the same defect shape as TEC-NATKIT-86,
+      in a file nobody has re-read in two weeks.
+    </li>
+  </ul>
+  <p>
+    <strong>None of that will announce itself.</strong> A WiFi rig would look correct in the
+    Stream Viewer on day one and be missing its entire diagnostic surface, which is the half
+    of this system that every hard bug so far has been found with. Phases 1 and 2 exist to
+    close that before anyone runs a participant on it.
+  </p>
+</section>
+
+<section id="wiring">
+  <h2>What to wire</h2>
+  <p>
+    The bench pair is a <strong>classic ESP32 as the primary</strong> (ESP-NOW hub) and a
+    <strong>C3 as the gateway</strong> (WiFi + MQTT) — see
+    <a href="#roles">Which chip gets which role</a> for why round that way. The two boards do
+    <em>not</em> use the same pin numbers, because <code>CONFIG_NATKIT_UPLINK_TX_GPIO</code> /
+    <code>_RX_GPIO</code> are per-target defaults and each board gets its own generated
+    sdkconfig. So the crossover is asymmetric:
+  </p>
+  <table>
+    <tr><th>From</th><th>To</th><th>Carries</th></tr>
+    <tr><td><strong>ESP32 PRIMARY GPIO 26</strong> (UART1 TX)</td><td><strong>C3 GATEWAY GPIO 6</strong> (UART1 RX)</td><td>the data path — every frame from every leaf, plus status</td></tr>
+    <tr><td><strong>C3 GATEWAY GPIO 5</strong> (UART1 TX)</td><td><strong>ESP32 PRIMARY GPIO 25</strong> (UART1 RX)</td><td>the command path (Phase 2 — wire it now, it costs one jumper)</td></tr>
+    <tr><td><strong>GND</strong></td><td><strong>GND</strong></td><td>mandatory — the two UARTs need a shared reference</td></tr>
+  </table>
+  <p>
+    The ESP32 primary is unchanged from the committed defaults (TX 26, RX 25) — the pins the
+    Kconfig help already vouches for. Only the C3 side is new, and it needs the defaults added
+    in Phase 0b: <code>default 5 if IDF_TARGET_ESP32C3</code> and
+    <code>default 6 if IDF_TARGET_ESP32C3</code>.
+  </p>
+
+  <h3>Why those two pins on the C3, and not the others</h3>
+  <p>The C3 has GPIO 0–21 and most of them are spoken for:</p>
+  <table>
+    <tr><th>Pins</th><th>Why they are out</th></tr>
+    <tr><td>11 – 17</td><td>SPI flash (11 is VDD_SPI). Unusable.</td></tr>
+    <tr><td>18, 19</td><td>Native USB Serial/JTAG (D− / D+).</td></tr>
+    <tr><td>20, 21</td><td>UART0 — the console. <code>sdkconfig.defaults.esp32c3</code> deliberately leaves the console on UART0 rather than the native USB.</td></tr>
+    <tr><td>2, 8, 9</td><td>Strapping pins, sampled at reset. 9 is BOOT. A UART line idles high and a driven pin at reset is how a board stops booting.</td></tr>
+    <tr><td><strong>4</strong></td><td><strong>The status LED.</strong> <code>board_config.hpp</code> pins the NeoPixel to <code>GPIO_NUM_4</code> and <code>statusLedRestore()</code> runs in <code>app_main</code> <em>before</em> the role dispatch, so it is live on every role and every target.</td></tr>
+    <tr><td>0, 1</td><td>Usable, but they are XTAL_32K_P/N if a 32.768 kHz crystal is fitted. Fine on most devkits; second choice.</td></tr>
+    <tr><td><strong>3, 5, 6, 7, 10</strong></td><td><strong>Free.</strong> 5/6 chosen as an adjacent pair. 10 and 3 are the alternates.</td></tr>
+  </table>
+  <p>
+    ⚠️ 4, 5, 6, 7 are also the JTAG pins (MTMS/MTDI/MTCK/MTDO). Using 5/6 forfeits
+    <em>hardware</em> JTAG — which costs nothing here, because the C3 debugs over its built-in
+    USB Serial/JTAG on 18/19 instead. If you ever want an external probe, move the uplink to
+    <strong>10 (TX) / 3 (RX)</strong>.
+  </p>
+
+  <div class="risk" style="border-left: 4px solid var(--risk); background: var(--risk-soft); padding: 12px 14px; margin-top: 14px; border-radius: 6px;">
+    <strong>⚠️ It is a CROSSOVER. TX goes to RX.</strong> Wiring TX→TX puts two push-pull
+    outputs on one net; they will fight whenever they disagree. Nothing catches fire at 3.3 V
+    but nothing works either, and the symptom (garbage the CRC silently discards) looks
+    identical to a baud mismatch.
+    <br><br>
+    <strong>⚠️ Do NOT connect 3V3 between the boards</strong> if both are USB-powered. GND
+    only. Two USB supplies tied together is a ground loop at best and back-feeding a regulator
+    at worst. To run from one supply, power one board from the other's 3V3/5V and
+    <em>leave that board's USB unplugged</em>.
+  </div>
+
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 14px; border-radius: 6px;">
+    <strong>✅ FIXED 2026-08-25 (TEC-NATKIT-87 / #454) — a latent collision on the
+    ESP32-S3, found while picking the C3 pins.</strong>
+    <code>CONFIG_NATKIT_UPLINK_TX_GPIO</code> defaulted to <strong>4</strong> on the S3, and
+    <code>kStatusLedGpio</code> is <strong>GPIO_NUM_4</strong> for every target.
+    <br><br>
+    ⚠️ Note where the LED half lives: <code>status_led.*</code> and the
+    <code>kStatusLedGpio</code> block in <code>board_config.hpp</code> are on the
+    <strong>unmerged <code>zach/84-set-tx-power</code> branch</strong>, not on trunk. So this
+    was a thing to fix <em>before</em> that merge rather than a bug to hunt afterwards. It also
+    never fired at runtime, because <code>uplinkStart()</code> skips <code>uart_set_pin</code>
+    entirely when the uplink publishes over the network
+    (<code>if (!kOnConsole &amp;&amp; !kWifiUplink)</code>) and the S3 defaults to the Ethernet
+    uplink — so it was armed to appear the first time somebody turned Ethernet off to use the
+    serial uplink, which is exactly what this plan asks for.
+    <br><br>
+    <strong>The S3 uplink is now TX 9 / RX 10.</strong> ⚠️ Not 5/6, which was the obvious
+    adjacent pair and is wrong: <code>kBnoSck</code> is <code>GPIO_NUM_5</code> for that target,
+    so 5 would have relocated a latent collision rather than removed one. 9/10 is what remains
+    after subtracting the LED, every BNO08x pin, the native USB Serial/JTAG, flash and PSRAM,
+    the W5500, the H2 co-processor, JTAG, UART0 and the strapping pins.
+    <br><br>
+    ⚠️ <strong>The S3 pair is reasoned, not measured</strong> — that board runs the Ethernet
+    uplink and never calls <code>uart_set_pin</code> at all, so nothing on this bench exercises
+    it. Check it against a schematic before wiring an S3 primary to a gateway. The C3 and
+    classic-ESP32 pins in the table above are the ones this rig actually uses.
+    </div>
+
+  <h3>Optional, later: hardware flow control</h3>
+  <p>
+    Two more wires (RTS↔CTS, crossed) would let the gateway back-pressure the primary instead
+    of the primary dropping its oldest frame. <strong>Do not wire this yet.</strong> Drop-oldest
+    is a deliberate decision, not an oversight — for a sensor stream the freshest frame is the
+    valuable one, and both sequence numbers make the gap detectable downstream, whereas
+    back-pressure propagates all the way into an ESP-NOW receive callback and starts costing
+    <em>other</em> nodes' packets. Revisit only if Phase 3 measures the link saturating.
+  </p>
+</section>
+
+<section id="why-uart">
+  <h2>Why UART, and not SPI or I<sup>2</sup>C</h2>
+  <h3>The bandwidth budget, at v2 frames</h3>
+  <p>
+    A data frame is <code>18</code> (uplink header) + <code>644</code> (v2: 24-byte envelope +
+    10 × 62-byte samples) + <code>4</code> (CRC) = <strong>666 bytes</strong>, at
+    <strong>10 frames/s</strong> per leaf (100 samples/s ÷ 10 samples per frame). Node status
+    adds 214 B/s per leaf and the primary's own status 190 B/s, both at 1 Hz.
+  </p>
+  <table>
+    <tr><th>Leaves</th><th>Offered load</th><th>115200 (11.5 KB/s)</th><th>921600 (92.2 KB/s)</th><th>2 Mbaud (200 KB/s)</th></tr>
+    <tr><td>1</td><td>7.1 KB/s</td><td>61% — <strong>marginal</strong></td><td>8%</td><td>4%</td></tr>
+    <tr><td>4</td><td>27.7 KB/s</td><td><strong>2.4× over</strong></td><td>30%</td><td>14%</td></tr>
+    <tr><td>8 (<code>kMaxTrackedNodes</code>)</td><td>55.2 KB/s</td><td><strong>4.8× over</strong></td><td>60%</td><td>28%</td></tr>
+  </table>
+  <p>
+    <strong>921600 is the right default</strong> — it is what both sides already configure, and
+    it carries the full 8-node registry with 40% headroom. <strong>115200 is a trap</strong>: it
+    fits one leaf and looks fine, then silently drops most of the stream the moment a second
+    leaf joins. That is precisely how natVR stalled its pipeline (~19 KB/s of frames into a
+    115200 console), which is why the Kconfig help text does the arithmetic.
+  </p>
+  <h3>The alternatives, and why not</h3>
+  <ul>
+    <li>
+      <strong>SPI</strong> — faster (tens of MHz), but throughput is not the constraint: we
+      need 55 KB/s and UART already gives 92. In exchange it costs 4–6 wires, a master/slave
+      decision, an ESP32 slave driver that is transaction-oriented (so the master has to poll
+      or you add a handshake GPIO), and it <em>still needs the same framing</em> — magic,
+      length, CRC — because either end can reset mid-transaction. It is more wires and more
+      code for a bottleneck we do not have.
+    </li>
+    <li>
+      <strong>I<sup>2</sup>C</strong> — 400 kHz fast mode is ~40 KB/s <em>before</em> per-byte
+      ACK overhead, so it is under the 8-node load and barely over the 4-node one. It is also
+      half-duplex, master-driven (the gateway would have to poll the primary for data it does
+      not know is there), and clock-stretching-sensitive on ESP32. <strong>No.</strong>
+    </li>
+    <li>
+      <strong>Sharing UART0 / the USB console</strong> — supported today
+      (<code>CONFIG_NATKIT_UPLINK_UART_NUM=0</code>) and it is a <em>bring-up</em> mode, not the
+      design. The primary's console blocks its own task for ~87 ms per second on status lines
+      alone (#340), and the uplink cannot share that budget. Useful for testing the protocol
+      with no jumpers on the bench; not for a rig.
+    </li>
+  </ul>
+  <p>
+    So: <strong>UART1</strong>, three wires, 921600, full duplex (which is what makes the
+    command path in Phase 2 free rather than a redesign), both ends independently resettable,
+    and the resync-and-CRC framing that makes that safe is already written and already
+    exercised.
+  </p>
+</section>
+
+<section>
+  <h2>Phases</h2>
+
+  <h3>Phase 0a — Make the C3 target compile at all <span class="phase-tag gap">HARD BLOCKER · TEC-NATKIT-34 / #379</span></h3>
+  <p>
+    <code>./build-role.sh primary esp32c3</code> <strong>does not build today</strong> and has
+    not since <code>b42d763</code> in August. Every source is compiled into every image by
+    design, and <code>board_config.hpp</code> pins the BNO08x to <code>GPIO_NUM_32</code>,
+    <code>_14</code>, <code>_15</code> — numbers the C3 does not have. Nothing can be flashed
+    to a C3 until this is fixed.
+  </p>
+  <div class="prov" style="border-left: 4px solid var(--prov); background: var(--prov-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>Measured 2026-08-25, not assumed: that one header is the ENTIRE blocker.</strong>
+    Patching the sensor pins behind <code>#if CONFIG_IDF_TARGET_ESP32C3</code> with scratch
+    values made <strong>all three roles build clean for the C3</strong> — primary, gateway and
+    leaf. The primary image came out at <strong>0xb9830 bytes, 76% of the 3 MB partition
+    free</strong>. The scratch patch was reverted; the ticket's worry that this is a deep port
+    is unfounded, and #379's own suggested fix is the right one.
+  </div>
+  <ul>
+    <li>
+      Make the sensor pins target-conditional. <strong>⚠️ Do not invent C3 sensor pin
+      numbers</strong> — #379 is right that a header which builds and lies is worse than one
+      that fails. The C3 here is the <em>gateway</em>, which carries no BNO08x at all, so the
+      honest form is a <code>#error</code> on the C3 sensor path until a real C3 leaf is wired.
+    </li>
+    <li>
+      <strong>⚠️ <code>board_config.hpp</code> does not include <code>sdkconfig.h</code>.</strong>
+      Add it, or every <code>#if CONFIG_IDF_TARGET_*</code> in that header silently evaluates
+      false and you get the ESP32 pins on every target — a header that builds and lies by a
+      different route.
+    </li>
+    <li>Add the target sweep from #379 to the handoff checklist so a target cannot rot again.</li>
+  </ul>
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>⚠️ Cost me two false failures while measuring this, so it will cost you too:</strong>
+    <code>build/esp32c3-gateway</code> and <code>build/esp32c3-leaf</code> existed from a prior
+    session and failed on <code>eth_w5500_config_t undeclared</code> — which reads exactly like
+    an IDF incompatibility and is not. Their generated sdkconfigs predated
+    <code>CONFIG_ETH_SPI_ETHERNET_W5500=y</code>, and <strong>ESP-IDF reads
+    <code>sdkconfig.defaults</code> only when the generated sdkconfig does not exist</strong>.
+    <code>rm -rf build/&lt;target&gt;-&lt;role&gt;</code> and they both built first time. Same
+    trap as TEC-NATKIT-49's inert partition setting.
+  </div>
+
+  <h3>Phase 0b — Uplink pin defaults for the C3, and the S3 LED collision <span class="phase-tag gap">small, blocks the wiring</span></h3>
+  <ul>
+    <li><code>default 5 if IDF_TARGET_ESP32C3</code> / <code>default 6 if IDF_TARGET_ESP32C3</code> for the uplink TX/RX, so a C3 does not inherit GPIO 26 and abort in <code>uart_set_pin</code> before anything else runs.</li>
+    <li>Move the <strong>S3</strong> uplink TX off GPIO 4, which is <code>kStatusLedGpio</code> for every target (see the warning in <a href="#wiring">What to wire</a>). Latent today only because the S3 defaults to the Ethernet uplink and <code>uplinkStart()</code> then skips <code>uart_set_pin</code> entirely.</li>
+    <li>Both are one-line Kconfig changes and both are invisible failures if skipped — a boot loop in one case, two drivers on one pin in the other.</li>
+  </ul>
+
+  <h3>Phase 0c — Wire it, and prove the physical link <span class="phase-tag partial">closes a known gap in #348 and #349</span></h3>
+  <p>
+    Both of those tickets shipped with the same admission: <em>"What is untested is the
+    physical UART1 link itself — two jumper wires would close both at once."</em> This is those
+    two jumper wires.
+  </p>
+  <ul>
+    <li>Build and flash: <code>./build-role.sh primary esp32 -p /dev/serial/by-id/… flash</code> and <code>./build-role.sh gateway esp32 -p … flash</code>.</li>
+    <li>Fill in <code>main/DevConfig.hpp</code> from the <code>.example</code> — <strong>gateway only</strong>; a leaf or primary image must not be able to reach credentials.</li>
+    <li>Watch the gateway console: <code>frames_ok</code> climbing, <strong>0 CRC failures</strong>, <code>bytes_skipped</code> flat after the first resync, <code>uplink_seq_gaps</code> at 0.</li>
+    <li>Confirm at the far end, not on the device: count records into Kafka and compare against the primary's <code>frames_sent</code>.</li>
+  </ul>
+  <p><strong>Done when:</strong> one leaf's data reaches Kafka over a real wire, with the reconciliation arithmetic on the ticket. This is the first time the wire itself has ever carried a byte.</p>
+
+  <h3>Phase 1 — The gateway republishes the status frames <span class="phase-tag gap">the drift, part 1</span></h3>
+  <ul>
+    <li><code>kNodeStatus</code> → <code>natKit/sending/Log-&lt;node id&gt;-Binary-NatKitNodeStatusV1</code>, payload verbatim.</li>
+    <li><code>kPrimaryStatus</code> → <code>natKit/sending/Log-&lt;primary id&gt;-Binary-NatKitPrimaryStatusV1</code>, verbatim.</li>
+    <li>Keep the existing internal use (clock fit, primary→wall offset) — publish <em>as well as</em>, not instead of.</li>
+    <li>Factor the topic-and-publish switch that <code>uplink.cpp::publishFrame</code> already has rather than writing a second copy; the two paths must not be able to disagree about a topic name.</li>
+  </ul>
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>⚠️ The status frame's device id is in the payload, not the uplink header.</strong>
+    A primary-status frame is <em>about the primary</em> and must be published under the
+    primary's id, not the gateway's and not the stream id of whatever was last routed. Read it
+    from offset 0 of the payload, which the struct asserts.
+  </div>
+  <p><strong>Done when:</strong> the toolbar health pill shows the hub and every leaf on a WiFi rig, and a recording sealed on that rig carries a real clock record rather than <code>not_watching</code>.</p>
+
+  <h3>Phase 2 — The downward command path <span class="phase-tag gap">the drift, part 2</span></h3>
+  <p>
+    The uplink is full duplex and the primary's RX pin was claimed at design time precisely so
+    this would not need rewiring. Nothing reads it yet.
+  </p>
+  <ul>
+    <li>Add <code>UplinkType::kCommand</code>, travelling <strong>gateway → primary</strong>. Same header, same CRC, same reader — the format is already directionless.</li>
+    <li><strong>The gateway learns who to subscribe for from the <code>kNodeStatus</code> frames it already receives.</strong> No second registry, and no wildcard subscription (which would pick up commands for other rigs on the same broker).</li>
+    <li>Split <code>command_relay.cpp</code> so its JSON parse + ESP-NOW relay is fed from <em>either</em> an MQTT message (Eth/WiFi primary) <em>or</em> a serial <code>kCommand</code> frame. The relay must not learn which architecture it is in.</li>
+    <li>Run <code>uplinkReaderStart()</code> on the primary and a frame writer on the gateway — both files are already compiled into every image, so this is wiring, not porting.</li>
+    <li>The <em>answer</em> path needs nothing: <code>kCommandLog</code> already flows up and the gateway already republishes it on the topic the backend correlates against.</li>
+  </ul>
+  <p><strong>Done when:</strong> the Visual Programming LED button changes a leaf's colour on a WiFi rig, and the answer comes back and is correlated — the same evidence TEC-NATKIT-83 produced on the Ethernet rig.</p>
+
+  <h3>Phase 3 — More than one leaf, and a soak <span class="phase-tag gap">never done</span></h3>
+  <p>
+    #349 was tested with <strong>one</strong> stream, because there were only three boards and
+    the second leaf had been repurposed as the gateway. One stream proves the contract; it says
+    nothing about the mux.
+  </p>
+  <ul>
+    <li>Four leaves through one primary through one wire. Per-node rate at Kafka against the primary's per-node counters.</li>
+    <li>Watch <code>frames_dropped</code>, <code>queue_high_water</code> and <code>write_timeouts</code> on the primary against <code>bytes_skipped</code> and <code>uplink_seq_gaps</code> at the gateway — the two sequence numbers exist so uplink loss and radio loss are distinguishable, and this is the run that uses them.</li>
+    <li>Failure behaviour: power-cycle the gateway (primary must drop, count and recover, not stall); power-cycle the primary (gateway must resync mid-stream); pull a leaf.</li>
+  </ul>
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>⚠️ A leaf publishes again long before it is at full rate</strong> — measured at
+    18.7 s to first frame and still 6.7% loss <em>forty minutes</em> after a reset. A rate taken
+    in between reads as a fault that is not there. Do not call a recovery test failed inside the
+    first hour.
+  </div>
+  <p><strong>Done when:</strong> four leaves sustain their rate through the wire over a soak long enough to see a drop and a recovery, and every counter reconciles.</p>
+
+  <h3>Phase 4 — The gateway gets counters and a voice <span class="phase-tag gap">missing</span></h3>
+  <ul>
+    <li>Count the two silent drops in <code>gateway.cpp</code> (<code>length &gt; sizeof(sFrame)</code>), same defect shape as TEC-NATKIT-86.</li>
+    <li>Publish the gateway's own health — reader stats, WiFi RSSI, MQTT disconnects, refused publishes, heap — so a WiFi rig is diagnosable from the broker like the Ethernet one is. Reuse the <code>NatKitPrimaryStatusV1</code> shape or add a small V1 of its own; decide on the ticket.</li>
+  </ul>
+  <div class="prov" style="border-left: 4px solid var(--prov); background: var(--prov-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>The gateway's console IS readable</strong>, unlike the S3 primary's, so this is less
+    urgent than it was for the hub. It is still worth doing: "readable if you go and plug into
+    it" is not the same as visible in the panel, and a fielded rig has nobody at the bench.
+  </div>
+
+  <h3>Phase 5 — Defaults, docs and the rollback story <span class="phase-tag partial">small</span></h3>
+  <ul>
+    <li><code>default 4 if IDF_TARGET_ESP32C3</code> / <code>default 5</code> for the uplink pins, so a C3 gateway does not boot-loop on an out-of-range GPIO.</li>
+    <li><code>roles/gateway.defaults</code>: set <code>CONFIG_NATKIT_PRIMARY_ETH_UPLINK=n</code> explicitly, since it defaults <em>on</em> for the S3 and a gateway built for an S3 would inherit it.</li>
+    <li>⚠️ The mirror hazard: <strong>a primary built for the S3 defaults to the Ethernet uplink</strong> and will not use the wire unless it is turned off. Two boards wired together with the primary quietly publishing over Ethernet is a confusing afternoon.</li>
+    <li>README: the board table gains a gateway row, and the two-board WiFi rig gets its build commands beside the Ethernet one.</li>
+    <li>Wiki page for the architecture as a whole — the ADR-shaped "how a natKit rig is put together, and the three ways it can reach the broker".</li>
+  </ul>
+</section>
+
+<section>
+  <h2 id="roles">Which chip gets which role — DECIDED</h2>
+  <p class="status" style="display:block; width:fit-content;">Decided 2026-08-25 (Zach): ESP32 = primary, C3 = gateway, three leaves.</p>
+  <p>
+    The first draft of this plan put the C3 on the hub, because that is the board that was to
+    hand. It is round the other way, and the reason is that <strong>the C3 is single-core
+    RISC-V</strong> while the primary is the busiest and most timing-sensitive role in the
+    architecture: the ESP-NOW receive callback runs on the WiFi task, alongside the uplink drain
+    task, the 1 Hz status loop, the command relay, the timing beacons and the coherence probe.
+    On a classic ESP32 that work is spread across two cores.
+  </p>
+  <p>
+    That matters because <strong>hub scheduling latency is the open suspect in work already in
+    flight</strong>: the coherence probe shows occasional millisecond excursions and the leading
+    hypothesis on record is the receive callback being late because something else blocked.
+    Node-to-node agreement of 0.1–0.2 ms is the number the fork was adopted on
+    (TEC-NATKIT-27), and putting the hub on one core is a plausible way to spend it.
+  </p>
+  <p>
+    <strong>The gateway is the half that can afford one core.</strong> It reads a UART and
+    publishes, and its clock hop is <em>already</em> the deliberately crude one — a single
+    subtraction carrying the serial link's latency, ~1–2 ms and unmeasured — so scheduling
+    jitter there is lost in a term the design already accepts. Meanwhile the primary lands on
+    GPIO 26/25, the pins that are already the committed default and already vouched for.
+  </p>
+  <div class="warn" style="border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>✅ The cost is NOT a leaf after all.</strong> This was written expecting the
+    primary to be one of the four BNO08x leaves, dropping the bench to three nodes. A bench
+    audit on 2026-08-25 found a <strong>spare dual-core ESP32-D0WD-V3 rev 3.1</strong>
+    (MAC <code>30:c9:22:33:0c:ec</code>, CP2102 at <code>/dev/ttyUSB0</code>) that is not one of
+    them, so the primary costs nothing and all four leaves stay leaves.
+    <br><br>
+    ⚠️ Leaf <code>5185027828</code> (MAC <code>4c:75:25:a4:45:3c</code>) was NOT enumerated
+    during that audit. Plug it back in before claiming a four-leaf run.
+  </div>
+  <div class="prov" style="border-left: 4px solid var(--prov); background: var(--prov-soft); padding: 12px 14px; margin-top: 12px; border-radius: 6px;">
+    <strong>This is reasoning, not measurement.</strong> Nobody has run the hub on a C3. The
+    decision is cheap to revisit — it is the same three wires with the pin pairs swapped — so
+    if three leaves turns out to be the binding constraint, Phase 3's soak is where to test the
+    other arrangement: run it both ways and compare <code>coherence_typical_us</code> over the
+    same window.
+  </div>
+  <p>
+    One thing the swap makes cleaner: <strong>the C3 is now definitively never a leaf</strong>,
+    so Phase 0a's fix to <code>board_config.hpp</code> is unambiguous. The C3 carries no
+    BNO08x, so the sensor pins on that target should be a <code>#error</code> rather than a
+    guess, and #379's objection to invented pin numbers is satisfied rather than worked around.
+  </p>
+
+  <h2>Open questions for Zach</h2>
+  <ul>
+    <li>
+      <strong>✅ ANSWERED 2026-08-25 — the console will work.</strong> The C3 is an
+      <strong>ESP32-C3 (QFN32) rev v0.4</strong>, MAC <code>dc:da:0c:d1:49:38</code>, behind a
+      <strong>CP2102N bridge</strong> at <code>/dev/ttyUSB1</code>. A bridge board is exactly
+      what <code>sdkconfig.defaults.esp32c3</code> already assumes when it deliberately leaves
+      the console on UART0, so the gateway's console — the instrument Phase 0c is watched with
+      — works out of the box, and UART0's GPIO 20/21 stay clear of the uplink pins 5/6.
+    </li>
+    <li>
+      <span class="q">Is the Ethernet rig staying?</span> The plan assumes yes and keeps all
+      three as build-time roles. If Ethernet is being retired, Phases 1 and 2 get simpler, but
+      the primary's direct-publish code comes out — and the health path, the command relay and
+      the channel survey all hang off it, so it is a bigger change than it sounds.
+    </li>
+    <li>
+      <span class="q">Does a C3 leaf ever need to exist?</span> Phase 0a only has to make the C3
+      <em>compile</em>. If a C3 will never carry a BNO08x, the honest fix is a
+      <code>#error</code> on that path; if one might, the fix needs real wiring and #379's
+      objection to guessed pins stands.
+    </li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  natKit-IMU · <code>firmware-idf/</code> · plan under EPIC TEC-NATKIT-20 (#343),
+  building on TEC-NATKIT-25 (#348) and TEC-NATKIT-26 (#349).
+  Written 2026-08-25.
+</footer>
+</body>
+</html>

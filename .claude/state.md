@@ -2,7 +2,128 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-25
+
+## Where things stand
+
+**The two-board WiFi rig works and does everything the Ethernet rig does.** Four
+leaves at 10.0 frames/s through an ESP32 hub → a physical UART wire → a C3
+gateway → WiFi → MQTT → bridge → Kafka, with device commands reaching a leaf and
+answering back. No functional gap left between the two architectures.
+
+Plan: `plans/wifi-gateway-two-board-plan.html`. Epic **TEC-NATKIT-20 (#343)**.
+
+### The rig, as it physically is
+
+| Role | Board | Device id | Port |
+|---|---|---|---|
+| primary (hub) | ESP32-D0WD-V3 `30:c9:22:33:0c:ec` | 53640420330732 | CP2102 `0001` |
+| gateway | ESP32-C3 `dc:da:0c:d1:49:38` | 242829076023608 | CP2102N `f46f1cbd…` |
+| leaf ×4 | `…bc:4c`, `…b9:f4`, `…ef:d0`, `4c:75:25:a4:45:3c` | see README | CH340 |
+| **powered down** | ESP32-S3 + W5500 `b8:f8:62:62:f7:3c` | 203376942053180 | native USB |
+
+Wire: **ESP32 GPIO 26 → C3 GPIO 6**, **C3 GPIO 5 → ESP32 GPIO 25**, GND↔GND.
+Crossover. The README's board table is now current — it had missed four boards.
+
+⚠️ The S3 is **off deliberately**: two hubs on one ESP-NOW channel adopt each
+other as nodes. Measured, not predicted.
+
+## Branch stack — six branches, nothing pushed or merged
+
+```
+natKit-IMU
+  trunk cf9cef0
+   ├── zach/379-esp32c3-build          c55d369  TEC-NATKIT-34
+   │    └── zach/454-uplink-pin-defaults      a70848e  TEC-NATKIT-87
+   │         └── zach/455-gateway-status-republish  451ee1f  TEC-NATKIT-88
+   │              └── zach/459-command-over-serial  76b5810 + 1639b17 (README)
+   │                   └── zach/460-gateway-health       a7c8244  TEC-NATKIT-93
+   └── zach/84-set-tx-power (PRE-EXISTING, unmerged, 9 commits)
+
+natKit
+  trunk dd87a8c
+   ├── zach/437-kafka-broker-address   106afb7  TEC-NATKIT-76
+   ├── zach/456-stream-tree            ff82ad6  TEC-NATKIT-89
+   │    └── zach/457-status-only-streams   97b01ee  TEC-NATKIT-90
+   └── zach/343-wifi-gateway-plan      42db829  the plan + this file
+```
+
+**8 tickets in Verification** awaiting greenlight: -34, -87, -88, -92, -93, -76,
+-89, -90. **Filed and deferred:** -91 (rig grouping), -94 (stale streams).
+
+## ⚠️ Traps this work bought — do not re-learn these
+
+- **`:Z` on a live service's volume crash-loops that service.** Inspecting the
+  auth/graphs/instances volumes with throwaway `podman run -v vol:/d:Z`
+  containers stole the SELinux label and the backend died in a loop on
+  `Failed to open auth database`. Use `:z`. Compare `ls -Zd` against a volume you
+  did not touch: `container_file_t:s0` is healthy, `:s0:c499,c588` is stolen.
+  ⚠️ `podman unshare` is unavailable here (remote client), so `chcon` is not the
+  escape hatch — a lowercase-`z` run is.
+- **`/dev/tcp/host/port` does not work in these container images.** A probe using
+  it reports EVERY port refused, including ones demonstrably open. It claimed the
+  backend could not reach its own listener. **Control any negative against
+  something known to be listening** before believing it; use `curl`.
+- **`mosquitto_sub -W <n>` under `podman exec` silently returns nothing** on a
+  live topic. Twice I nearly reported the rig as down. Use
+  `podman exec -d … > /tmp/f` then read the file.
+- **`0 bytes` and `0 frames` are different faults.** Baud mismatch, floating line
+  and missing ground all produce *edges*, which land in `bytes_skipped`. Exactly
+  zero bytes read means an open circuit or the wrong pin. Read `bytes_read`
+  before suspecting the baud rate.
+- **The primary console's `+N/s` figures are inflated ~1.4×** — its status loop
+  runs slower than 1 s but labels the per-tick delta as per-second. The broker
+  count is authoritative.
+- **`sdkconfig.defaults` is read once.** Two stale C3 build dirs failed on
+  `eth_w5500_config_t undeclared`, which reads like an IDF incompatibility and is
+  the read-once trap. `rm -rf build/<target>-<role>`.
+- **Combining both compose files breaks the frontend.** podman-compose *appends*
+  port lists → `8080:80` and `8080:5173` at once → `rootlessport conflict`.
+  `docker-compose.dev.yml` is self-contained now (all 8 services, own `networks:`
+  block). Use it **alone**. TEC-NATKIT-73's premise is stale; commented there.
+- **A silent `.replace()` in a patch script is a no-op you will not notice.** One
+  edit today didn't apply because the file used 4-space indents, not 6, and the
+  build still went green because a *different* file carried the change. Assert
+  every anchor, and audit that each piece landed.
+
+## What is left
+
+1. **README/docs are done; Phase 3 soak is not.** Four leaves are running now.
+   A real soak wants hours and matched windows.
+2. **TEC-NATKIT-27 (#350) still open at 100%** — the adopt-or-discard decision.
+   It is what blocks the epic from closing.
+3. **Wired vs wireless comparison was deliberately deferred.** ⚠️ It is NOT
+   currently a fair comparison: different hub board, different leaf count,
+   unverified-equal radio settings, and TEC-NATKIT-76 landed in between. The
+   clean experiment is the **S3 with Ethernet off** on serial pins 9/10 feeding
+   the C3 — same hub, only the uplink changes. ⚠️ Those S3 pins are reasoned,
+   not measured.
+4. **The LED command cannot be tested here** — `status_led.*` is on the unmerged
+   `zach/84-set-tx-power`. Phase 2 was verified with `ping` and `version`.
+5. **-91 and -94 are both blocked on `zach/377-device-health` merging**, which
+   holds the hub→leaf mapping and is not on trunk.
+
+## ⚠️ Things I got wrong today, recorded because the corrections are the value
+
+- **Built TEC-NATKIT-89's stream tree for the wrong cause.** The 45 noisy rows
+  contained **zero** transform outputs; 36 were stale metadata-only streams. The
+  tree is correct and did not address the complaint. The Kafka wipe did.
+- **Proposed a backend fix for TEC-NATKIT-90 that Zach approved, then did not
+  ship it** — a comment showed `sendStreamList` omits `LOGGING_LOG` *deliberately*.
+  The frontend-only fix was smaller and contradicted nothing.
+- **Claimed the backend could not reach Kafka by any address.** False; broken
+  probe. It reaches it fine by service name.
+- **Crash-looped the backend** with `:Z`, as above.
+
+---
+
+# Prior sessions (retained)
+
+> ⚠️ Everything below predates 2026-08-25 and is kept deliberately. It spans the
+> C ABI bindings, the ML pipeline, the Visual Programming phases and the Docker
+> packaging work, and it is the only written record of several of them. On
+> 2026-08-25 this file was briefly overwritten wholesale — 4,160 lines for 106 —
+> and restored from `git show HEAD~1`. Append above this line; do not replace it.
 
 ## Where things stand
 
