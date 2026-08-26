@@ -396,6 +396,22 @@
     // then released without losing the label.
     let streamDeviceNames = $state<Record<string, string>>({});
 
+    // Friendly names a person chose, from the backend (TEC-NATKIT-103). Distinct
+    // from streamDeviceNames above, which is whatever the device puts on its own
+    // samples and only exists while data flows.
+    let streamAliases = $state<Record<string, string>>({});
+
+    function setStreamAlias(streamId: string, alias: string): boolean {
+        if (wsManager?.getConnectionState() !== "connected") return false;
+        wsManager.send({
+            action: "set_stream_alias",
+            request_id: `alias:${streamId}:${Date.now()}`,
+            stream_id: streamId,
+            alias,
+        });
+        return true;
+    }
+
     function emptyLiveStream(streamId: string): LiveStreamData {
         return {
             streamType: inferLiveStreamType(streamId) ?? null,
@@ -1138,6 +1154,10 @@
                     // which is precisely the stale-reading-shown-as-current
                     // failure the panel is meant to prevent.
                     wsManager?.send({ action: "subscribe_device_health" });
+                    wsManager?.send({
+                        action: "list_stream_aliases",
+                        request_id: `aliases:${Date.now()}`,
+                    });
                     // Ask the control plane (via the proxy) for compute slots so a
                     // train submit can auto-pick one; periodic pushes keep it fresh.
                     wsManager?.sendMlAction({
@@ -1330,6 +1350,12 @@
                     wsManager?.requestStreamList();
                     startStreamGraph(message.graph_id, undefined, message.replay_id);
                 }
+            },
+            onStreamAliases: (message) => {
+                // The backend is the authority: it resolves which alias applies
+                // (global today, per-user later), so this replaces rather than
+                // merges.
+                streamAliases = message.aliases ?? {};
             },
             onDeviceHealth: (message: DeviceHealthMessage) => {
                 deviceHealth = message;
@@ -1591,6 +1617,8 @@
         {inspectStream}
         {liveStreams}
         {streamDeviceNames}
+        {streamAliases}
+        {setStreamAlias}
         {subscribeToStream}
         {unsubscribeFromStream}
         {formatNumber}

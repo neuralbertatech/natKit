@@ -38,6 +38,7 @@ import type {
   InstanceReplayMessage,
   DeviceCommandResultMessage,
   DeviceHealthMessage,
+  StreamAliasesMessage,
   LogStreamListMessage,
   LogRecordsMessage,
   StreamGraphValidationMessage,
@@ -93,6 +94,7 @@ export interface StreamViewerCallbacks {
   onInstanceReplay?: (message: InstanceReplayMessage) => void;
   onDeviceCommandResult?: (message: DeviceCommandResultMessage) => void;
   onDeviceHealth?: (message: DeviceHealthMessage) => void;
+  onStreamAliases?: (message: StreamAliasesMessage) => void;
   onLogStreamList?: (message: LogStreamListMessage) => void;
   onLogRecords?: (message: LogRecordsMessage) => void;
   onError?: (message: ErrorMessage) => void;
@@ -319,6 +321,9 @@ export class StreamViewerWebSocket {
           break;
         case "device_health":
           this.callbacks.onDeviceHealth?.(message);
+          break;
+        case "stream_aliases":
+          this.callbacks.onStreamAliases?.(message);
           break;
         case "log_stream_list":
           this.callbacks.onLogStreamList?.(message);

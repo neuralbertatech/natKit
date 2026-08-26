@@ -1132,6 +1132,32 @@ export interface DeviceHealthEntry {
   rate_interval_us?: number;
 }
 
+/** Friendly names for streams, by stream id (TEC-NATKIT-103). */
+export interface StreamAliasesMessage {
+  type: "stream_aliases";
+  request_id?: string;
+  aliases: Record<string, string>;
+}
+
+/**
+ * Name a stream, or clear its name with an empty string.
+ *
+ * ⚠️ No owner field. The alias is rig-wide today; the backend column that will
+ * carry a username already exists, so this action gains a field later rather
+ * than the storage changing shape.
+ */
+export interface SetStreamAliasAction {
+  action: "set_stream_alias";
+  request_id: string;
+  stream_id: string;
+  alias: string;
+}
+
+export interface ListStreamAliasesAction {
+  action: "list_stream_aliases";
+  request_id: string;
+}
+
 export interface DeviceHealthMessage {
   type: "device_health";
   wall_ms: number;
@@ -1481,6 +1507,7 @@ export type WebSocketMessage =
   | InstanceReplayMessage
   | DeviceCommandResultMessage
   | DeviceHealthMessage
+  | StreamAliasesMessage
   | LogStreamListMessage
   | LogRecordsMessage;
 
@@ -1803,6 +1830,8 @@ export type ClientAction =
   | ListProfilesAction
   | SaveProfileAction
   | DeleteProfileAction
+  | SetStreamAliasAction
+  | ListStreamAliasesAction
   | SendDeviceCommandAction
   | SubscribeDeviceHealthAction
   | UnsubscribeDeviceHealthAction

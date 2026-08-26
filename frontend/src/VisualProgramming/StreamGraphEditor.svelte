@@ -116,6 +116,7 @@
     import DialogHost from "./DialogHost.svelte";
     import { askConfirm, askName, showAlert } from "./dialogs.svelte";
     import { resolveSourceView } from "./sourceOnlyView";
+    import { streamDisplayName } from "../StreamViewer/streamNames";
     import {
         answerCarriesGroupState,
         controlLabel,
@@ -339,6 +340,10 @@
         // be live at once, plus friendly device names per stream.
         liveStreams: Record<string, LiveStreamData>;
         streamDeviceNames: Record<string, string>;
+        // Friendly names a person chose (TEC-NATKIT-103), resolved by the
+        // backend. Distinct from streamDeviceNames, which the device reports.
+        streamAliases: Record<string, string>;
+        setStreamAlias: (streamId: string, alias: string) => boolean;
         subscribeToStream: (streamId: string) => void;
         unsubscribeFromStream: (streamId: string) => void;
         formatNumber: (num: number, decimals?: number) => string;
@@ -404,6 +409,8 @@
         inspectStream,
         liveStreams,
         streamDeviceNames,
+        streamAliases,
+        setStreamAlias,
         subscribeToStream,
         unsubscribeFromStream,
         formatNumber,
@@ -4049,6 +4056,11 @@
     // against the registry. The hardcoded catalogue this replaced is what put
     // four BNO08x report toggles on a Muse node and left "Read from device"
     // timing out against hardware that has no such command.
+    /** `Left Hand (13793649671244)`, or the bare id. One function, every site. */
+    function displayStream(streamId: string | number | null | undefined): string {
+        return streamDisplayName(streamId, streamAliases, streamDeviceNames);
+    }
+
     const selectedNodeControlStreamId = $derived(
         selectedNode?.kind === "stream_source"
             ? viewableStreamId(selectedNode.id)
@@ -6750,7 +6762,7 @@
                                 >
                                     {#each availableStreams as stream}
                                         <option value={stream.streamId}>
-                                            Stream {stream.streamId} - {stream.schemaName}
+                                            {displayStream(stream.streamId)} - {stream.schemaName}
                                         </option>
                                     {/each}
                                 </select>
@@ -7751,6 +7763,31 @@
                     <div class="inspector-section">
                         <p class="eyebrow">Controls</p>
 
+                        <!-- ⚠️ The name is a property of the STREAM, not of this
+                             node: two nodes bound to one stream are one board, and
+                             renaming from either must change both. So it is stored
+                             on the backend by stream id, not in node config. -->
+                        <label>
+                            Friendly name
+                            <input
+                                type="text"
+                                placeholder="e.g. Left Hand"
+                                value={streamAliases[selectedNodeControlStreamId] ?? ""}
+                                onchange={(event) =>
+                                    setStreamAlias(
+                                        selectedNodeControlStreamId!,
+                                        event.currentTarget.value.trim(),
+                                    )}
+                            />
+                        </label>
+                        <p class="muted-text">
+                            Shown everywhere as
+                            <strong>{displayStream(selectedNodeControlStreamId)}</strong>.
+                            The id is always kept: it is what topics, recordings
+                            and log lines are keyed by. Clear the field to remove
+                            the name.
+                        </p>
+
                         {#if resolvedControls.availability === "unadvertised" || resolvedControls.availability === "none"}
                             <!-- ⚠️ NO CONTROLS ARE INVENTED. This is the whole
                                  point: a device that has not said what it
@@ -8387,14 +8424,14 @@
             <Command.Group heading="Streams">
                 {#each availableStreams as stream}
                     <Command.Item
-                        value={`stream ${stream.streamId} ${stream.schemaName}`}
+                        value={`stream ${stream.streamId} ${displayStream(stream.streamId)} ${stream.schemaName}`}
                         onSelect={() =>
                             runPaletteAction(() =>
                                 addSourceNode(stream.streamId),
                             )}
                     >
                         <CircleDot size={16} />
-                        <span>Stream {stream.streamId}</span>
+                        <span>{displayStream(stream.streamId)}</span>
                     </Command.Item>
                 {/each}
             </Command.Group>

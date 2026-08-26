@@ -2,6 +2,7 @@
     import { onMount, onDestroy } from "svelte";
     import { StreamViewerWebSocket, type ConnectionState } from "./websocket";
     import { getWebSocketUrl } from "./config";
+    import { streamDisplayName } from "./streamNames";
     import ChannelFrameViewer from "./ChannelFrameViewer.svelte";
     import FeatureVectorViewer from "./FeatureVectorViewer.svelte";
     import EmgExperiment from "./EmgExperiment.svelte";
@@ -127,6 +128,9 @@
     // device_health message arrives, and empty forever for a device whose
     // firmware predates the control channel -- in which case the toggles below
     // correctly show nothing.
+    // Friendly names a person chose, from the backend (TEC-NATKIT-103).
+    let streamAliases = $state<Record<string, string>>({});
+
     let deviceControls = $state<
         import("./deviceControls").DeviceControlsEntry[]
     >([]);
@@ -204,6 +208,10 @@
                     // only the device can say, and this is the message that
                     // carries it.
                     wsManager?.send({ action: "subscribe_device_health" });
+                    wsManager?.send({
+                        action: "list_stream_aliases",
+                        request_id: `aliases:${Date.now()}`,
+                    });
                 }
             },
             onStreamList: (message: StreamListMessage) => {
@@ -323,6 +331,11 @@
                 const nextMap = new Map(transformProvenanceByStream);
                 nextMap.set(String(message.stream_id), message);
                 transformProvenanceByStream = nextMap;
+            },
+            onStreamAliases: (message) => {
+                // The backend decides which alias applies, so replace rather
+                // than merge.
+                streamAliases = message.aliases ?? {};
             },
             onDeviceHealth: (message) => {
                 // ⚠️ Subscribed to purely for the CONTROL ADVERTISEMENTS
@@ -1065,7 +1078,7 @@
                                     onclick={() => toggleStreamExpanded(streamId)}
                                 >
                                     <span class="stream-title"
-                                        >Stream {streamId}</span
+                                        >{streamDisplayName(String(streamId), streamAliases)}</span
                                     >
                                     <span
                                         class="stream-type-badge {streamType ||
