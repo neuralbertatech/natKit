@@ -104,6 +104,166 @@ export class VpApp {
      * round trip to complete is how a test avoids that window instead of racing
      * it with a sleep.
      */
+    /**
+     * Give the scratch board the nodes a test needs, saved through the SOCKET.
+     *
+     * ⚠️ Not through the Add Node palette. Two reasons: the palette is not what
+     * these tests are about, and a board built by clicking is built by the
+     * editor's debounced auto-save, so the test would be racing the very
+     * round trip that TEC-NATKIT-19 was about. Writing the record directly and
+     * then reloading is deterministic.
+     *
+     * Returns after the store has the nodes AND the page has been reloaded onto
+     * them, so a caller can assert immediately.
+     */
+    async attachNodes(nodes: Record<string, unknown>[]): Promise<void> {
+        // ⚠️ PARK THE EDITOR FIRST. It has this board open, and its debounced
+        // auto-save writes the draft it is holding — which is the node-less
+        // version. Saving through the socket while the page is live means the
+        // editor's next flush silently overwrites it, and the board comes back
+        // empty with nothing to say why. (The teardown below already knew this
+        // about deletes; it is the same hazard for writes.)
+        await this.page.goto("about:blank");
+
+        const board = await this.viewer.getGraph(this.boardId);
+        if (!board) {
+            throw new Error(`scratch board ${this.boardId} is not in the store`);
+        }
+        const existing = (board["nodes"] as Record<string, unknown>[] | undefined) ?? [];
+        // ⚠️ `editor_metadata` is DROPPED, not carried through. It is the editor's
+        // own composite tree and it takes precedence over the flattened `nodes` on
+        // load — so spreading the old (node-less) one back meant the store held the
+        // nodes and the canvas rendered none, with nothing to say why. Omitting it
+        // is the documented fallback: "only the flattened primitives remain".
+        const { editor_metadata: _editorTree, ...rest } = board;
+        await this.viewer.saveGraph({ ...rest, nodes: [...existing, ...nodes] });
+
+        // Wait for the store, not for a timeout.
+        const deadline = Date.now() + 15_000;
+        for (;;) {
+            const saved = await this.viewer.getGraph(this.boardId);
+            const savedNodes = (saved?.["nodes"] as unknown[] | undefined) ?? [];
+            if (savedNodes.length >= existing.length + nodes.length) {
+                break;
+            }
+            if (Date.now() > deadline) {
+                throw new Error("the board's new nodes never reached the store");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        await this.open();
+
+        // ⚠️ DROP THE EDITOR'S LOCAL COPY of this board, or none of the above is
+        // visible. The editor prefers `loadEditorGraph(graph_id)` —
+        // localStorage — over the backend record, so that a board keeps its
+        // composite tree without a server round trip. The scratch board was
+        // created in THIS browser session, so a node-less local copy exists and
+        // wins: the store has the nodes, the canvas renders none, and nothing
+        // anywhere says why.
+        await this.page.evaluate((boardId) => {
+            const key = "natkit.streamviewer.editorGraphs.v1";
+            try {
+                const store = JSON.parse(window.localStorage.getItem(key) ?? "{}");
+                delete store[boardId];
+                window.localStorage.setItem(key, JSON.stringify(store));
+            } catch {
+                window.localStorage.removeItem(key);
+            }
+        }, this.boardId);
+        await this.open();
+
+        await this.page.locator(".graph-list-item").filter({ hasText: this.boardId }).first().click();
+        // The board is selected; wait for its nodes rather than for a timeout.
+        await expect(this.page.locator(".node").first()).toBeVisible({ timeout: 15_000 });
+    }
+
+    /** A source node bound to a real device, positioned clear of the panels. */
+    static sourceNode(streamId: string): Record<string, unknown> {
+        return {
+            id: "source",
+            kind: "stream_source",
+            label: "Stream source",
+            output_port_ids: ["data"],
+            position: { x: 360, y: 180 },
+            stream_id: streamId,
+        };
+    }
+
+    /**
+     * The markers node, which is where the experiment's run surface lives.
+     *
+     * ⚠️ Deliberately does NOT set `inline_experiment`. That flag decides whether
+     * the run surface is mounted, but the backend does not persist it — the stored
+     * node keeps only id/kind/label/output_port_ids/position, and the flag lives in
+     * the editor's own tree. So it cannot be seeded through the socket; use
+     * `showRunSurface()`, which clicks the same toggle a person would.
+     */
+    static markersNode(): Record<string, unknown> {
+        return {
+            id: "markers",
+            kind: "markers",
+            label: "Markers",
+            output_port_ids: ["markers"],
+            position: { x: 360, y: 420 },
+        };
+    }
+
+    /**
+     * Open the LARGE run surface — the participant-facing one.
+     *
+     * ⚠️ Not the same thing as the inline surface. The inline one is the
+     * operator's thumbnail on the node card; the large one is what a participant
+     * reads at full size during a recorded run, and it is the only place the
+     * how-to lines appear. Asserting the thumbnail and calling the participant
+     * view verified is the mistake this method exists to make hard.
+     */
+    async openParticipantView(): Promise<Locator> {
+        const toggle = this.page
+            .locator('.node button[title="Open the experiment in a large window"]')
+            .first();
+        await expect(toggle, "the markers node should offer a large window").toBeVisible({
+            timeout: 15_000,
+        });
+        await toggle.click();
+        const runner = this.page.locator(".experiment-runner.large").first();
+        await expect(runner).toBeVisible({ timeout: 15_000 });
+        return runner;
+    }
+
+    /** Turn on the markers node's inline run surface, as a person would. */
+    async showRunSurface(): Promise<Locator> {
+        const toggle = this.page.locator('.node button[title="Run inline on node"]').first();
+        await expect(toggle, "the markers node should offer an inline run surface").toBeVisible({
+            timeout: 15_000,
+        });
+        await toggle.click();
+        const runner = this.page.locator(".experiment-runner").first();
+        await expect(runner).toBeVisible({ timeout: 15_000 });
+        return runner;
+    }
+
+    /**
+     * Select a sealed run in the sidebar's instance tree.
+     *
+     * ⚠️ By its graph id, via `data-graph-id`, NOT by its "run-0001" label.
+     * Run numbering restarts per experiment, so several boards in the store have a
+     * run-0001 — an unscoped `hasText: /run-\d{4}/` picks whichever renders first,
+     * which is how a verification "passed" against somebody else's recording twice
+     * before this helper existed.
+     */
+    async openInstance(graphId: string): Promise<void> {
+        // ⚠️ `data-graph-id`, not `title`: the title is the run's MESSAGE when it
+        // has one, so a title selector silently fails to find any run that failed
+        // or was stopped early — which is exactly the run you go looking for.
+        const entry = this.page.locator(`.tree-instance[data-graph-id="${graphId}"]`);
+        await expect(entry, `no instance row for ${graphId}`).toBeVisible({ timeout: 15_000 });
+        await entry.click();
+        // The inspector is keyed on the selection, so wait for it to catch up
+        // rather than asserting against the previously selected record.
+        await expect(this.page.locator(".graph-inspector")).toContainText("Instance");
+    }
+
     async waitForStoredProtocol(
         match: (protocol: Record<string, unknown>) => boolean,
         timeoutMs = 15_000,

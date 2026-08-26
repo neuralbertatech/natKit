@@ -41,12 +41,12 @@ export class Designer {
     async convertToSteps(): Promise<void> {
         await this.panel.locator("button", { hasText: "Convert to editable steps" }).click();
         await expect(this.steps.first()).toBeVisible();
-        // Let the save round trip finish. See VpApp.waitForStoredProtocol: until
-        // it does, the designer can briefly re-render the pre-conversion
-        // protocol, which resets anything keyed on a step id.
-        await this.app.waitForStoredProtocol(
-            (protocol) => Array.isArray(protocol.steps) && protocol.steps.length > 0,
-        );
+        // The settle that used to be here is gone (TEC-NATKIT-19): the designer no
+        // longer re-renders the pre-conversion protocol while the save is in
+        // flight, so there is nothing to wait out. A test that needs the STORE to
+        // have caught up still calls app.waitForStoredProtocol itself — that is a
+        // different guarantee from "the UI is not lying", and only the second one
+        // was this helper's job.
     }
 
     /** Kinds of the top-level steps, e.g. `["instruction", "repeat"]`. */

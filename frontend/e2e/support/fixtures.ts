@@ -117,21 +117,37 @@ export const test = base.extend<Fixtures>({
             // would otherwise resurrect the board we just removed.
             await page.goto("about:blank").catch(() => undefined);
 
-            const after = await viewer.census();
-            for (const experiment of after.experiments.filter((e) => isScratch(e.label))) {
-                await viewer.deleteExperiment(experiment.experiment_id).catch(() => undefined);
-                if (leftovers.some((l) => l.experiment_id === experiment.experiment_id)) {
-                    health.leftoversCleaned.push(experiment.experiment_id);
-                }
-            }
+            // ⚠️ GRAPHS FIRST, then experiments, and the order is load-bearing.
+            // The backend refuses to delete an experiment that still owns
+            // instances — correctly, since removing it would orphan immutable
+            // snapshots reachable only through it. Deleting experiments first
+            // therefore leaked one for any test that records, and the only
+            // symptom was `storesRestored` failing afterwards, which points at
+            // the count rather than at the cause.
             const knownGraphs = new Set(before.graphs.map((graph) => graph.graph_id));
             const stale = (await viewer.listGraphs()).filter(
                 (graph) => !knownGraphs.has(graph.graph_id),
             );
+            const cleanupErrors: string[] = [];
             for (const graph of stale) {
-                // `force` because a scratch recording, if a test ever makes one,
-                // is sealed and would otherwise refuse to go.
-                await viewer.deleteGraph(graph.graph_id, true).catch(() => undefined);
+                // `force` because a scratch recording is sealed and would
+                // otherwise refuse to go.
+                await viewer.deleteGraph(graph.graph_id, true).catch((error) => {
+                    cleanupErrors.push(`graph ${graph.graph_id}: ${error.message}`);
+                });
+            }
+
+            const after = await viewer.census();
+            for (const experiment of after.experiments.filter((e) => isScratch(e.label))) {
+                // ⚠️ The reason is KEPT rather than swallowed. A silent catch here
+                // turned "cannot delete: it still has 1 instance" into a bare
+                // count mismatch, and I spent a while looking in the wrong place.
+                await viewer.deleteExperiment(experiment.experiment_id).catch((error) => {
+                    cleanupErrors.push(`experiment ${experiment.experiment_id}: ${error.message}`);
+                });
+                if (leftovers.some((l) => l.experiment_id === experiment.experiment_id)) {
+                    health.leftoversCleaned.push(experiment.experiment_id);
+                }
             }
 
             const end = await viewer.census();
@@ -141,7 +157,10 @@ export const test = base.extend<Fixtures>({
             expect(
                 health.storesRestored,
                 `stores not restored: ${end.graphs.length}/${baseline.graphs} boards, ` +
-                    `${end.experiments.length}/${baseline.experiments} experiments`,
+                    `${end.experiments.length}/${baseline.experiments} experiments` +
+                    (cleanupErrors.length > 0
+                        ? `. Cleanup errors: ${cleanupErrors.join("; ")}`
+                        : ""),
             ).toBe(true);
         }
     },

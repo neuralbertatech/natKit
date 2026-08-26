@@ -2,38 +2,323 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-20
+**Last updated:** 2026-08-21
 
-## ✅ THE IMU ADL EPIC IS CODE-COMPLETE. 13 TICKETS, NOTHING PUSHED.
+## Where things stand
 
-Zach's flow works end to end: open Visual Programming → pick the **IMU ADL session**
-template → a workspace, experiment and wired board arrive → the gate refuses an
-unmapped or uncalibrated setup → Record asks who the run is of → the participant
-sees the image and hears the clip → the export carries labels, body positions,
-participant and attribution → one click gives the whole cohort as a tar.
+The IMU ADL epic is **merged and pushed** (see the history below). Current work is
+**TEC-NATKIT-33 / #377 — device health**, on `zach/377-device-health` in both
+repos, pushed, 75%.
 
-⚠️ **NOTHING IS PUSHED OR MERGED.** One branch per ticket, and the stack is
-**linear** — each is an ancestor of the next, so `zach/415-...` contains everything
-and merging in this order replays cleanly:
+### #377: COMPLETE, pushed, 100%, awaiting verification
 
 ```
-  zach/403-instance-participant-snapshot   dee9a00 -> libnatkit 345c7fb
-  zach/404-participant-per-run             cea3a6e -> a6d55c2
-  zach/405-workspace-container             5075ad4 -> 359e4e5
-  zach/406-workspace-scoped-pickers        465bdb8 -> 359e4e5
-  zach/407-adl-imu-workspace-template      ae400a8 -> 359e4e5
-  zach/409-sensor-position-mapping         412f0cc -> 54b1b1f
-  zach/408-record-gate                     fa3db28 -> b76733c
-  zach/410-adl-stimulus-placeholders       6ceb7d7 -> b76733c
-  zach/417-template-savable-without-stream 2283203 -> b76733c
-  zach/418-participant-view-clipping       d56357e -> b76733c
-  zach/411-cohort-export                   b1b9612 -> 54be790
-  zach/413-backend-log-visibility          fd0ffbf -> bf27894
-  zach/415-portainer-instance-volume       95e954e -> bf27894   <- tip
+  natKit           ffaf72f  the toolbar pill + the Logs page
+  libnatkit        787089f  DeviceHealth + generic LOGGING_LOG tailing
+  libnatkit-core   fa50878  the two binary schemas, descriptors, decoders, fixture test
 ```
 
-Tip verified: frontend `npm run check` clean, **131 tests pass**, host build green,
-and the in-container build (the only one that compiles the Parquet path) green.
+The hub publishes its own health and every leaf's once a second on
+`Log-<id>-Binary-NatKitPrimaryStatusV1` / `-NatKitNodeStatusV1`. Nothing could
+read them. Now: two decoders (168 B and 144 B, explicit little-endian at pinned
+offsets), a differencing layer, and a pill next to "Connected" in the graph
+toolbar that expands to hub + every leaf.
+
+**Verified against the live four-leaf rig**, with the arithmetic cross-checking
+itself: four leaves at 10.0 data frames/s plus heartbeats = the hub's 44.7
+`frames_sent`/s, and the 10/s independently equals 80 frames per 8 s counted off
+MQTT. Evidence + manifest attached to the ticket; also in
+`~/natkit-verification/health/`.
+
+Zach's call on the title's first half: a **generic log viewer**, not LOGGING_LOG
+in the stream list. Built as a "Logs" nav page — topic picker grouped by device,
+filterable stream, opt-in per topic. The backend resolves topics through the
+schema registry, so a log added tomorrow reads without a frontend change.
+
+### Traps this work bought, worth not re-learning
+
+- ⚠️ **A record with no message field must not render as its whole JSON.** A
+  34-field status frame wrapped over eight rows and five devices at 1 Hz buried
+  every real log line. Summarise to one line, object behind an expander, and
+  clamp in CSS too — a device may log 900 characters on one line.
+- ⚠️ **A tick is not a window.** A leaf's `frames_built` reaches the hub on the
+  *leaf's* heartbeat (every 2 s), out of step with the hub's 1 Hz publish. A 1 s
+  rate on it read 0.0/s then 20.0/s for a counter that cannot be below 10/s.
+  Rates span >= 5 s of DEVICE clock now. Any new counter relayed via a leaf has
+  the same hazard.
+- ⚠️ **Kafka's partition mtime is page-cached and lies.** I read "no writes
+  today" off `/var/lib/kafka/data/*/` and concluded the backend was replaying
+  history, while the rig was in fact live. The instrument that settled it was
+  `uptime_us` advancing 1:1 with wall time across consecutive ticks. Independent
+  confirmation is `mosquitto_sub` counting messages.
+- ⚠️ **`pgrep -f libnatkit-natkit-backend` matches pid 1**, because the
+  container's supervisor loop has the path in its cmdline. Use
+  `pgrep -x -f /full/path` and check `readlink /proc/<pid>/exe` — a
+  "(deleted)" exe means the binary was replaced and the process is still the old
+  one.
+- The **frontend is bind-mounted** (`./frontend:/app`), so no image rebuild is
+  needed for UI work; the **backend is not**, so a change needs
+  `podman cp` + an in-container `cmake --build` + killing the backend pid.
+
+### #318 (TEC-NATKIT-7) done — audit + the live half
+
+`natKit a3e8496` on `zach/318-stream-sync-quality` (off `zach/377-device-health`,
+which it depends on). The audit found the ticket's transport half already built by
+#377; what was missing was the #319 whiteboard's "jitter on the Stream". A source
+node's inspector now shows that stream's clock fit next to **Worn at**.
+
+⚠️ Two process traps from this one:
+
+- **A DOM-mutating Playwright probe races Svelte's re-render.** I "measured" two
+  layout placements by setting `innerHTML` and re-reading boxes, and got
+  non-monotonic nonsense. Measure what the component renders, or compute from
+  text metrics — never mutate and re-measure.
+- **State the branch base explicitly.** `git checkout trunk || git checkout <dep>`
+  silently took trunk, so #318 was branched off a base with no device-health work
+  and an import silently no-op'd into a runtime error. A string replace that finds
+  no anchor is a no-op, not an error: assert the anchor.
+
+### #442 (TEC-NATKIT-77) done — a recording seals its clock record
+
+`natKit 709d47b`, `libnatkit 22ae1b0` on `zach/442-recording-clock-quality` (off
+`zach/318-stream-sync-quality`). Snapshotted at both ends of a run; beacon loss
+differenced into a rate; the summary reaches the cohort manifest.
+
+**The health tailer is now a SERVICE**, started in `NatKitBackend.cpp` at boot,
+not a per-connection thread. That is structural: tailing inside a WebSocket
+handler made a recording's answer depend on whether somebody had the panel open.
+
+⚠️ Found by running it, not reading it: lazily starting the tailer meant the FIRST
+recording after a restart sealed "no clock data" for every device — accusing the
+hardware of our own cold start, on the one run nobody gets to redo. Hence
+`not_watching` as a distinct status from `no_status_frames`.
+
+The clock record's rendering is **fully verified** by
+`e2e/98-recording-clock-record.spec.ts` — the no-devices summary and a real
+device's row ("fit held, residual 48.7 µs") against the live rig.
+
+Writing that test also found: the summary read **"all 0 held"** with no devices (a
+reassurance about nothing — fixed, `db19219`), and TWO harness defects: the e2e
+teardown deleted experiments before the instances that block their deletion, and
+swallowed the error saying so.
+
+### Branch stack
+
+```
+  trunk
+   ├── zach/419-participant-copy       0ebef76   #69 (+ the e2e fixture, merged in)
+   ├── zach/443-one-streamtype         647587d   #78 + #79 + #19 + #80 + the fixture
+   └── zach/377-device-health          c7c4e24   #33
+        └── zach/318-stream-sync-quality      0ad9ff8   #7
+             └── zach/442-recording-clock-quality  709d47b   #77
+```
+
+⚠️ `zach/443-one-streamtype` carries THREE tickets (#78, #79, #19). Drift on my
+part — the convention is one branch per ticket. All three are small and mutually
+independent, so they merge together; flagged rather than rewriting pushed history.
+
+### #443 (TEC-NATKIT-78) done — core/streams deleted
+
+`natKit c1bec30`, `libnatkit 871a4ac` on `zach/443-one-streamtype`.
+
+⚠️ **The ticket I filed described a hazard that could not occur.** I claimed two
+live StreamType enums diverged and lost marker topics; in fact
+`#add_subdirectory(core/streams/src)` has been commented out since 67388da
+(Feb 2024), so nothing compiles the second one. **Check the build before
+describing a runtime failure mode.**
+
+The real defect was 1485 lines across 32 files that read as live code — including
+committed MSVC `.obj`/`.tlog` build output in a Syncthing-synced tree. Deleted,
+along with an orphan test and the Visual Studio solution entry that was keeping it
+nominally alive (checked standalone first; .sln left balanced 15/15).
+
+⚠️ Not verified: Visual Studio opening the edited .sln (no Windows here).
+
+### #444/#79 and #342/#19 done
+
+- **#79** — the mqtt hello-world test reached `test.mosquitto.org`, a THIRD-PARTY
+  public broker, and failed after 133 s. `ctest` for the whole repo was red and
+  slow; it is now **green in 0.14 s** with that test opt-in behind
+  `NATKIT_TEST_PUBLIC_BROKER=1`. ⚠️ I had filed it saying localhost — I read the
+  wrong line of the file.
+- **#19** — the designer flashed the pre-edit protocol for the length of the save
+  round trip. A sent-but-unconfirmed edit is now held until the stored record's
+  `updated_at_us` advances (same clock on both sides), with a 10 s timeout that
+  says so rather than reverting silently. Verified by reproducing the ticket's
+  MutationObserver measurement AND by disabling the fix to watch the test fail:
+  `3,4,3,4` broken vs `3,4` fixed.
+
+### The e2e fixture that unblocked everything
+
+`VpApp.attachNodes()` writes nodes onto the scratch board through the socket. Until
+it existed the suite could create a board but not put anything on it, so nothing
+living on a node — a run surface, a source's clock — could be verified at all.
+Four traps, each of which silently produced an EMPTY CANVAS:
+
+1. **park the editor first** (`page.goto("about:blank")`) — its debounced auto-save
+   writes the draft it holds, overwriting a socket write;
+2. **drop `editor_metadata`** from the payload — it is the editor's composite tree
+   and takes precedence over the flattened `nodes` on load;
+3. **drop the editor's localStorage copy** (`natkit.streamviewer.editorGraphs.v1`)
+   — it takes precedence over the backend record, by design;
+4. **`inline_experiment` cannot be seeded** — the backend keeps only
+   id/kind/label/output_port_ids/position on a node, so use `showRunSurface()`.
+
+Also: `openParticipantView()` for the LARGE run surface. The inline one is the
+operator's thumbnail and does not carry the how-to lines at all — asserting it and
+calling the participant view verified is a mistake I made once.
+
+Device ids come from `viewer.devicesWithClockFit()`, never hardcoded, and
+hardware-dependent tests SKIP when the rig is absent.
+
+### ⚠️ Verification lesson from today, three times over
+
+Three attempts to screenshot a shipped rendering failed, and each time my first
+explanation was wrong:
+
+1. **an unscoped locator** — `hasText: /run-\d{4}/` matched somebody else's
+   recording, because run numbering restarts per experiment. Use
+   `VpApp.openInstance(graphId)`, which keys on the row's `title`.
+2. **a DOM-mutating Playwright probe races Svelte's re-render** — gave
+   non-monotonic width readings. Measure what the component renders.
+3. **the instance was genuinely unreachable** (#80) — TWO silent bugs, and my
+   first three explanations (stale listing, workspace filter, `failed` status) were
+   all wrong. What settled it: intercepting the page's own WebSocket frames to
+   prove the client HAD the data, then a temporary probe inside the derivation that
+   printed `instances=9 rootKeys=["pos-probe"]`. **Instrument the derivation, not
+   the symptom.**
+
+The e2e fixtures in `frontend/e2e/support` are the right harness for this — scratch
+board, guaranteed cleanup, console-error guard, a WS client. Use them instead of
+throwaway scripts.
+
+### #432/#75 done in code (not flashed) — and the firmware did not build
+
+`natKit-IMU cd408de` on `zach/432-atomic-uplink-counters`. The four producer-side
+uplink counters are atomic now; the drain-side three stay plain words because
+drainTask is their only writer (and a 64-bit atomic is not lock-free on a 32-bit
+target). `uplinkStats()` returns a snapshot by value.
+
+⚠️ **COMPILED, NOT FLASHED.** Proof the race is gone needs a rig run where
+`frames_queued >= frames_sent`.
+
+⚠️ **The bigger find: `sdkconfig.defaults` is read ONCE.** The build was already
+broken — `ethernet_net.cpp` failed with `eth_w5500_config_t` undeclared, which
+looks like an IDF incompatibility and is not. FOUR options were inert on this box,
+including **TEC-NATKIT-49's `CONFIG_PARTITION_TABLE_CUSTOM`** — so a fix sitting in
+Verification had never taken effect anywhere it was measured. After
+`rm sdkconfig && idf.py reconfigure` the app is at 23% of 3 MB (the ticket had 93%
+of 1 MB). Documented at the top of `sdkconfig.defaults`; memory note
+[[sdkconfig-defaults-read-once]].
+
+### #401/#52 done in code (not flashed) — V1 grown in place
+
+`natKit-IMU 39cf923`, `libnatkit-core b3ee455`. Zach chose to grow V1 rather than
+add a V2 (still developing; tests move with it). Sizes 168→192 and 144→168.
+
+⚠️ **Both sizes are accepted** — the fleet is flashed one board at a time, so
+refusing the deployed size would blank the health panel for the whole rig.
+⚠️ **`has_probe_sums` / `has_coherence_sums`** keep "this firmware does not report
+it" apart from "it measured zero". Verified against the live rig on OLD firmware:
+5 devices, real rates, flags false, sums zero.
+⚠️ **The offsets are now asserted by the TARGET compiler** (`offsetof` in
+`uplink.hpp`), so a field inserted in the firmware breaks the FIRMWARE build rather
+than silently shifting the host decoder in another repository.
+
+**After flashing, check first:** that a windowed mean from two samples matches the
+derived `coherence_typical_us` over the same interval. If they disagree the sums
+cover a different sample set than the derived figure, which is worse than wrong.
+
+**Follow-on:** `DeviceHealthTracker` already differences counters, so a windowed
+coherence figure in the rig pill is small — deliberately not built blind.
+
+### ⚠️ The health panel called a dead leaf live — fixed
+
+`libnatkit 60d3fe2`, `natKit 7f8fd95`. Found by USING the panel, not reading it.
+
+A leaf's status frame is composed and published **by the hub** from its registry
+entry, so when a leaf falls off the radio the hub keeps publishing that entry once a
+second forever: frames arrive fresh about a device that is gone, every counter
+frozen. `age_ms` measures backend receipt, so it stayed ~0 and `quiet` stayed false.
+My original comment said "a device that stops sending leaves a last frame that looks
+healthy forever" and handled that — I did not consider that something else might
+keep sending on its behalf.
+
+Liveness now derives from the **device's own clock** (`last_seen_us`). `unheard_ms`
+sits alongside `age_ms`, and `quiet_reason` separates `no_frames` (broker/bridge/hub)
+from `device_not_heard` (radio/board) because they send you to different halves of
+the system.
+
+**The generalisable lesson:** freshness of a message is not liveness of its subject
+whenever something can relay or compose on the subject's behalf. Ask whose clock the
+timestamp belongs to.
+
+Board itself + the hub never expiring the entry: **#448/#81**.
+
+### #450/#83 — an indicator LED set from the frontend
+
+`natKit-IMU 85478f2`, `natKit d5c08ae`. Zach redirected from a firmware-side colour
+table to an operator-set colour over EXECUTION_COMMAND: `get_led`/`set_led`,
+persisted in NVS, restored at boot; swatches per device in the rig-health panel.
+
+⚠️ **Set once, not per loop** — the Arduino firmware disabled its pixels because
+`Adafruit_NeoPixel::show()` re-installed the RMT driver every call and rebooted the
+board after ~11 calls. Its own note asks for "install the driver once".
+⚠️ GPIO **4** (the soldered pixel). NOT GPIO 0 — that is the onboard pixel, needs
+its power rail via GPIO 2, and is the download-mode strapping pin.
+⚠️ Compiled, not flashed — but the path either side IS proven: the swatch reached
+the leaf and it answered `unknown command "set_led"`.
+
+### ⚠️ #449/#82 — device commands from the UI have NEVER worked
+
+The bridge does not forward Kafka topics **created after it started**. `Command-…`
+topics are created by the backend on the first command, so they were never
+republished to `natKit/receiving/` where the hub listens. Every UI command timed out
+with a message blaming the DEVICE — the one part of the path that was fine.
+
+Proven by elimination: publishing by hand to the hub's topic gave
+`commands_received 0→1, relayed 1, delivered 1, answers 3`; after
+`podman restart natkit_natkit-v0-bridge_1` the UI path returned
+`"pong from device 13793649553360, up 330221 s"`.
+
+**Workaround:** restart the bridge after any device's command topic is first created.
+
+### Filed, not started
+
+- **#444** — `libnatkit-core-mqtt-unittest-cxx` fails on
+  `ManualConnection.HelloWorld`: `mosquitto_connect` to localhost:1883 errors
+  after a 133 s timeout while a broker IS listening and `mosquitto_pub` works.
+  Pre-existing, untracked, and it makes `ctest` red for everyone — which is how a
+  real failure gets waved through.
+- ~~TEC-NATKIT-75 (#432)~~ — done in code, see above. Original note: — `frames_queued` undercounts: a lost-update race,
+  plain `++` on a shared `uint32_t` from two tasks. Reads ~30 *below*
+  `frames_sent` while `frames_dropped` is 0. `frames_dropped` has the same defect
+  and is worse, being the counter the uplink is judged by.
+- **TEC-NATKIT-76** (#437, FIXED in `0e08cb5`) — the dev stack's backend and
+  bridge had lost `LIBNATKIT_KAFKA_BROKER_ADDRESS`, so the backend talked to
+  `localhost:29093` and served an **empty stream list with no error** for 24 h.
+  Same root cause as #70: values that were inherited when the dev file was an
+  override, and silently dropped when it became self-contained.
+
+### #395 — answered, awaiting disposition
+
+21.6 h clean on the swapped board: `4c:75:25` now reads −31 dBm (the *best* of
+the four) with send-failure and sequence-gap rates both flat zero, delivering a
+full 10.0/s. Its huge cumulative figures are historical. The **connector**
+theory holds, not the position. Commented on the ticket with the table.
+
+### Still needing Zach
+
+- **#419** — participant-facing copy ("relax your hand" shown to someone doing a
+  shoulder/trunk task). Needs his words, not mine.
+- **#424** — two host commands: `systemctl --user enable --now natkit-stack.service`
+  and `loginctl enable-linger $USER`.
+- **23 tickets in Verification** awaiting sign-off. None of the ADL epic has been
+  through a real session with a participant.
+
+---
+
+## History: the IMU ADL epic (merged 2026-08-20)
 
 ### What each ticket did, in one line
 

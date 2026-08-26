@@ -25,6 +25,7 @@
 // working unchanged. The one thing offsets cannot express is a wait, whose length
 // is only known once it is released — see resolveScheduleWaits().
 import { buildCueScheduleForProtocol } from "./experiment";
+import type { ParticipantCopy } from "./participantCopy";
 import type { EmgCueEvent, EmgCuePhase } from "./experiment";
 import type { SessionProtocol } from "./types";
 
@@ -165,6 +166,12 @@ export interface StepProtocol {
      * that point, because regenerating over hand edits would destroy them.
      */
     quick_setup?: unknown;
+    /**
+     * The words the PARTICIPANT sees (TEC-NATKIT-69). Absent means the neutral
+     * defaults, which name no body part — see participantCopy.ts for why that is
+     * the safe direction rather than inheriting either study's vocabulary.
+     */
+    participant_copy?: ParticipantCopy;
     steps: ExperimentStep[];
 }
 
