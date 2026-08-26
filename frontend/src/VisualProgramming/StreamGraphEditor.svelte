@@ -14,6 +14,7 @@
         Pencil,
         Network,
         GitBranch,
+        Lightbulb,
         Monitor,
         Package,
         PanelLeft,
@@ -112,6 +113,7 @@
     import ExperimentDesigner from "./ExperimentDesigner.svelte";
     import DialogHost from "./DialogHost.svelte";
     import { askConfirm, askName, showAlert } from "./dialogs.svelte";
+    import { resolveSourceView } from "./sourceOnlyView";
     import {
         DEFAULT_VIEWPORT,
         NODE_WIDTH,
@@ -3856,10 +3858,50 @@
 
     let expandedViewerNodeId = $state<string | null>(null);
 
+    // ⚠️ Runtime FIRST, config second, and the order matters. A running graph may
+    // have rebound a source to a replay's scratch topic (`replay_id`), so its
+    // runtime output_stream_id is the truth whenever there is one. The config
+    // fallback is what lets a source be watched before Run is ever pressed
+    // (TEC-NATKIT-98) -- it must not override a live rebinding.
+    function viewableStreamId(nodeId: string | null): string | null {
+        if (!nodeId) return null;
+        const running = nodeRuntimeStatus(nodeId)?.output_stream_id;
+        if (running) return String(running);
+        return resolveSourceView(nodeId, draftGraph.nodes, draftGraph.edges)
+            .streamId;
+    }
+
     const expandedViewerStreamId = $derived(
-        expandedViewerNodeId
-            ? nodeRuntimeStatus(expandedViewerNodeId)?.output_stream_id ??
-                  null
+        viewableStreamId(expandedViewerNodeId),
+    );
+
+    // --- Exposed controls (TEC-NATKIT-99) ------------------------------------
+    //
+    // A place on the inspector for controls that act on the THING BEHIND a node
+    // rather than on the graph. A stream_source stands for a physical board on a
+    // bench, and there are questions only the board can answer -- "which one are
+    // you?" being the one that has cost the most time.
+    //
+    // ⚠️ Keyed on the stream id, not on the node: the command goes to a DEVICE.
+    // Two source nodes bound to the same stream are the same board, and both
+    // should show the same pending state, which falls out of keying this way.
+    const selectedNodeControlStreamId = $derived(
+        selectedNode?.kind === "stream_source"
+            ? viewableStreamId(selectedNode.id)
+            : null,
+    );
+
+    const identifyPending = $derived(
+        selectedNodeControlStreamId
+            ? deviceCommandPending[
+                  `${selectedNodeControlStreamId}:identify`
+              ] === true
+            : false,
+    );
+
+    const identifyResult = $derived(
+        selectedNodeControlStreamId
+            ? (deviceCommandResults[selectedNodeControlStreamId] ?? null)
             : null,
     );
 
@@ -3905,10 +3947,13 @@
     }
 
     function openViewerData(node: EditorGraphNode | null) {
-        if (!node || node.kind !== "viewer") {
+        // ⚠️ A stream_source is openable in its own right now. That is the whole
+        // point of TEC-NATKIT-98: "which stream is this node?" used to be a
+        // board-start away, for data that was already in Kafka the entire time.
+        if (!node || (node.kind !== "viewer" && node.kind !== "stream_source")) {
             return;
         }
-        if (!nodeRuntimeStatus(node.id)?.output_stream_id) {
+        if (!viewableStreamId(node.id)) {
             return;
         }
         // Subscription is reconciled by the $effect below (keyed on the expanded
@@ -3924,7 +3969,7 @@
         const node = draftGraph.nodes.find((item) => item.id === nodeId) ?? null;
         if (node?.kind === "composite") {
             openCompositeInternals(node);
-        } else if (node?.kind === "viewer") {
+        } else if (node?.kind === "viewer" || node?.kind === "stream_source") {
             openViewerData(node);
         } else if (node?.kind === "markers" || node?.kind === "experiment") {
             expandedExperimentNodeId = node.id;
@@ -4952,9 +4997,9 @@
     {#if (node as { display_mode?: string }).display_mode === "imu_calibration"}
         {@render calibrationReadout(node)}
     {:else}
-        {@const streamId = nodeRuntimeStatus(node.id)?.output_stream_id}
+        {@const streamId = viewableStreamId(node.id)}
         {@render streamRenderer(
-            streamId ? String(streamId) : null,
+            streamId,
             true,
             viewerShowsMarkers(node),
         )}
@@ -7352,6 +7397,56 @@
                         </p>
                     {/if}
                 </div>
+
+                {#if selectedNodeControlStreamId}
+                    <div class="inspector-section">
+                        <p class="eyebrow">Controls</p>
+                        <p class="muted-text">
+                            Acts on the board itself, not on the graph. Works
+                            whether or not the graph is running.
+                        </p>
+                        <div class="inspector-action-row">
+                            <button
+                                type="button"
+                                class="action-btn secondary inspector-action"
+                                disabled={identifyPending}
+                                title="Flash this board's LED so you can see which one on the bench it is"
+                                onclick={() =>
+                                    sendDeviceCommand(
+                                        selectedNodeControlStreamId!,
+                                        "identify",
+                                    )}
+                            >
+                                <Lightbulb size={15} />
+                                {identifyPending
+                                    ? "Flashing…"
+                                    : "Identify"}
+                            </button>
+                            <button
+                                type="button"
+                                class="action-btn secondary inspector-action"
+                                title="Watch this sensor's live data without starting the graph"
+                                onclick={() => openViewerData(selectedNode)}
+                            >
+                                <Monitor size={15} />
+                                Open Live Stream
+                            </button>
+                        </div>
+                        {#if identifyResult}
+                            <p
+                                class="calib-command-result"
+                                class:failed={!identifyResult.ok}
+                                title={identifyResult.command}
+                            >
+                                {identifyResult.records.at(-1)?.message ??
+                                    identifyResult.error ??
+                                    (identifyResult.ok
+                                        ? "Flashed."
+                                        : "No answer.")}
+                            </p>
+                        {/if}
+                    </div>
+                {/if}
 
                 <div class="inspector-section">
                     <p class="eyebrow">Diagnostics</p>
