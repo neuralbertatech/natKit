@@ -16,10 +16,11 @@
      * wrong and would otherwise be made silently.
      */
     import {
-        REPORTS_GROUP,
         answerCarriesGroupState,
+        controlLabel,
         parseToggleStates,
         writeArgsFor,
+        type DeviceControl,
     } from "./deviceControls";
 
     interface Props {
@@ -36,6 +37,13 @@
         // rather than hidden: a disabled control with a reason beats a control
         // that silently fails.
         recording?: boolean;
+        // ⚠️ DISCOVERED, NOT DECLARED (TEC-NATKIT-10). The device advertises
+        // which reports it has; this component no longer knows. Empty means the
+        // device has not advertised, and the right answer then is to show
+        // nothing rather than four toggles it may not have.
+        toggles?: DeviceControl[];
+        // The command that reads the whole group, from the same advertisement.
+        readCommand?: string;
     }
 
     let {
@@ -43,14 +51,9 @@
         sendCommand,
         lastAnswer,
         recording = false,
+        toggles = [],
+        readCommand = undefined,
     }: Props = $props();
-
-    // ⚠️ ONE definition of the reports and ONE parser, shared with the Visual
-    // Programming node inspector (TEC-NATKIT-40). Both surfaces drive the same
-    // device commands, so a second copy of the list or of the answer format would
-    // drift the moment a report is added — and the two would disagree about what
-    // a board is collecting while both looked right.
-    const REPORTS = REPORTS_GROUP.toggles;
 
     type ReportKey = string;
 
@@ -60,11 +63,11 @@
 
     $effect(() => {
         if (!lastAnswer) return;
-        if (!answerCarriesGroupState(REPORTS_GROUP, lastAnswer.command)) {
+        if (!answerCarriesGroupState({ read: readCommand, toggles }, lastAnswer.command)) {
             return;
         }
         pending = false;
-        const parsed = parseToggleStates(REPORTS_GROUP, lastAnswer.message);
+        const parsed = parseToggleStates(toggles, lastAnswer.message);
         if (parsed) {
             known = parsed;
             // A refusal still reports the CURRENT state, which is why the error
@@ -77,7 +80,8 @@
 
     function refresh() {
         error = null;
-        pending = sendCommand(streamId, REPORTS_GROUP.readCommand);
+        if (!readCommand) return;
+        pending = sendCommand(streamId, readCommand);
         if (!pending) error = "Not connected";
     }
 
@@ -87,13 +91,9 @@
         // Only the changed field is sent. The device starts from its current
         // mask, so this cannot accidentally reset the others -- and it means two
         // toggles in flight do not clobber each other.
-        const spec = REPORTS.find((report) => report.id === key);
+        const spec = toggles.find((t) => (t.field ?? t.id) === key);
         if (!spec) return;
-        pending = sendCommand(
-            streamId,
-            REPORTS_GROUP.writeCommand,
-            writeArgsFor(spec, known),
-        );
+        pending = sendCommand(streamId, spec.write, writeArgsFor(spec, known));
         if (!pending) error = "Not connected";
     }
 </script>
@@ -116,15 +116,15 @@
 
     {#if known}
         <div class="toggles">
-            {#each REPORTS as report}
-                <label class:off={!known[report.id]}>
+            {#each toggles as report}
+                <label class:off={!known[report.field ?? report.id]}>
                     <input
                         type="checkbox"
-                        checked={known[report.id]}
+                        checked={known[report.field ?? report.id]}
                         disabled={pending || recording}
-                        onchange={() => toggle(report.id)}
+                        onchange={() => toggle(report.field ?? report.id)}
                     />
-                    {report.label}
+                    {controlLabel(report)}
                 </label>
             {/each}
         </div>

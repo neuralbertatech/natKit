@@ -123,6 +123,28 @@
     // The last device answer per stream, which is the ONLY source of truth about
     // what a node is collecting -- the samples cannot distinguish a disabled
     // sensor from one that has not reported yet.
+    // What each device advertises it can be asked to do. Empty until the first
+    // device_health message arrives, and empty forever for a device whose
+    // firmware predates the control channel -- in which case the toggles below
+    // correctly show nothing.
+    let deviceControls = $state<
+        import("./deviceControls").DeviceControlsEntry[]
+    >([]);
+
+    /**
+     * The report toggles a device ADVERTISES, or none.
+     *
+     * ⚠️ Empty is the right answer for a device that has not advertised, and it
+     * is why this page no longer shows four BNO08x toggles against hardware that
+     * may have none of them (TEC-NATKIT-10).
+     */
+    function reportTogglesFor(streamId: string) {
+        const entry = deviceControls.find((e) => e.device_id === streamId);
+        return (entry?.controls ?? []).filter(
+            (c) => c.kind === "toggle" && c.group === "reports",
+        );
+    }
+
     let deviceAnswers = $state<
         Record<string, { command: string; ok: boolean; message: string }>
     >({});
@@ -177,6 +199,11 @@
                         request_id: `transform-capabilities:${Date.now()}`,
                     });
                     requestEmgTransformList();
+                    // ⚠️ For the CONTROL ADVERTISEMENTS, not for a health panel
+                    // (TEC-NATKIT-10). Which reports a device has is something
+                    // only the device can say, and this is the message that
+                    // carries it.
+                    wsManager?.send({ action: "subscribe_device_health" });
                 }
             },
             onStreamList: (message: StreamListMessage) => {
@@ -296,6 +323,13 @@
                 const nextMap = new Map(transformProvenanceByStream);
                 nextMap.set(String(message.stream_id), message);
                 transformProvenanceByStream = nextMap;
+            },
+            onDeviceHealth: (message) => {
+                // ⚠️ Subscribed to purely for the CONTROL ADVERTISEMENTS
+                // (TEC-NATKIT-10). This page shows no health panel; it needs to
+                // know which reports a device actually has, and that only the
+                // device can say.
+                deviceControls = message.device_controls ?? [];
             },
             onDeviceCommandResult: (message) => {
                 // The device's own words, already correlated by the backend. A
@@ -1268,6 +1302,12 @@
                                                     lastAnswer={deviceAnswers[
                                                         String(streamId)
                                                     ] ?? null}
+                                                    toggles={reportTogglesFor(
+                                                        String(streamId),
+                                                    )}
+                                                    readCommand={reportTogglesFor(
+                                                        String(streamId),
+                                                    )[0]?.read}
                                                 />
                                             </div>
                                         {:else}

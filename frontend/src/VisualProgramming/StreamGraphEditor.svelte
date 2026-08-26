@@ -117,12 +117,12 @@
     import { askConfirm, askName, showAlert } from "./dialogs.svelte";
     import { resolveSourceView } from "./sourceOnlyView";
     import {
-        SOURCE_BUTTON_CONTROLS,
-        SOURCE_TOGGLE_GROUPS,
         answerCarriesGroupState,
+        controlLabel,
         parseToggleStates,
+        resolveControls,
         writeArgsFor,
-        type ToggleGroupSpec,
+        type DeviceControl,
     } from "../StreamViewer/deviceControls";
     import {
         DEFAULT_VIEWPORT,
@@ -4020,21 +4020,28 @@
         viewableStreamId(expandedViewerNodeId),
     );
 
-    // --- Exposed controls (TEC-NATKIT-99) ------------------------------------
+    // --- Device controls, DISCOVERED (TEC-NATKIT-10) -------------------------
     //
-    // A place on the inspector for controls that act on the THING BEHIND a node
-    // rather than on the graph. A stream_source stands for a physical board on a
-    // bench, and there are questions only the board can answer -- "which one are
-    // you?" being the one that has cost the most time.
-    //
-    // ⚠️ Keyed on the stream id, not on the node: the command goes to a DEVICE.
-    // Two source nodes bound to the same stream are the same board, and both
-    // should show the same pending state, which falls out of keying this way.
+    // ⚠️ NOTHING IS DECLARED HERE ANY MORE. Every control comes from the device's
+    // own advertisement, forwarded by the backend with its words already resolved
+    // against the registry. The hardcoded catalogue this replaced is what put
+    // four BNO08x report toggles on a Muse node and left "Read from device"
+    // timing out against hardware that has no such command.
     const selectedNodeControlStreamId = $derived(
         selectedNode?.kind === "stream_source"
             ? viewableStreamId(selectedNode.id)
             : null,
     );
+
+    const selectedNodeControlsEntry = $derived(
+        selectedNodeControlStreamId
+            ? (deviceHealth?.device_controls?.find(
+                  (entry) => entry.device_id === selectedNodeControlStreamId,
+              ) ?? null)
+            : null,
+    );
+
+    const resolvedControls = $derived(resolveControls(selectedNodeControlsEntry));
 
     const selectedNodeControlAnswer = $derived(
         selectedNodeControlStreamId
@@ -4042,8 +4049,8 @@
             : null,
     );
 
-    function controlPending(command: string): boolean {
-        if (!selectedNodeControlStreamId) return false;
+    function controlPending(command: string | undefined): boolean {
+        if (!selectedNodeControlStreamId || !command) return false;
         return (
             deviceCommandPending[
                 `${selectedNodeControlStreamId}:${command}`
@@ -4067,12 +4074,12 @@
     $effect(() => {
         const answer = selectedNodeControlAnswer;
         if (!answer) return;
-        for (const group of SOURCE_TOGGLE_GROUPS) {
+        for (const group of resolvedControls.toggleGroups) {
             if (!answerCarriesGroupState(group, answer.command)) continue;
             const message = answer.records.at(-1)?.message ?? "";
-            const parsed = parseToggleStates(group, message);
+            const parsed = parseToggleStates(group.toggles, message);
             if (parsed) {
-                toggleStates = { ...toggleStates, [group.id]: parsed };
+                toggleStates = { ...toggleStates, [group.group]: parsed };
                 // A refusal still reports the CURRENT state, which is why the
                 // state and the error come from the same answer.
                 toggleError = answer.ok ? null : message;
@@ -4082,22 +4089,20 @@
         }
     });
 
-    function readToggleGroup(group: ToggleGroupSpec) {
-        if (!selectedNodeControlStreamId) return;
+    function readToggleGroup(group: { read?: string }) {
+        if (!selectedNodeControlStreamId || !group.read) return;
         toggleError = null;
-        sendDeviceCommand(selectedNodeControlStreamId, group.readCommand);
+        sendDeviceCommand(selectedNodeControlStreamId, group.read);
     }
 
-    function flipToggle(group: ToggleGroupSpec, toggleId: string) {
-        const current = toggleStates[group.id];
+    function flipToggle(groupId: string, toggle: DeviceControl) {
+        const current = toggleStates[groupId];
         if (!selectedNodeControlStreamId || !current) return;
         if (controlsLockedByRecording) return;
-        const toggle = group.toggles.find((item) => item.id === toggleId);
-        if (!toggle) return;
         toggleError = null;
         sendDeviceCommand(
             selectedNodeControlStreamId,
-            group.writeCommand,
+            toggle.write,
             writeArgsFor(toggle, current),
         );
     }
@@ -7717,116 +7722,191 @@
                 {#if selectedNodeControlStreamId}
                     <div class="inspector-section">
                         <p class="eyebrow">Controls</p>
-                        <p class="muted-text">
-                            Acts on the board itself, not on the graph. Works
-                            whether or not the graph is running.
-                        </p>
 
-                        <div class="inspector-action-row">
-                            {#each SOURCE_BUTTON_CONTROLS as control (control.id)}
-                                {@const pending = controlPending(control.command)}
-                                <button
-                                    type="button"
-                                    class="action-btn secondary inspector-action"
-                                    disabled={pending}
-                                    title={control.title}
-                                    onclick={() =>
-                                        sendDeviceCommand(
-                                            selectedNodeControlStreamId!,
-                                            control.command,
-                                            control.args,
-                                        )}
-                                >
-                                    <Lightbulb size={15} />
-                                    {pending ? control.pendingLabel : control.label}
-                                </button>
-                            {/each}
-                            <button
-                                type="button"
-                                class="action-btn secondary inspector-action"
-                                title="Watch this sensor's live data without starting the graph"
-                                onclick={() => openViewerData(selectedNode)}
-                            >
-                                <Monitor size={15} />
-                                Open Live Stream
-                            </button>
-                        </div>
+                        {#if resolvedControls.availability === "unadvertised" || resolvedControls.availability === "none"}
+                            <!-- ⚠️ NO CONTROLS ARE INVENTED. This is the whole
+                                 point: a device that has not said what it
+                                 supports gets nothing, rather than a default set
+                                 of IMU toggles it may not have. -->
+                            <p class="muted-text">{resolvedControls.reason}</p>
+                        {:else}
+                            {#if resolvedControls.availability === "unreachable"}
+                                <!-- Shown, disabled, WITH the reason. Hiding them
+                                     would be indistinguishable from a board that
+                                     never had them. -->
+                                <p class="calib-command-result failed">
+                                    {resolvedControls.reason}
+                                </p>
+                            {:else}
+                                <p class="muted-text">
+                                    Acts on the board itself, not on the graph.
+                                    Works whether or not the graph is running.
+                                </p>
+                            {/if}
 
-                        {#each SOURCE_TOGGLE_GROUPS as group (group.id)}
-                            {@const known = toggleStates[group.id] ?? null}
-                            {@const reading = controlPending(group.readCommand)}
-                            {@const writing = controlPending(group.writeCommand)}
-                            <div class="control-group">
-                                <div class="control-group-head">
-                                    <span class="control-group-title">
-                                        Collected reports
-                                    </span>
+                            {@const offline =
+                                resolvedControls.availability === "unreachable"}
+
+                            <div class="inspector-action-row">
+                                {#each resolvedControls.buttons as control (control.id)}
+                                    {@const pending = controlPending(control.write)}
                                     <button
                                         type="button"
                                         class="action-btn secondary inspector-action"
-                                        disabled={reading || writing}
-                                        onclick={() => readToggleGroup(group)}
+                                        disabled={pending || offline}
+                                        title={control.description ??
+                                            controlLabel(control)}
+                                        onclick={() =>
+                                            sendDeviceCommand(
+                                                selectedNodeControlStreamId!,
+                                                control.write,
+                                            )}
                                     >
-                                        <RefreshCw size={14} />
-                                        {known ? "Refresh" : group.readLabel}
+                                        <Lightbulb size={15} />
+                                        {pending ? "Working…" : controlLabel(control)}
                                     </button>
-                                </div>
-
-                                {#if controlsLockedByRecording}
-                                    <p class="muted-text">
-                                        A recording is in progress. Changing what a
-                                        sensor collects would change the recording's
-                                        schema partway through, so it is refused
-                                        until the recording stops.
-                                    </p>
-                                {/if}
-
-                                {#if known}
-                                    <div class="control-toggles">
-                                        {#each group.toggles as toggle (toggle.id)}
-                                            <label
-                                                class="control-toggle"
-                                                class:off={!known[toggle.id]}
-                                                title={`Collect ${toggle.label.toLowerCase()} on this device`}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={known[toggle.id]}
-                                                    disabled={reading ||
-                                                        writing ||
-                                                        controlsLockedByRecording}
-                                                    onchange={() =>
-                                                        flipToggle(group, toggle.id)}
-                                                />
-                                                {toggle.label}
-                                            </label>
-                                        {/each}
-                                    </div>
-                                    <p class="muted-text">{group.note}</p>
-                                {:else if !reading}
-                                    <p class="muted-text">{group.unknownNote}</p>
-                                {/if}
-
-                                {#if reading || writing}
-                                    <p class="muted-text">Waiting for the device…</p>
-                                {/if}
+                                {/each}
+                                <button
+                                    type="button"
+                                    class="action-btn secondary inspector-action"
+                                    title="Watch this sensor's live data without starting the graph"
+                                    onclick={() => openViewerData(selectedNode)}
+                                >
+                                    <Monitor size={15} />
+                                    Open Live Stream
+                                </button>
                             </div>
-                        {/each}
 
-                        {#if toggleError}
-                            <p class="calib-command-result failed">{toggleError}</p>
-                        {:else if selectedNodeControlAnswer}
-                            <p
-                                class="calib-command-result"
-                                class:failed={!selectedNodeControlAnswer.ok}
-                                title={selectedNodeControlAnswer.command}
-                            >
-                                {selectedNodeControlAnswer.records.at(-1)?.message ??
-                                    selectedNodeControlAnswer.error ??
-                                    (selectedNodeControlAnswer.ok
-                                        ? "Done."
-                                        : "No answer.")}
-                            </p>
+                            {#each resolvedControls.toggleGroups as group (group.group)}
+                                {@const known = toggleStates[group.group] ?? null}
+                                {@const reading = controlPending(group.read)}
+                                {@const writing = controlPending(
+                                    group.toggles[0]?.write,
+                                )}
+                                <div class="control-group">
+                                    <div class="control-group-head">
+                                        <span class="control-group-title">
+                                            {group.group}
+                                        </span>
+                                        {#if group.read}
+                                            <button
+                                                type="button"
+                                                class="action-btn secondary inspector-action"
+                                                disabled={reading || writing || offline}
+                                                onclick={() => readToggleGroup(group)}
+                                            >
+                                                <RefreshCw size={14} />
+                                                {known ? "Refresh" : "Read from device"}
+                                            </button>
+                                        {/if}
+                                    </div>
+
+                                    {#if controlsLockedByRecording}
+                                        <p class="muted-text">
+                                            A recording is in progress. Changing
+                                            what a sensor collects would change
+                                            the recording's schema partway
+                                            through, so it is refused until the
+                                            recording stops.
+                                        </p>
+                                    {/if}
+
+                                    {#if known}
+                                        <div class="control-toggles">
+                                            {#each group.toggles as toggle (toggle.id)}
+                                                {@const key = toggle.field ?? toggle.id}
+                                                <label
+                                                    class="control-toggle"
+                                                    class:off={!known[key]}
+                                                    title={toggle.description ??
+                                                        controlLabel(toggle)}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={known[key]}
+                                                        disabled={reading ||
+                                                            writing ||
+                                                            offline ||
+                                                            controlsLockedByRecording}
+                                                        onchange={() =>
+                                                            flipToggle(
+                                                                group.group,
+                                                                toggle,
+                                                            )}
+                                                    />
+                                                    {controlLabel(toggle)}
+                                                </label>
+                                            {/each}
+                                        </div>
+                                    {:else if !reading}
+                                        <p class="muted-text">
+                                            The device has not been asked yet.
+                                            This cannot be read from the data: a
+                                            disabled sensor looks exactly like one
+                                            that has not reported.
+                                        </p>
+                                    {/if}
+
+                                    {#if reading || writing}
+                                        <p class="muted-text">
+                                            Waiting for the device…
+                                        </p>
+                                    {/if}
+                                </div>
+                            {/each}
+
+                            {#each resolvedControls.inputs as control (control.id)}
+                                <div class="control-group">
+                                    <div class="control-group-head">
+                                        <span class="control-group-title">
+                                            {controlLabel(control)}
+                                        </span>
+                                        {#if control.read}
+                                            <button
+                                                type="button"
+                                                class="action-btn secondary inspector-action"
+                                                disabled={controlPending(control.read) ||
+                                                    offline}
+                                                onclick={() =>
+                                                    sendDeviceCommand(
+                                                        selectedNodeControlStreamId!,
+                                                        control.read!,
+                                                    )}
+                                            >
+                                                <RefreshCw size={14} />
+                                                Read from device
+                                            </button>
+                                        {/if}
+                                    </div>
+                                    <p class="muted-text">
+                                        {control.description ?? ""}
+                                        {#if control.min !== undefined && control.max !== undefined}
+                                            Range {control.min}–{control.max}{control.unit
+                                                ? ` ${control.unit}`
+                                                : ""}.
+                                        {/if}
+                                    </p>
+                                </div>
+                            {/each}
+
+                            {#if toggleError}
+                                <p class="calib-command-result failed">
+                                    {toggleError}
+                                </p>
+                            {:else if selectedNodeControlAnswer}
+                                <p
+                                    class="calib-command-result"
+                                    class:failed={!selectedNodeControlAnswer.ok}
+                                    title={selectedNodeControlAnswer.command}
+                                >
+                                    {selectedNodeControlAnswer.records.at(-1)
+                                        ?.message ??
+                                        selectedNodeControlAnswer.error ??
+                                        (selectedNodeControlAnswer.ok
+                                            ? "Done."
+                                            : "No answer.")}
+                                </p>
+                            {/if}
                         {/if}
                     </div>
                 {/if}

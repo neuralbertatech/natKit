@@ -1,137 +1,191 @@
-// The controls a node exposes for the DEVICE behind it (TEC-NATKIT-99 / -40).
+// The controls a device says it can be asked to do (TEC-NATKIT-10).
 //
-// A stream_source stands for a physical board, and some questions only the board
-// can answer or act on. This declares those as data — a button, or a toggle —
-// so the inspector renders a catalogue rather than hand-written markup per
-// control, and adding the next one is an entry here.
+// ⚠️ THIS FILE USED TO BE THE PROBLEM. It held a hardcoded catalogue —
+// SOURCE_BUTTON_CONTROLS and SOURCE_TOGGLE_GROUPS — shown for any node of kind
+// stream_source, so a Muse headband or an EMG pill rendered four BNO08x report
+// toggles it does not have, and "Read from device" sat there until it timed out.
 //
-// ⚠️ THE TRUTH COMES FROM THE DEVICE, NOT FROM THE DATA. This is the constraint
-// that shapes the whole toggle design, and it is not obvious: a disabled sensor
-// and one that simply has not reported yet are IDENTICAL in a frame — both are
-// zeroed with a clear has_data bit. A control driven off the samples would show
-// "waiting" forever for something deliberately switched off. So a toggle has no
-// state until the device has been asked, and `null` is a real, displayable state
-// rather than a default of "off".
+// Nothing is declared here now. Every control comes from the device's own
+// advertisement on its Configuration channel, resolved by the backend against a
+// registry a third-party library can inject into. Adding a device means
+// registering descriptors on the server, not editing this file.
 
-/** A control that performs a one-shot action on the device. */
-export interface ButtonControl {
-    kind: "button";
+/** One control, as the backend forwards it from the device's advertisement. */
+export interface DeviceControl {
     id: string;
-    label: string;
-    /** Shown while the command is in flight. */
-    pendingLabel: string;
-    title: string;
-    command: string;
-    args?: Record<string, unknown>;
+    kind: "button" | "toggle" | "input";
+    /** The command that acts. For a button, this IS the action. */
+    write: string;
+    /** The command that reads state. Absent for a button — nothing to read. */
+    read?: string;
+    /** Controls read together share a group. */
+    group?: string;
+    /** The args key on the wire, e.g. "accel", "quarter_dbm". */
+    field?: string;
+    /** A FieldValueType name. */
+    type?: string;
+    min?: number;
+    max?: number;
+    /**
+     * Resolved from the registry server-side.
+     *
+     * ⚠️ ABSENT means no library described this id. The UI must render the raw
+     * id rather than invent a label — a control that silently disappears is
+     * indistinguishable from a device that does not have it, which turns "you
+     * did not load the library" into a hardware-looking bug.
+     */
+    label?: string;
+    description?: string;
+    unit?: string;
 }
 
-/** One switch within a toggle group. */
-export interface ToggleSpec {
-    /** The field name ON THE WIRE, e.g. "accel" — also the key sent to write it. */
-    id: string;
-    label: string;
+/** What the backend knows about one device's controls and reachability. */
+export interface DeviceControlsEntry {
+    device_id: string;
+    controls: DeviceControl[];
+    /**
+     * ⚠️ NOT the same as `controls` being empty. "Never advertised" (firmware
+     * predating the channel) and "advertised nothing" are different states and
+     * need different words on screen.
+     */
+    has_advertisement: boolean;
+    reachable: boolean;
+    since_heartbeat_ms: number;
+    /** Present only when a bridge advertised on this device's behalf. */
+    advertised_by?: string;
+}
+
+export type ControlsAvailability =
+    /** Advertised and reachable: controls are live. */
+    | "live"
+    /** Advertised, but no heartbeat inside the window. */
+    | "unreachable"
+    /** The device has never advertised — older firmware. */
+    | "unadvertised"
+    /** It advertised, and advertised nothing. */
+    | "none";
+
+export interface ResolvedControls {
+    availability: ControlsAvailability;
+    buttons: DeviceControl[];
+    inputs: DeviceControl[];
+    /** Toggles bundled by their group, in advertisement order. */
+    toggleGroups: { group: string; read?: string; toggles: DeviceControl[] }[];
+    /** Why controls cannot be used, or null when they can. */
+    reason: string | null;
+}
+
+/** The words for a control: the registry's, the device's, or its raw id. */
+export function controlLabel(control: DeviceControl): string {
+    return control.label && control.label.length > 0 ? control.label : control.id;
 }
 
 /**
- * A set of switches that are READ TOGETHER and WRITTEN ONE AT A TIME.
+ * Resolve one device's entry into what the inspector should draw.
  *
- * ⚠️ The asymmetry is deliberate and is what makes concurrent toggling safe: the
- * device starts from its current mask and applies only the field it was sent, so
- * two toggles in flight cannot clobber each other and a write can never
- * accidentally reset the others.
+ * ⚠️ Returns the controls even when the device is UNREACHABLE. They are drawn
+ * disabled with a reason rather than hidden: a control that vanishes when a
+ * board goes quiet is indistinguishable from a board that never had it, and the
+ * operator loses the one piece of information that would tell them which end of
+ * the rig to go and look at.
  */
-export interface ToggleGroupSpec {
-    id: string;
-    /** Reads the state of every toggle in the group. */
-    readCommand: string;
-    /** Writes exactly one toggle. */
-    writeCommand: string;
-    readLabel: string;
-    toggles: readonly ToggleSpec[];
-    /** Shown under the group once its state is known. */
-    note: string;
-    /** Shown when the group has never been read. */
-    unknownNote: string;
-}
+export function resolveControls(
+    entry: DeviceControlsEntry | null | undefined,
+): ResolvedControls {
+    const empty: ResolvedControls = {
+        availability: "unadvertised",
+        buttons: [],
+        inputs: [],
+        toggleGroups: [],
+        reason:
+            "This device has not said what it supports. Its firmware may predate " +
+            "the control channel.",
+    };
+    if (!entry || !entry.has_advertisement) return empty;
 
-export const IDENTIFY_CONTROL: ButtonControl = {
-    kind: "button",
-    id: "identify",
-    label: "Identify",
-    pendingLabel: "Flashing…",
-    title: "Flash this board's LED so you can see which one on the bench it is",
-    command: "identify",
-};
+    const controls = entry.controls ?? [];
+    if (controls.length === 0) {
+        return {
+            ...empty,
+            availability: "none",
+            reason: "This device advertises no controls.",
+        };
+    }
 
-export const REPORTS_GROUP: ToggleGroupSpec = {
-    id: "reports",
-    readCommand: "get_reports",
-    writeCommand: "set_reports",
-    readLabel: "Read from device",
-    toggles: [
-        { id: "accel", label: "Accelerometer" },
-        { id: "gyro", label: "Gyroscope" },
-        { id: "mag", label: "Magnetometer" },
-        { id: "rotation", label: "Rotation" },
-    ],
-    // ⚠️ Said out loud because the obvious assumption is wrong and would
-    // otherwise be made silently: the hub delivers its reports in bursts at
-    // ~88 Hz regardless of how many are enabled (TEC-NATKIT-41).
-    note:
-        "Turning a report off does not speed the others up — the sensor delivers " +
-        "all of them together in bursts. Use it to save airtime and power, not to " +
-        "gain rate.",
-    unknownNote:
-        "The device has not been asked yet. This cannot be read from the data: a " +
-        "disabled sensor looks exactly like one that has not reported.",
-};
+    const buttons = controls.filter((c) => c.kind === "button");
+    const inputs = controls.filter((c) => c.kind === "input");
 
-/** Every button a stream_source exposes. */
-export const SOURCE_BUTTON_CONTROLS: readonly ButtonControl[] = [IDENTIFY_CONTROL];
+    // Grouped in advertisement order, so the device decides the ordering rather
+    // than a sort here inventing one.
+    const toggleGroups: ResolvedControls["toggleGroups"] = [];
+    for (const control of controls) {
+        if (control.kind !== "toggle") continue;
+        const group = control.group ?? control.id;
+        let bucket = toggleGroups.find((g) => g.group === group);
+        if (!bucket) {
+            bucket = { group, read: control.read, toggles: [] };
+            toggleGroups.push(bucket);
+        }
+        bucket.toggles.push(control);
+    }
 
-/** Every toggle group a stream_source exposes. */
-export const SOURCE_TOGGLE_GROUPS: readonly ToggleGroupSpec[] = [REPORTS_GROUP];
-
-/** True if `command` is one whose answer carries this group's state. */
-export function answerCarriesGroupState(
-    group: ToggleGroupSpec,
-    command: string | undefined,
-): boolean {
-    return command === group.readCommand || command === group.writeCommand;
+    const unreachable = !entry.reachable;
+    return {
+        availability: unreachable ? "unreachable" : "live",
+        buttons,
+        inputs,
+        toggleGroups,
+        reason: unreachable
+            ? "This device is not currently reachable — no heartbeat. It " +
+              "advertises these controls, so this is power or radio rather than " +
+              "firmware."
+            : null,
+    };
 }
 
 /**
- * Parse a group's state out of the device's answer, e.g.
+ * Parse a toggle group's state out of the device's answer, e.g.
  * `"accel=1 gyro=1 mag=0 rotation=1"`.
  *
- * ⚠️ Parsed from prose rather than sent as JSON because the answer travels on the
- * device LOG channel, whose records are a human-readable message by design — the
- * same channel a person reads when asking why a node is quiet. One format keeps
- * that log skimmable instead of turning it into a wire protocol nobody can read.
+ * ⚠️ Parsed from prose because the answer travels on the device LOG channel,
+ * whose records are a human-readable message by design — the same channel a
+ * person reads when asking why a node is quiet.
  *
  * ⚠️ ALL-OR-NOTHING: a message missing any toggle returns null rather than a
- * partial map. A half-parsed answer would render some switches from the device
- * and the rest from nothing, which is indistinguishable on screen from a device
- * that really has them off.
+ * partial map. Half an answer would render some switches from the device and the
+ * rest from nothing, which on screen is indistinguishable from a device that
+ * really has them off.
  */
 export function parseToggleStates(
-    group: ToggleGroupSpec,
+    toggles: readonly DeviceControl[],
     message: string,
 ): Record<string, boolean> | null {
     const found: Record<string, boolean> = {};
-    for (const toggle of group.toggles) {
+    for (const toggle of toggles) {
+        const key = toggle.field ?? toggle.id;
         // \b so a key cannot match inside a longer word ("xmag=1" is not "mag").
-        const match = message.match(new RegExp(`\\b${toggle.id}=([01])\\b`));
+        const match = message.match(new RegExp(`\\b${key}=([01])\\b`));
         if (!match) return null;
-        found[toggle.id] = match[1] === "1";
+        found[key] = match[1] === "1";
     }
     return found;
 }
 
+/** True if `command` is one whose answer carries this group's state. */
+export function answerCarriesGroupState(
+    group: { read?: string; toggles: readonly DeviceControl[] },
+    command: string | undefined,
+): boolean {
+    if (!command) return false;
+    if (group.read && command === group.read) return true;
+    return group.toggles.some((toggle) => toggle.write === command);
+}
+
 /** The args that flip one toggle — only the changed field, never the whole mask. */
 export function writeArgsFor(
-    toggle: ToggleSpec,
+    toggle: DeviceControl,
     current: Record<string, boolean>,
 ): Record<string, boolean> {
-    return { [toggle.id]: !current[toggle.id] };
+    const key = toggle.field ?? toggle.id;
+    return { [key]: !current[key] };
 }
