@@ -8,7 +8,9 @@ import type { VpApp } from "./app";
 export class Designer {
     readonly page: Page;
 
-    constructor(private readonly app: VpApp) {
+    // Not stored: only `page` is needed past construction, and keeping `app` as a
+    // property left something nothing reads.
+    constructor(app: VpApp) {
         this.page = app.page;
     }
 

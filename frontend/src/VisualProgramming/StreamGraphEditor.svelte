@@ -6045,10 +6045,6 @@
                                   boundExperimentView.experiment_id
                                 : null}
                             {streamDeviceNames}
-                            clockFit={clockFitForStream(
-                                deviceHealth,
-                                node.stream_id,
-                            )}
                             inputPortLabels={combineInputLabels(node)}
                             markersPhantom={viewerMarkersPhantom(node)}
                             onToggleMarkers={toggleViewerMarkers}

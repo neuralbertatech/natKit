@@ -15,6 +15,14 @@ export interface GraphRecord {
     /** Set only on recorded snapshots and forks — those are history, not boards. */
     instance_id?: string;
     experiment_id?: string;
+    /**
+     * Which workspace this board belongs to, if any.
+     *
+     * ⚠️ Absent is a real and common state, not an omission: a workspace is a pure
+     * container and membership lives on the MEMBER, so an unfiled board simply has
+     * no id here. Tests that census "unfiled" runs depend on telling those apart.
+     */
+    workspace_id?: string;
     immutable?: boolean;
 }
 
