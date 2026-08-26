@@ -15,6 +15,13 @@
      * channel. The wording below says so, because the obvious assumption is
      * wrong and would otherwise be made silently.
      */
+    import {
+        REPORTS_GROUP,
+        answerCarriesGroupState,
+        parseToggleStates,
+        writeArgsFor,
+    } from "./deviceControls";
+
     interface Props {
         streamId: string;
         // Sends a device command; returns false if it could not be sent.
@@ -38,48 +45,26 @@
         recording = false,
     }: Props = $props();
 
-    const REPORTS = [
-        { key: "accel", label: "Accelerometer" },
-        { key: "gyro", label: "Gyroscope" },
-        { key: "mag", label: "Magnetometer" },
-        { key: "rotation", label: "Rotation" },
-    ] as const;
+    // ⚠️ ONE definition of the reports and ONE parser, shared with the Visual
+    // Programming node inspector (TEC-NATKIT-40). Both surfaces drive the same
+    // device commands, so a second copy of the list or of the answer format would
+    // drift the moment a report is added — and the two would disagree about what
+    // a board is collecting while both looked right.
+    const REPORTS = REPORTS_GROUP.toggles;
 
-    type ReportKey = (typeof REPORTS)[number]["key"];
+    type ReportKey = string;
 
     let known = $state<Record<ReportKey, boolean> | null>(null);
     let pending = $state(false);
     let error = $state<string | null>(null);
 
-    /**
-     * The device answers with "accel=1 gyro=1 mag=0 rotation=1".
-     *
-     * Parsed rather than sent as JSON because the answer travels on the device
-     * log channel, whose records are a human-readable message by design -- the
-     * same channel a person reads when asking why a node is quiet. Keeping one
-     * format means the log stays readable instead of turning into a wire
-     * protocol nobody can skim.
-     */
-    function parseReports(message: string): Record<ReportKey, boolean> | null {
-        const found: Partial<Record<ReportKey, boolean>> = {};
-        for (const report of REPORTS) {
-            const match = message.match(new RegExp(`${report.key}=([01])`));
-            if (!match) return null;
-            found[report.key] = match[1] === "1";
-        }
-        return found as Record<ReportKey, boolean>;
-    }
-
     $effect(() => {
         if (!lastAnswer) return;
-        if (
-            lastAnswer.command !== "get_reports" &&
-            lastAnswer.command !== "set_reports"
-        ) {
+        if (!answerCarriesGroupState(REPORTS_GROUP, lastAnswer.command)) {
             return;
         }
         pending = false;
-        const parsed = parseReports(lastAnswer.message);
+        const parsed = parseToggleStates(REPORTS_GROUP, lastAnswer.message);
         if (parsed) {
             known = parsed;
             // A refusal still reports the CURRENT state, which is why the error
@@ -92,7 +77,7 @@
 
     function refresh() {
         error = null;
-        pending = sendCommand(streamId, "get_reports");
+        pending = sendCommand(streamId, REPORTS_GROUP.readCommand);
         if (!pending) error = "Not connected";
     }
 
@@ -102,7 +87,13 @@
         // Only the changed field is sent. The device starts from its current
         // mask, so this cannot accidentally reset the others -- and it means two
         // toggles in flight do not clobber each other.
-        pending = sendCommand(streamId, "set_reports", { [key]: !known[key] });
+        const spec = REPORTS.find((report) => report.id === key);
+        if (!spec) return;
+        pending = sendCommand(
+            streamId,
+            REPORTS_GROUP.writeCommand,
+            writeArgsFor(spec, known),
+        );
         if (!pending) error = "Not connected";
     }
 </script>
@@ -126,12 +117,12 @@
     {#if known}
         <div class="toggles">
             {#each REPORTS as report}
-                <label class:off={!known[report.key]}>
+                <label class:off={!known[report.id]}>
                     <input
                         type="checkbox"
-                        checked={known[report.key]}
+                        checked={known[report.id]}
                         disabled={pending || recording}
-                        onchange={() => toggle(report.key)}
+                        onchange={() => toggle(report.id)}
                     />
                     {report.label}
                 </label>

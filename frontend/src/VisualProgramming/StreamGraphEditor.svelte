@@ -117,6 +117,14 @@
     import { askConfirm, askName, showAlert } from "./dialogs.svelte";
     import { resolveSourceView } from "./sourceOnlyView";
     import {
+        SOURCE_BUTTON_CONTROLS,
+        SOURCE_TOGGLE_GROUPS,
+        answerCarriesGroupState,
+        parseToggleStates,
+        writeArgsFor,
+        type ToggleGroupSpec,
+    } from "../StreamViewer/deviceControls";
+    import {
         DEFAULT_VIEWPORT,
         NODE_WIDTH,
         buildDefaultTransformConfig,
@@ -4028,19 +4036,71 @@
             : null,
     );
 
-    const identifyPending = $derived(
-        selectedNodeControlStreamId
-            ? deviceCommandPending[
-                  `${selectedNodeControlStreamId}:identify`
-              ] === true
-            : false,
-    );
-
-    const identifyResult = $derived(
+    const selectedNodeControlAnswer = $derived(
         selectedNodeControlStreamId
             ? (deviceCommandResults[selectedNodeControlStreamId] ?? null)
             : null,
     );
+
+    function controlPending(command: string): boolean {
+        if (!selectedNodeControlStreamId) return false;
+        return (
+            deviceCommandPending[
+                `${selectedNodeControlStreamId}:${command}`
+            ] === true
+        );
+    }
+
+    // ⚠️ A recording pins the schema. Changing what a sensor collects partway
+    // through would change the recording's shape mid-run, so the backend refuses
+    // it — and the control is shown DISABLED WITH THE REASON rather than hidden,
+    // because a control that silently fails is worse than one that explains.
+    const controlsLockedByRecording = $derived(recordingInstanceGraphId !== null);
+
+    // ⚠️ Device truth only. `null` means "never asked", which is a real state and
+    // NOT the same as everything being off — a disabled sensor and one that has
+    // not reported are identical in a frame, so this can never be inferred from
+    // the data.
+    let toggleStates = $state<Record<string, Record<string, boolean> | null>>({});
+    let toggleError = $state<string | null>(null);
+
+    $effect(() => {
+        const answer = selectedNodeControlAnswer;
+        if (!answer) return;
+        for (const group of SOURCE_TOGGLE_GROUPS) {
+            if (!answerCarriesGroupState(group, answer.command)) continue;
+            const message = answer.records.at(-1)?.message ?? "";
+            const parsed = parseToggleStates(group, message);
+            if (parsed) {
+                toggleStates = { ...toggleStates, [group.id]: parsed };
+                // A refusal still reports the CURRENT state, which is why the
+                // state and the error come from the same answer.
+                toggleError = answer.ok ? null : message;
+            } else {
+                toggleError = answer.error ?? message ?? "Unreadable answer";
+            }
+        }
+    });
+
+    function readToggleGroup(group: ToggleGroupSpec) {
+        if (!selectedNodeControlStreamId) return;
+        toggleError = null;
+        sendDeviceCommand(selectedNodeControlStreamId, group.readCommand);
+    }
+
+    function flipToggle(group: ToggleGroupSpec, toggleId: string) {
+        const current = toggleStates[group.id];
+        if (!selectedNodeControlStreamId || !current) return;
+        if (controlsLockedByRecording) return;
+        const toggle = group.toggles.find((item) => item.id === toggleId);
+        if (!toggle) return;
+        toggleError = null;
+        sendDeviceCommand(
+            selectedNodeControlStreamId,
+            group.writeCommand,
+            writeArgsFor(toggle, current),
+        );
+    }
 
     const expandedViewerNode = $derived(
         expandedViewerNodeId
@@ -7661,23 +7721,26 @@
                             Acts on the board itself, not on the graph. Works
                             whether or not the graph is running.
                         </p>
+
                         <div class="inspector-action-row">
-                            <button
-                                type="button"
-                                class="action-btn secondary inspector-action"
-                                disabled={identifyPending}
-                                title="Flash this board's LED so you can see which one on the bench it is"
-                                onclick={() =>
-                                    sendDeviceCommand(
-                                        selectedNodeControlStreamId!,
-                                        "identify",
-                                    )}
-                            >
-                                <Lightbulb size={15} />
-                                {identifyPending
-                                    ? "Flashing…"
-                                    : "Identify"}
-                            </button>
+                            {#each SOURCE_BUTTON_CONTROLS as control (control.id)}
+                                {@const pending = controlPending(control.command)}
+                                <button
+                                    type="button"
+                                    class="action-btn secondary inspector-action"
+                                    disabled={pending}
+                                    title={control.title}
+                                    onclick={() =>
+                                        sendDeviceCommand(
+                                            selectedNodeControlStreamId!,
+                                            control.command,
+                                            control.args,
+                                        )}
+                                >
+                                    <Lightbulb size={15} />
+                                    {pending ? control.pendingLabel : control.label}
+                                </button>
+                            {/each}
                             <button
                                 type="button"
                                 class="action-btn secondary inspector-action"
@@ -7688,16 +7751,80 @@
                                 Open Live Stream
                             </button>
                         </div>
-                        {#if identifyResult}
+
+                        {#each SOURCE_TOGGLE_GROUPS as group (group.id)}
+                            {@const known = toggleStates[group.id] ?? null}
+                            {@const reading = controlPending(group.readCommand)}
+                            {@const writing = controlPending(group.writeCommand)}
+                            <div class="control-group">
+                                <div class="control-group-head">
+                                    <span class="control-group-title">
+                                        Collected reports
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="action-btn secondary inspector-action"
+                                        disabled={reading || writing}
+                                        onclick={() => readToggleGroup(group)}
+                                    >
+                                        <RefreshCw size={14} />
+                                        {known ? "Refresh" : group.readLabel}
+                                    </button>
+                                </div>
+
+                                {#if controlsLockedByRecording}
+                                    <p class="muted-text">
+                                        A recording is in progress. Changing what a
+                                        sensor collects would change the recording's
+                                        schema partway through, so it is refused
+                                        until the recording stops.
+                                    </p>
+                                {/if}
+
+                                {#if known}
+                                    <div class="control-toggles">
+                                        {#each group.toggles as toggle (toggle.id)}
+                                            <label
+                                                class="control-toggle"
+                                                class:off={!known[toggle.id]}
+                                                title={`Collect ${toggle.label.toLowerCase()} on this device`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={known[toggle.id]}
+                                                    disabled={reading ||
+                                                        writing ||
+                                                        controlsLockedByRecording}
+                                                    onchange={() =>
+                                                        flipToggle(group, toggle.id)}
+                                                />
+                                                {toggle.label}
+                                            </label>
+                                        {/each}
+                                    </div>
+                                    <p class="muted-text">{group.note}</p>
+                                {:else if !reading}
+                                    <p class="muted-text">{group.unknownNote}</p>
+                                {/if}
+
+                                {#if reading || writing}
+                                    <p class="muted-text">Waiting for the device…</p>
+                                {/if}
+                            </div>
+                        {/each}
+
+                        {#if toggleError}
+                            <p class="calib-command-result failed">{toggleError}</p>
+                        {:else if selectedNodeControlAnswer}
                             <p
                                 class="calib-command-result"
-                                class:failed={!identifyResult.ok}
-                                title={identifyResult.command}
+                                class:failed={!selectedNodeControlAnswer.ok}
+                                title={selectedNodeControlAnswer.command}
                             >
-                                {identifyResult.records.at(-1)?.message ??
-                                    identifyResult.error ??
-                                    (identifyResult.ok
-                                        ? "Flashed."
+                                {selectedNodeControlAnswer.records.at(-1)?.message ??
+                                    selectedNodeControlAnswer.error ??
+                                    (selectedNodeControlAnswer.ok
+                                        ? "Done."
                                         : "No answer.")}
                             </p>
                         {/if}
@@ -9579,6 +9706,44 @@
         color: #ffb4b4;
     }
 
+
+    /* --- device controls (TEC-NATKIT-99 / -40) ----------------------------- */
+    .control-group {
+        margin-top: 0.6rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .control-group-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+    }
+    .control-group-title {
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .control-toggles {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        margin: 0.4rem 0;
+    }
+    .control-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+    /* A report that is switched OFF is dimmed rather than hidden: the point of
+       the control is seeing what this board is not collecting. */
+    .control-toggle.off {
+        opacity: 0.55;
+    }
+    .control-toggle input:disabled {
+        cursor: not-allowed;
+    }
     .inspector-section {
         display: flex;
         flex-direction: column;
