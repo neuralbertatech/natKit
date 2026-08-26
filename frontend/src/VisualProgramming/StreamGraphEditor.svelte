@@ -8401,8 +8401,16 @@
         color: #d6def4;
     }
 
-    .graph-sidebar,
-    .graph-inspector,
+    /* ⚠️ .graph-sidebar and .graph-inspector were in this selector list and did
+       NOT belong: they are absolutely-positioned COLUMN panels with their own
+       complete rules further down, while this styles a small horizontal control
+       in the toolbar. Everything the panels' own rules did not happen to
+       override leaked in — and `align-items: center` is the one that showed.
+       On a column flex it makes children shrink-to-fit and centre, so anything
+       wider than the panel (a long stream label, an action row) overflowed
+       EQUALLY ON BOTH SIDES and was clipped left and right. That is why the
+       inspector read "NSPECTOR", "abel", "ource stream".
+       `border-right` and `margin-right` were leaking too. */
     /* Workspace picker (TEC-NATKIT-56). Grouped and set apart from the board
        title beside it: the two are different scopes, and reading them as one
        control is how you record into the wrong cohort. */
@@ -8544,6 +8552,16 @@
         display: flex;
         flex-direction: column;
         gap: 1rem;
+        /* ⚠️ min-width:0 so a long child (a stream label like
+           "Stream 13793649553360 - NatImuBulkDataSchema") can shrink instead of
+           forcing the panel wider than itself. A flex item's default min-width
+           is auto, which refuses to go below its intrinsic content width. */
+        min-width: 0;
+        /* ⚠️ min-width:0 so a long child (a stream label like
+           "Stream 13793649553360 - NatImuBulkDataSchema") can shrink instead of
+           forcing the panel wider than itself. A flex item's default min-width
+           is auto, which refuses to go below its intrinsic content width. */
+        min-width: 0;
         overflow: auto;
         border-radius: 8px;
         transition: transform 0.18s ease, opacity 0.18s ease;
@@ -8578,6 +8596,17 @@
     .sidebar-actions {
         display: flex;
         align-items: center;
+        /* ⚠️ WRAP RATHER THAN RUN OFF THE EDGE. These rows hold a variable number
+           of items — the board picker, the run pill, the rig-health pill, the
+           panel toggles — so their width depends on rig state, not on layout. On
+           a 1016 px window the row measured 990 px starting at x=28, putting its
+           right edge at 1018 and clipping the last control. A toolbar button you
+           cannot see is one you cannot press. */
+        flex-wrap: wrap;
+        row-gap: 0.4rem;
+        /* A flex item's default min-width is auto, so without this the row
+           refuses to shrink below its content and wrapping never engages. */
+        min-width: 0;
     }
 
     .sidebar-header,
