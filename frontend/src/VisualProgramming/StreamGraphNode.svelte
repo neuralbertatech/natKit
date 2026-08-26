@@ -687,13 +687,14 @@
 
     .node-header {
         width: 100%;
-        height: 42px;
-        flex: 0 0 42px;
+        /* Keep in step with HEADER_HEIGHT in streamGraph.ts. */
+        height: 32px;
+        flex: 0 0 32px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 0.5rem;
-        padding: 0 0.8rem;
+        padding: 0 0.6rem;
         cursor: grab;
         background: rgba(18, 33, 60, 0.95);
         border: 0;
@@ -710,7 +711,7 @@
         flex: 1 1 auto;
     }
 
-    /* Icons keep their size; the label truncates instead of wrapping the 42px
+    /* Icons keep their size; the label truncates instead of wrapping the 32px
        header or overflowing the fixed-width card. */
     .node-title > :global(svg) {
         flex-shrink: 0;

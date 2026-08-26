@@ -69,6 +69,53 @@ export interface SensorAccuracies {
     accelerometer: number;
     gyroscope: number;
     rotation: number;
+    /** Frame version 2 and later. Absent on a v1 recording. */
+    magnetometer?: number;
+    /**
+     * Which sub-sensors actually reported, when the backend says.
+     *
+     * ⚠️ An accuracy of 0 CANNOT distinguish "switched off" from "on and badly
+     * calibrated" — both read 0 — and the overall status is the WORST case, so a
+     * disabled magnetometer used to pin a perfectly-calibrated device to
+     * Unreliable. A sensor that did not report is excluded rather than counted
+     * as bad. Absent for an older backend, which is why every read of it treats
+     * missing as "reporting".
+     */
+    reporting?: Partial<Record<SensorKey, boolean>>;
+}
+
+export type SensorKey =
+    | "accelerometer"
+    | "gyroscope"
+    | "rotation"
+    | "magnetometer";
+
+/** The sub-sensors, in the order every calibration surface lists them. */
+export const SENSOR_KEYS: { key: SensorKey; label: string }[] = [
+    { key: "accelerometer", label: "Accelerometer" },
+    { key: "gyroscope", label: "Gyroscope" },
+    { key: "rotation", label: "Rotation" },
+    { key: "magnetometer", label: "Magnetometer" },
+];
+
+/**
+ * Is this sub-sensor contributing a calibration figure?
+ *
+ * `reporting` missing entirely means an older backend that never said, so the
+ * old behaviour — count it — is preserved. A `magnetometer` field that is absent
+ * means a v1 frame, which had no magnetometer at all.
+ */
+export function sensorIsReporting(
+    accuracies: SensorAccuracies | null | undefined,
+    key: SensorKey,
+): boolean {
+    if (!accuracies) return false;
+    if (key === "magnetometer" && accuracies.magnetometer === undefined) {
+        return false;
+    }
+    const reporting = accuracies.reporting;
+    if (!reporting) return true;
+    return reporting[key] !== false;
 }
 
 export function accuracy_int_to_calibration_status(
@@ -133,11 +180,15 @@ export function calibration_status_for_accuracies(
         "rotation" in raw
     ) {
         const a = raw as SensorAccuracies;
-        return min_calibration_status([
-            accuracy_int_to_calibration_status(Number(a.accelerometer ?? 0)),
-            accuracy_int_to_calibration_status(Number(a.gyroscope ?? 0)),
-            accuracy_int_to_calibration_status(Number(a.rotation ?? 0)),
-        ]);
+        // ⚠️ Only the sub-sensors that actually reported. Folding in a silent one
+        // as Unreliable made the headline the state of the sensors somebody had
+        // switched OFF rather than of the ones being used.
+        return min_calibration_status(
+            SENSOR_KEYS.filter(({ key }) => sensorIsReporting(a, key)).map(
+                ({ key }) =>
+                    accuracy_int_to_calibration_status(Number(a[key] ?? 0)),
+            ),
+        );
     }
     if (raw === undefined || raw === null) return CalibrationStatus.Unknown;
     return accuracy_int_to_calibration_status(Number(raw));

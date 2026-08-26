@@ -97,6 +97,8 @@
     import {
         accuracy_int_to_calibration_status,
         calibration_status_for_accuracies,
+        SENSOR_KEYS,
+        sensorIsReporting,
         calibration_status_to_color,
         calibration_status_to_string,
         type SensorAccuracies,
@@ -5173,22 +5175,28 @@
             overallColor: calibration_status_to_color(overall),
             position:
                 (node as { sensor_position?: string }).sensor_position || "N/A",
+            // ⚠️ One row per sub-sensor the DEVICE IS REPORTING, magnetometer
+            // included. Three were hard-coded, so the magnetometer — on the wire
+            // since frame v2 — was invisible, and a sensor whose report is
+            // switched off was listed as "Unreliable" rather than as off. Both
+            // readings are wrong in the same direction: they describe a sensor
+            // that is not in use as a badly calibrated one.
             parts: parts
-                ? (
-                      [
-                          ["Accelerometer", parts.accelerometer],
-                          ["Gyroscope", parts.gyroscope],
-                          ["Rotation", parts.rotation],
-                      ] as const
-                  ).map(([label, value]) => {
+                ? SENSOR_KEYS.map(({ key, label }) => {
+                      const reporting = sensorIsReporting(parts, key);
                       const status = accuracy_int_to_calibration_status(
-                          Number(value ?? 0),
+                          Number(parts[key] ?? 0),
                       );
                       return {
                           label,
+                          reporting,
                           status,
-                          text: calibration_status_to_string(status),
-                          color: calibration_status_to_color(status),
+                          text: reporting
+                              ? calibration_status_to_string(status)
+                              : "Not reporting",
+                          color: reporting
+                              ? calibration_status_to_color(status)
+                              : "faded",
                       };
                   })
                 : [],

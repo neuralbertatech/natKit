@@ -52,7 +52,10 @@ export function isProvenancePort(portId: string | undefined | null): boolean {
 
 export const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
 export const NODE_WIDTH = 220;
-export const HEADER_HEIGHT = 42;
+// ⚠️ MUST MATCH `.node-header`'s height/flex-basis in StreamGraphNode.svelte.
+// Node heights and every port anchor are computed from this, so a header that
+// is taller in CSS than here pushes the ports out of their dots.
+export const HEADER_HEIGHT = 32;
 export const PORT_ROW_HEIGHT = 28;
 // Extra height a viewer node reserves below its ports to host an inline live
 // chart. Ports are anchored to the top (see getPortPosition), so growing the

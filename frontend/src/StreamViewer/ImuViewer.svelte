@@ -287,24 +287,35 @@
         {/if}
 
         <div class="graph-section">
-            {#if !compact}
-                <div class="graph-head">
+            <!-- ⚠️ The GROUP PICKER is shown in compact mode too. Compact hides
+                 the summary and the heading — chrome — but this is the only way
+                 to reach the gyroscope, orientation and magnetometer views, so
+                 hiding it left the on-canvas viewer permanently stuck on
+                 whichever group happened to be selected, with no hint that three
+                 others existed. Only the "Rolling Trace" heading is dropped. -->
+            <div class="graph-head" class:compact-head={compact}>
+                {#if !compact}
                     <h4>Rolling Trace</h4>
-                    <div class="group-controls" aria-label="Signal group">
-                        {#each GROUPS as option}
-                            <button
-                                type="button"
-                                class:selected={selectedGroup === option.key}
-                                onclick={() => {
-                                    selectedGroup = option.key;
-                                }}
-                            >
-                                {option.label}
-                            </button>
-                        {/each}
-                    </div>
+                {/if}
+                <div class="group-controls" aria-label="Signal group">
+                    {#each GROUPS as option}
+                        <button
+                            type="button"
+                            class:selected={selectedGroup === option.key}
+                            onmousedown={(event) => event.stopPropagation()}
+                            onclick={(event) => {
+                                // The node card starts a drag on mousedown and
+                                // the canvas clears selection; neither should
+                                // happen when the click is meant for this.
+                                event.stopPropagation();
+                                selectedGroup = option.key;
+                            }}
+                        >
+                            {option.label}
+                        </button>
+                    {/each}
                 </div>
-            {/if}
+            </div>
             <div class="chart-wrap">
                 <canvas bind:this={chartCanvas}></canvas>
                 {#if selectedGroup === "quat" && latest}
@@ -406,6 +417,23 @@
         background: #e2e8f0;
         color: #0f172a;
         font-weight: 600;
+    }
+
+    /* On a node card the picker is the whole header, and it has to fit a
+       fixed-width card without pushing the chart off the bottom. */
+    .graph-head.compact-head {
+        justify-content: center;
+        margin-bottom: 0.25rem;
+    }
+
+    .compact-head .group-controls {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .compact-head .group-controls button {
+        padding: 0.2rem 0.4rem;
+        font-size: 0.68rem;
     }
 
     .chart-wrap {
