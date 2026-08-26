@@ -6,102 +6,113 @@
 
 ## Where things stand
 
-**Everything is merged.** All four repos are on `trunk`, and every outstanding
-branch that should land has landed:
+**Everything is merged, pushed, flashed and running.** All four repos on `trunk`,
+all on `origin/trunk`:
 
 ```
-natKit                        trunk @ 81b8099
-libnatkit                     trunk @ 068ca6b
-libnatkit/lib/libnatkit-core  trunk @ e3d6f2b
-natKit-IMU                    trunk @ df95891
+natKit          5d3769b      libnatkit-core  8b9ab01
+libnatkit       f17c663      natKit-IMU      fc9c36e
 ```
 
-`npm run check` is **clean** across all three passes and **224 frontend tests**
-pass. libnatkit builds green with 3/3 ctest. All three firmware roles build green.
+The rig runs today's firmware on all six boards; the stack runs today's backend
+and bridge. Four leaves at ~12 fps.
 
-### ⚠️ Three branches deliberately NOT merged — they need a decision, not a merge
+**Verified:** libnatkit-core 5/5 ctest · libnatkit 3/3 · all three firmware roles
+build green · frontend `npm run check` clean, 241 tests · Identify confirmed
+from the browser.
 
-| branch | why |
-|---|---|
-| `natKit/vp-rework-phases-0-2` | 20 commits, **605 files, 99,683 insertions**, last touched 2026-07-22. Carries its own ESP-IDF firmware and natVR Python. Merging it blind would resurrect deleted files and fight the firmware work. |
-| `natKit/zach/fixing-fixation-cross` | last commit **2023-06-11**. Edits `natKit/common/kafka/*.py` — Python that predates the C++ rewrite. Dead. |
-| `natKit-IMU/experimental` | pins `platform = espressif32@6.12.0`, the OLD official platform. Trunk deliberately re-baselined `embeded/` to **pioarduino** (arduino-esp32 3.3.11 / IDF 5.5.5). Merging it would undo that. |
+## The headline: device controls are DISCOVERED, not declared
 
-## ⚠️ Why the merge mattered: the firmware stacks had diverged
-
-There were **three** divergent firmware stacks off trunk, not one line. The LED
-work (`set_led`, link-fault colours, tx power) was on one; the C3 pin fixes
-(TEC-NATKIT-87) were on another. **`gateway/esp32c3` did not build on the LED
-stack** — `GPIO_NUM_32` does not exist on the C3 — so identify could not be
-flashed to a gateway rig at all. One tree now has all of it:
+TEC-NATKIT-10 shipped end to end. Nothing in the frontend says what a device can
+do; every control comes from that device's own advertisement.
 
 ```
-leaf / esp32        0xb2770 (77% free)
-primary / esp32s3   0xf4df0 (68% free)
-gateway / esp32c3   0xf3410 (68% free)
+leaf mask (16 B over ESP-NOW)
+  -> primary renders the advertisement JSON
+  -> gateway publishes it RETAINED on Configuration-<id>-Json-NatKitDeviceControlsV1
+  -> backend caches it, resolves labels via DeviceControlDescriptorRegistry
+  -> the inspector renders it; a click goes back down through the gate
 ```
 
-⚠️ **The wire format survived a two-stack merge and that was not free.** Both
-stacks independently extended `UplinkNodeStatus`/`UplinkPrimaryStatus`, and
-TEC-NATKIT-81 had already spent the primary's last two `reserved` bytes. Git
-auto-merged with no conflict — the exact situation that has silently shifted a
-decoder on this rig twice. It is correct (192/168, both `sizeof` asserts hold,
-all **19 `offsetof` asserts** pass), and those asserts are the only reason that
-is verifiable rather than hoped for.
+⚠️ **The split is strict, and it is the whole design.** The DEVICE owns the
+contract (which controls, their kind, commands, args key, type, range). The
+REGISTRY owns only the prose. Neither may carry the other's half — an earlier
+draft had the descriptor holding read/write commands too, which is two copies of
+one contract, and they drift.
 
-## ⚠️ The 11 type errors were a merge symptom, not a bug
+⚠️ **A third party adds hardware by registering descriptors**, touching no natKit
+source. Same pattern as `DataSchemaDescriptorRegistry`.
 
-`npm run check` reported 13 errors on trunk. **Eleven fixed themselves in the
-merge**: the Logs feature had landed without the types it needed
-(`unsubscribe_logs` missing from the action union), and those types were on the
-unmerged branches. An error in a file nobody touched, in a feature that works at
-runtime, is a merge-state symptom before it is a code defect.
+⚠️ **Two channels, opposite retention.** Configuration is RETAINED (a late
+subscriber must learn what exists); Heartbeat NEVER is (a retained "I am alive"
+is a lie the moment it stops being true). A command needs BOTH: advertised AND
+reachable.
 
-The three real ones (TEC-NATKIT-96, `81b8099`): a dead `clockFit` prop on
-`StreamGraphNodeCard` — leftover from an approach the code itself documents as
-abandoned, the clock fit having been moved to the inspector because on the card
-it "was clipped out of view entirely"; a missing `GraphRecord.workspace_id` in
-the e2e helper; and an unread `Designer.app` property.
+⚠️ **The heartbeat is gated on TEC-NATKIT-81's presence window.** The hub speaking
+for a leaf is the proxy shape that caused that bug; emitting on a timer would
+have recreated it inside the mechanism built to prevent it.
 
-## What shipped today
+**Measured on the rig:** an unadvertised command is refused in **80 ms** with a
+named reason, against **17.6 s** for the old timeout path.
 
-- **TEC-NATKIT-81** the hub notices a silent leaf: `nodes_present` beside
-  `nodes_known`, plus a WARN on the edge. Roster is NOT aged out — a seal would
-  evict the node it exists to accept.
-- **TEC-NATKIT-70/-71** prod stores off the Syncthing tree; the stack now
-  survives a reboot (unit tracked in `deploy/`, enabled, linger already on).
-- **TEC-NATKIT-76** the dev stack tells the backend and bridge where Kafka is.
-- **TEC-NATKIT-98** a plain source can be watched **without starting the board**.
-- **TEC-NATKIT-99** exposed Controls on the node inspector + `identify` flashing
-  the leaf's LED.
+## Migration is live and must be finished
+
+`strictMode` is OFF. An un-advertised device is counted-and-allowed, so older
+firmware keeps working. `controls_unadvertised_allowed` is exposed on the
+device_health message and currently reads 1 (the standalone WiFi node
+13793649553528, which is not flashed).
+
+**Turn strict on only when that counter has been flat for a real session.**
+
+## Also shipped today
+
+- **TEC-NATKIT-81** hub reports `nodes_present` beside `nodes_known`, plus a WARN
+  on the edge. The roster is deliberately NOT aged out.
+- **TEC-NATKIT-100** the bridge's MQTT callback took the right lock for the wrong
+  queue — a real data race that published to garbled topic names.
+- **TEC-NATKIT-98** a plain source can be watched without starting the board.
+- **TEC-NATKIT-99/-40** Controls panel; report toggles moved there and are now
+  discovered rather than declared.
+- **TEC-NATKIT-70/-71/-76** prod stores off the synced tree; the stack survives a
+  reboot; the dev stack tells the backend where Kafka is.
+- **TEC-NATKIT-96** `npm run check` clean — 11 of 13 errors fixed themselves in
+  the merge.
 
 ## What is left
 
-1. ⚠️ **Nothing is flashed and nothing is hardware-verified.** `identify`,
-   `nodes_present` and the whole merged firmware have never run on a board.
-2. **The backend image needs rebuilding** for the merged libnatkit to take
-   effect — the backend source is baked into the image (the frontend is mounted).
-3. Decide on the three unmerged branches above.
-4. The natKit-IMU→trunk merge has **not been pushed**.
+1. ⚠️ **Nothing is in Done.** Everything above sits in Verification awaiting a
+   greenlight.
+2. **Turn on `strictMode`** once the unadvertised counter stops climbing.
+3. **TEC-NATKIT-101 (#469)**: the ESP-IDF firmware does not link libnatkit-core,
+   which is the one thing that library exists for. Landing it collapses the
+   firmware control table and the server descriptors into one declaration.
+4. **#448 is at 75%** — problem 1 is a physical board, and the hardware cause of
+   the 4-leaf dropout was never established (power vs hub receive path).
+5. Two branches deliberately unmerged: `vp-rework-phases-0-2` (605 files, 5 weeks
+   stale) and `natKit-IMU/experimental` (pins a superseded platform).
 
 ## ⚠️ Traps this session bought — do not re-learn these
 
 - **`podman-compose up -d --force-recreate <svc>` silently restarts the OLD
-  container when it has dependents.** It errors about dependents, then prints the
-  container name like success; `podman ps` shows it fresh while `podman inspect`
-  shows the old env. Use `podman rm -f --depend`, then `up -d`. **Verify a config
-  change with `inspect`, never with uptime.**
-- **`/bin/sh` in the backend image is dash — no `/dev/tcp`.** A reachability
-  probe there reports *everything* refused. Use `/usr/bin/bash`.
-- **`kafka.tools.GetOffsetShell` no longer exists** (moved in Kafka 3.x). It
-  returns **nothing and exit 0**, which reads as "no data". Use `kafka-get-offsets`.
-- **Flashing the LED is safe**, despite `status_led.hpp` reading as a
-  prohibition. That warning is about *Arduino's* `Adafruit_NeoPixel::show()`
-  reinstalling the RMT driver per call; the IDF `led_strip` path creates the
-  device once.
+  container when it has dependents.** It prints the container name like success.
+  Use `podman rm -f --depend` then `up -d`, and verify with `podman inspect`,
+  never with uptime.
+- **`/bin/sh` in the backend image is dash — no `/dev/tcp`.** A reachability probe
+  there reports everything refused. Use `/usr/bin/bash`.
+- **`kafka.tools.GetOffsetShell` no longer exists** (moved in Kafka 3.x) and
+  returns nothing with exit 0. Use `kafka-get-offsets`.
+- **The WiFi rig's primary is an ESP32, not an S3.** The S3 is the Ethernet
+  primary, powered down. esptool's chip check catches it.
+- **The ExternalProject copy of libnatkit-core needs a manual rebuild**
+  (`cmake --build build/libnatkit-core-build`) before the backend links new core
+  symbols.
+- **The controls tailer attaches at the live tail**, and leaves republish every
+  30 s — so a backend restarted between republishes knows a device is reachable
+  up to 30 s before it knows what the device can do. Not a bug.
+- **Flashing LEDs is safe on the IDF firmware** (led_strip installs the RMT device
+  once); the "never blink" warning is about Arduino's Adafruit_NeoPixel.
 - **Hub telemetry cannot distinguish "all leaves lost power" from "the hub's
-  receive path died".** Both produce identical frozen counters. Filed
-  TEC-NATKIT-97 for the missing beacon-TX counter that would separate them.
+  receive path died"** — filed TEC-NATKIT-97 for the missing beacon-TX counter.
 
 # Prior sessions (retained)
 
