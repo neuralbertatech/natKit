@@ -194,8 +194,13 @@ public:
     <li><strong>3 — firmware advertises.</strong> A Configuration publish on boot, on change,
     and at a low periodic rate. ⚠️ Retained on MQTT, or a late subscriber sees nothing until
     something changes.</li>
+    <li><strong>3b — the heartbeat.</strong> The hub emits <code>Heartbeat-&lt;leaf_id&gt;</code>
+    for each leaf that is present by TEC-NATKIT-81's window, and each self-publishing device
+    emits its own. ⚠️ Never retained. This must land with or before slice 4, or the gate has
+    no reachability to read and would refuse everything.</li>
     <li><strong>4 — backend caches and enforces.</strong> Per-device advertisement, the
-    count-but-allow migration path, and the cache exposed over the StreamViewer WebSocket.</li>
+    heartbeat-derived reachability, the count-but-allow migration path, and both exposed over
+    the StreamViewer WebSocket.</li>
     <li><strong>5 — the UI discovers.</strong> Delete <code>SOURCE_BUTTON_CONTROLS</code> and
     <code>SOURCE_TOGGLE_GROUPS</code>; render from the advertisement. This slice is where the
     hardcoding actually dies, and it should not land before slice 4 or the UI has nothing to
@@ -229,30 +234,77 @@ public:
 
 <section class="risk">
   <h2>⚠️ "Acting on behalf of" is the exact shape of TEC-NATKIT-81</h2>
-  <p>The bridge-microcontroller case reintroduces the failure this rig spent a morning on.
-  On 2026-08-26 the ESP-NOW hub was found <strong>republishing status frames for four leaves
-  it had not heard for 16.8 hours</strong> — every counter frozen, every frame arriving
-  fresh, <code>nodes_known</code> still reporting a complete rig. A proxy that keeps speaking
-  for something it has lost is indistinguishable, from the outside, from a healthy system.</p>
-  <p>A bridge advertising for an end device it can no longer reach would do the same thing:
-  publish a capability set forever for hardware that is unplugged, and the UI would offer
-  controls for a device that is gone. Worse than the status case, because the operator can
-  <em>press</em> these.</p>
-  <p><strong>So an advertisement made on behalf of another device must carry liveness.</strong>
-  Two acceptable shapes:</p>
+  <p>A bridge speaking for a device is structurally identical to what the ESP-NOW hub was
+  doing on 2026-08-25/26: <strong>republishing status for four leaves it had not heard in
+  16.8 hours</strong> — every counter frozen, every frame arriving fresh,
+  <code>nodes_known</code> still reporting a complete rig. From outside, a proxy that keeps
+  speaking for something it has lost is indistinguishable from a healthy system.</p>
+  <p>A bridge that loses its end device would advertise a capability set forever for
+  unplugged hardware, and this is <strong>worse than the status case, because the operator
+  can press these controls.</strong></p>
+</section>
+
+<section class="callout">
+  <h2>The heartbeat channel carries reachability; Configuration carries capability</h2>
+  <p>The two questions are different and get different channels:</p>
   <ul>
-    <li>the bridge <strong>stops advertising</strong> when it loses the end device (clean, and
-    the topic simply goes stale — but MQTT retain will keep serving the last one, so the
-    retained message must be cleared); or</li>
-    <li>the advertisement carries <strong>when the advertiser last heard the device</strong>,
-    the way <code>last_seen_us</code> does for a leaf, so staleness is <em>visible</em> rather
-    than inferred.</li>
+    <li><strong>Configuration</strong> — <em>what can this device do?</em> Slow-changing,
+    <strong>retained</strong>, published on boot and on change.</li>
+    <li><strong>Heartbeat</strong> (<code>LOGGING_HEARTBEAT</code>, topic prefix
+    <code>Heartbeat</code>) — <em>is it reachable right now?</em> Periodic, ephemeral,
+    <strong>never retained</strong>.</li>
   </ul>
-  <p>⚠️ The second is preferred for the same reason TEC-NATKIT-81 landed on
-  <code>nodes_present</code> beside <code>nodes_known</code> rather than aging the roster:
-  silence cannot be told from "never existed", and a device that <em>was</em> here is worth
-  saying so about. A device advertising <em>for itself</em> has no such problem — its
-  advertisement stops when it does.</p>
+  <p>An execution is permitted only on the <strong>intersection</strong>: the command is in
+  the device's advertisement <em>and</em> the device is currently heartbeating.</p>
+
+  <h3>Why this beats putting a staleness field in the advertisement</h3>
+  <ul>
+    <li><strong>Retain stops being a hazard.</strong> The earlier worry was that a retained
+    Configuration message keeps being served after its advertiser dies, so the retained
+    message would have to be actively cleared. With the gate requiring a live heartbeat, a
+    retained advertisement stays <em>useful</em> — you can still see what the device would
+    offer — without being <em>actionable</em>. Nothing needs clearing.</li>
+    <li><strong>One liveness mechanism, not one per channel.</strong> Otherwise every channel
+    that can be proxied grows its own staleness field. Heartbeat is the channel whose entire
+    job is "I am here".</li>
+    <li><strong>Three states become representable</strong> instead of two: never advertised /
+    advertised and live / <strong>advertised but unreachable</strong>. The third is the
+    interesting one — the UI greys the control and says the device is unreachable, rather
+    than the control silently vanishing and looking like a device that never had it.</li>
+  </ul>
+
+  <div class="prov" style="padding:12px 14px;border-radius:8px;margin-top:12px">
+    <p style="margin:0"><strong>It pays off immediately, beyond discovery.</strong> Gating on
+    heartbeat protects <em>every</em> EXECUTION_COMMAND, not only discovered ones. On
+    2026-08-26 an <code>identify</code> sent to leaf <code>84066026407228</code> sat for the
+    full 15-second timeout before failing. With this gate the server refuses instantly —
+    "device not reachable" — instead of making the operator wait to learn nothing.</p>
+  </div>
+</section>
+
+<section class="warn">
+  <h2>⚠️ Who may emit a heartbeat, and the trap in it</h2>
+  <p>An ESP-NOW leaf cannot publish MQTT itself, so its heartbeat is emitted by whoever can
+  genuinely observe it — the hub. <strong>Which is the proxy problem again, one level
+  down.</strong> A hub that emits a heartbeat for a leaf on a timer, rather than on having
+  actually heard it, recreates TEC-NATKIT-81 inside the mechanism built to prevent it.</p>
+  <p>The predicate already exists. TEC-NATKIT-81 added a presence window to the hub —
+  <code>nodes_present</code> counts leaves heard within
+  <code>CONFIG_NATKIT_NODE_PRESENCE_TIMEOUT_MS</code> (30&nbsp;s, chosen to clear this rig's
+  known 18-second dropouts). <strong>A heartbeat may be emitted for a leaf if and only if
+  that leaf is currently present by that test.</strong></p>
+  <p>Note the two channels then have deliberately different origins, and that is correct:</p>
+  <ul>
+    <li>the <strong>declaration</strong> comes from the device (each leaf advertises for
+    itself — decision 1);</li>
+    <li>the <strong>reachability</strong> comes from whoever can observe it.</li>
+  </ul>
+  <p>A device that publishes for itself collapses the two harmlessly: its heartbeat stops
+  when it does.</p>
+  <p>⚠️ <strong>Heartbeat must never be retained.</strong> A retained "I am alive" is a lie
+  from the moment it stops being true, and would reintroduce precisely the fault this channel
+  is here to close. Configuration's requirement is the exact inverse — retained, so a late
+  subscriber learns what exists without waiting for a change.</p>
 </section>
 
 </main>
