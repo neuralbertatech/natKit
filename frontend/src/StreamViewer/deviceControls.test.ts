@@ -1,89 +1,164 @@
 import { describe, expect, it } from "vitest";
 import {
-    REPORTS_GROUP,
-    IDENTIFY_CONTROL,
-    SOURCE_BUTTON_CONTROLS,
-    SOURCE_TOGGLE_GROUPS,
     answerCarriesGroupState,
+    controlLabel,
     parseToggleStates,
+    resolveControls,
     writeArgsFor,
+    type DeviceControl,
+    type DeviceControlsEntry,
 } from "./deviceControls";
 
-describe("the catalogue", () => {
-    it("exposes Identify as a button", () => {
-        expect(IDENTIFY_CONTROL.kind).toBe("button");
-        expect(IDENTIFY_CONTROL.command).toBe("identify");
-        expect(SOURCE_BUTTON_CONTROLS).toContain(IDENTIFY_CONTROL);
+const btn = (id: string, label?: string): DeviceControl => ({
+    id, kind: "button", write: id, label,
+});
+const tog = (id: string, field: string, label?: string): DeviceControl => ({
+    id, kind: "toggle", write: "set_reports", read: "get_reports",
+    group: "reports", field, type: "bool", label,
+});
+const inp = (id: string): DeviceControl => ({
+    id, kind: "input", write: "set_tx_power", read: "get_tx_power",
+    field: "quarter_dbm", type: "int16", min: 8, max: 80, label: "Transmit power",
+});
+
+const entry = (over: Partial<DeviceControlsEntry> = {}): DeviceControlsEntry => ({
+    device_id: "13793649671244",
+    controls: [btn("identify", "Identify"), tog("reports.accel", "accel", "Accelerometer"),
+               tog("reports.gyro", "gyro", "Gyroscope"), inp("tx_power")],
+    has_advertisement: true,
+    reachable: true,
+    since_heartbeat_ms: 400,
+    ...over,
+});
+
+describe("resolveControls", () => {
+    it("splits an advertisement into buttons, grouped toggles and inputs", () => {
+        const r = resolveControls(entry());
+        expect(r.availability).toBe("live");
+        expect(r.reason).toBeNull();
+        expect(r.buttons.map((c) => c.id)).toEqual(["identify"]);
+        expect(r.inputs.map((c) => c.id)).toEqual(["tx_power"]);
+        expect(r.toggleGroups).toHaveLength(1);
+        expect(r.toggleGroups[0].group).toBe("reports");
+        expect(r.toggleGroups[0].read).toBe("get_reports");
+        expect(r.toggleGroups[0].toggles.map((c) => c.id)).toEqual([
+            "reports.accel", "reports.gyro",
+        ]);
     });
 
-    it("exposes exactly the four BNO08x reports as toggles", () => {
-        expect(SOURCE_TOGGLE_GROUPS).toContain(REPORTS_GROUP);
-        expect(REPORTS_GROUP.toggles.map((t) => t.id)).toEqual([
-            "accel",
-            "gyro",
-            "mag",
-            "rotation",
+    // ⚠️ THE BUG THIS WHOLE FEATURE EXISTS TO FIX. A device that never advertised
+    // gets NO controls — not a default set of IMU toggles it may not have.
+    it("offers nothing for a device that has never advertised", () => {
+        const r = resolveControls(entry({ has_advertisement: false, controls: [] }));
+        expect(r.availability).toBe("unadvertised");
+        expect(r.buttons).toEqual([]);
+        expect(r.toggleGroups).toEqual([]);
+        expect(r.reason).toMatch(/predate/);
+    });
+
+    it("says nothing at all for a null entry", () => {
+        expect(resolveControls(null).availability).toBe("unadvertised");
+        expect(resolveControls(undefined).buttons).toEqual([]);
+    });
+
+    // ⚠️ "Advertised nothing" is NOT "never advertised" — different words.
+    it("distinguishes a device that advertised an empty set", () => {
+        const r = resolveControls(entry({ controls: [] }));
+        expect(r.availability).toBe("none");
+        expect(r.reason).toMatch(/advertises no controls/);
+        expect(r.reason).not.toMatch(/predate/);
+    });
+
+    // ⚠️ Still returned, so the inspector can grey them WITH a reason. Hiding
+    // them would be indistinguishable from a board that never had them, and the
+    // operator would lose the one clue about which end of the rig to check.
+    it("keeps the controls when the device is unreachable, with a reason", () => {
+        const r = resolveControls(entry({ reachable: false }));
+        expect(r.availability).toBe("unreachable");
+        expect(r.buttons).toHaveLength(1);
+        expect(r.toggleGroups[0].toggles).toHaveLength(2);
+        expect(r.reason).toMatch(/power or radio rather than firmware/);
+    });
+
+    it("keeps the device's ordering rather than sorting", () => {
+        const r = resolveControls(entry({
+            controls: [tog("reports.rotation", "rotation"), tog("reports.accel", "accel")],
+        }));
+        expect(r.toggleGroups[0].toggles.map((c) => c.field)).toEqual([
+            "rotation", "accel",
         ]);
+    });
+
+    it("gives an ungrouped toggle a group of its own", () => {
+        const lone: DeviceControl = { id: "solo", kind: "toggle", write: "set_solo", field: "on" };
+        const r = resolveControls(entry({ controls: [lone] }));
+        expect(r.toggleGroups).toHaveLength(1);
+        expect(r.toggleGroups[0].group).toBe("solo");
+    });
+});
+
+describe("controlLabel", () => {
+    it("prefers the resolved label", () => {
+        expect(controlLabel(btn("identify", "Identify"))).toBe("Identify");
+    });
+
+    // ⚠️ An id nobody described renders as its RAW ID. Inventing a label would
+    // hide that a library is missing; hiding the control would look like broken
+    // hardware.
+    it("falls back to the raw id when no library described it", () => {
+        expect(controlLabel(btn("acme.valve"))).toBe("acme.valve");
     });
 });
 
 describe("parseToggleStates", () => {
+    const toggles = [tog("reports.accel", "accel"), tog("reports.gyro", "gyro")];
+
     it("reads the device's own answer format", () => {
-        expect(parseToggleStates(REPORTS_GROUP, "accel=1 gyro=1 mag=0 rotation=1"))
-            .toEqual({ accel: true, gyro: true, mag: false, rotation: true });
+        expect(parseToggleStates(toggles, "accel=1 gyro=0")).toEqual({
+            accel: true, gyro: false,
+        });
     });
 
-    it("does not care about order or surrounding prose", () => {
-        expect(
-            parseToggleStates(
-                REPORTS_GROUP,
-                "reports now: rotation=0 mag=1 gyro=0 accel=1 (saved)",
-            ),
-        ).toEqual({ accel: true, gyro: false, mag: true, rotation: false });
-    });
-
-    // ⚠️ The case that matters. A partial map would render some switches from the
-    // device and the rest from nothing, which on screen is indistinguishable from
-    // a device that really has them off.
-    it("returns null when ANY toggle is missing, never a partial map", () => {
-        expect(parseToggleStates(REPORTS_GROUP, "accel=1 gyro=1 mag=0")).toBeNull();
-        expect(parseToggleStates(REPORTS_GROUP, "unrecognised command")).toBeNull();
-        expect(parseToggleStates(REPORTS_GROUP, "")).toBeNull();
+    it("returns null when any toggle is missing, never a partial map", () => {
+        expect(parseToggleStates(toggles, "accel=1")).toBeNull();
+        expect(parseToggleStates(toggles, "unrecognised command")).toBeNull();
     });
 
     it("will not match a key inside a longer word", () => {
-        expect(
-            parseToggleStates(REPORTS_GROUP, "xmag=1 accel=1 gyro=1 rotation=1"),
-        ).toBeNull();
+        expect(parseToggleStates([tog("reports.mag", "mag")], "xmag=1")).toBeNull();
     });
 
-    it("rejects a non-binary value rather than coercing it", () => {
-        expect(
-            parseToggleStates(REPORTS_GROUP, "accel=2 gyro=1 mag=0 rotation=1"),
-        ).toBeNull();
+    it("keys on the wire field, not the control id", () => {
+        // The id is "reports.accel"; the args key is "accel". Keying on the id
+        // would never match anything the device says.
+        expect(parseToggleStates([tog("reports.accel", "accel")], "accel=1")).toEqual({
+            accel: true,
+        });
     });
 });
 
 describe("answerCarriesGroupState", () => {
-    it("accepts both the read and the write command", () => {
-        // A refusal still reports the CURRENT state, so a set_reports answer is
-        // just as authoritative as a get_reports one.
-        expect(answerCarriesGroupState(REPORTS_GROUP, "get_reports")).toBe(true);
-        expect(answerCarriesGroupState(REPORTS_GROUP, "set_reports")).toBe(true);
+    const group = { read: "get_reports", toggles: [tog("reports.accel", "accel")] };
+
+    it("accepts the group's read command", () => {
+        expect(answerCarriesGroupState(group, "get_reports")).toBe(true);
+    });
+
+    // ⚠️ A refusal still reports the CURRENT state, so a write's answer is just
+    // as authoritative as a read's — confirmed against a board 2026-08-26.
+    it("accepts a toggle's write command too", () => {
+        expect(answerCarriesGroupState(group, "set_reports")).toBe(true);
     });
 
     it("ignores answers to other commands", () => {
-        expect(answerCarriesGroupState(REPORTS_GROUP, "identify")).toBe(false);
-        expect(answerCarriesGroupState(REPORTS_GROUP, undefined)).toBe(false);
+        expect(answerCarriesGroupState(group, "identify")).toBe(false);
+        expect(answerCarriesGroupState(group, undefined)).toBe(false);
     });
 });
 
 describe("writeArgsFor", () => {
-    // ⚠️ Only the changed field. The device starts from its current mask, so two
-    // toggles in flight cannot clobber each other.
-    it("sends only the toggle being flipped", () => {
-        const current = { accel: true, gyro: true, mag: false, rotation: true };
-        expect(writeArgsFor(REPORTS_GROUP.toggles[2], current)).toEqual({ mag: true });
-        expect(writeArgsFor(REPORTS_GROUP.toggles[0], current)).toEqual({ accel: false });
+    it("sends only the toggle being flipped, keyed on its wire field", () => {
+        expect(writeArgsFor(tog("reports.mag", "mag"), { mag: false, accel: true }))
+            .toEqual({ mag: true });
     });
 });

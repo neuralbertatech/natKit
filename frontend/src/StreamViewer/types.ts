@@ -1143,6 +1143,21 @@ export interface DeviceHealthMessage {
    */
   topics_tailed: number;
   devices: DeviceHealthEntry[];
+  /**
+   * What each device says it can be asked to do, and whether it is reachable
+   * (TEC-NATKIT-10). Carried on this message rather than its own subscription
+   * because controls and health answer one question — what is this device doing
+   * — and every page needing one already subscribes to the other.
+   */
+  device_controls?: import("./deviceControls").DeviceControlsEntry[];
+  /** Whether the backend refuses commands to devices that never advertised. */
+  controls_strict?: boolean;
+  /**
+   * How many commands were let through ONLY because nothing was advertised.
+   * ⚠️ This is the evidence for when strict mode can be turned on; it is not a
+   * curiosity. While it climbs, un-flashed firmware is still in the fleet.
+   */
+  controls_unadvertised_allowed?: number;
 }
 
 // --- the log viewer (TEC-NATKIT-33) ---------------------------------------
