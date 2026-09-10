@@ -4,6 +4,7 @@ import {
     layoutStrip,
     resolveAxisEndUs,
 } from "./marbleStrip";
+import { getNodeHeight, MARBLE_ROW_HEIGHT } from "./streamGraph";
 import type { ChannelActivity } from "../StreamViewer/types";
 
 const WINDOW = 4_000_000;
@@ -193,5 +194,42 @@ describe("describeStrip", () => {
         const activity = density(10_000_000, [], 4000);
         activity.buckets = [4000];
         expect(describeStrip(activity)).toBe("4000 in 4s · ~1000/s");
+    });
+});
+
+describe("card height reservation", () => {
+    // ⚠️ THE REGRESSION THIS GUARDS.
+    //
+    // The strips first lived inside `.node-meta`, the column between the two
+    // port columns. With a 2.4rem label and a 1.8rem count either side, the
+    // track measured TWO PIXELS wide — so all 160 density columns rendered into
+    // it, correctly, and the strip looked like an empty box. Every unit test
+    // passed. Only measuring the DOM found it.
+    //
+    // The fix is a full-width block below the body, which means the card has to
+    // reserve height per reported lane. A node that reserves nothing has
+    // nowhere to draw, which is the same invisible failure by another route.
+    it("grows the card by one row per reported lane", () => {
+        const node = {
+            id: "n",
+            kind: "combine" as const,
+            input_port_ids: ["a", "b"],
+            output_port_ids: ["out"],
+            position: { x: 0, y: 0 },
+        };
+        const base = getNodeHeight(node as never, 0);
+        expect(getNodeHeight(node as never, 1)).toBe(base + MARBLE_ROW_HEIGHT);
+        expect(getNodeHeight(node as never, 2)).toBe(base + 2 * MARBLE_ROW_HEIGHT);
+    });
+
+    it("defaults to reserving nothing, so an unrelated caller is unaffected", () => {
+        const node = {
+            id: "n",
+            kind: "transform" as const,
+            input_port_ids: ["in"],
+            output_port_ids: ["out"],
+            position: { x: 0, y: 0 },
+        };
+        expect(getNodeHeight(node as never)).toBe(getNodeHeight(node as never, 0));
     });
 });

@@ -175,7 +175,14 @@
 
     // A manually-resized node overrides the computed height/width; otherwise
     // fall back to the content-driven defaults.
-    const nodeHeight = $derived(node.height ?? getNodeHeight(node));
+    // How many strip rows this card will draw, from what the backend actually
+    // reported. Derived here rather than in getNodeHeight because the lanes are
+    // a RUNTIME fact and that function only sees the node definition.
+    const marbleRows = $derived(
+        (runtimeStatus?.data_activity ? 1 : 0) +
+            (runtimeStatus?.marker_activity ? 1 : 0),
+    );
+    const nodeHeight = $derived(node.height ?? getNodeHeight(node, marbleRows));
     const runtimeStreamId = $derived(
         runtimeStatus?.output_stream_id
             ? String(runtimeStatus.output_stream_id)
@@ -401,31 +408,6 @@
             {/if}
         </div>
         <div class="node-column node-meta">
-            <!-- Marble strips (TEC-NATKIT-106). Rendered only for a lane the
-                 backend actually reported: an ABSENT lane means "this node has
-                 no such lane", which is a different claim from an empty one, so
-                 drawing an empty row for it would say the markers had stopped.
-                 Both rows share one axis, resolved across the whole graph. -->
-            {#if runtimeStatus?.data_activity || runtimeStatus?.marker_activity}
-                <div class="marble-strips">
-                    {#if runtimeStatus.data_activity}
-                        <MarbleStrip
-                            activity={runtimeStatus.data_activity}
-                            axisEndUs={marbleAxisEndUs}
-                            label="data"
-                            lane="data"
-                        />
-                    {/if}
-                    {#if runtimeStatus.marker_activity}
-                        <MarbleStrip
-                            activity={runtimeStatus.marker_activity}
-                            axisEndUs={marbleAxisEndUs}
-                            label="marks"
-                            lane="markers"
-                        />
-                    {/if}
-                </div>
-            {/if}
             {#if node.kind === "stream_source"}
                 <span title={`Stream ${node.stream_id}`}>Stream {node.stream_id}</span>
                 <span title={node.schema_name}>{node.schema_name ?? "Descriptor pending"}</span>
@@ -574,6 +556,32 @@
             {/each}
         </div>
     </div>
+
+    <!-- Marble strips (TEC-NATKIT-106). Rendered only for a lane the
+         backend actually reported: an ABSENT lane means "this node has
+         no such lane", which is a different claim from an empty one, so
+         drawing an empty row for it would say the markers had stopped.
+         Both rows share one axis, resolved across the whole graph. -->
+    {#if runtimeStatus?.data_activity || runtimeStatus?.marker_activity}
+        <div class="marble-strips">
+            {#if runtimeStatus.data_activity}
+                <MarbleStrip
+                    activity={runtimeStatus.data_activity}
+                    axisEndUs={marbleAxisEndUs}
+                    label="data"
+                    lane="data"
+                />
+            {/if}
+            {#if runtimeStatus.marker_activity}
+                <MarbleStrip
+                    activity={runtimeStatus.marker_activity}
+                    axisEndUs={marbleAxisEndUs}
+                    label="marks"
+                    lane="markers"
+                />
+            {/if}
+        </div>
+    {/if}
 
     {#if showInlineGraph && inlineViewerChart}
         <div
@@ -819,11 +827,13 @@
         gap: 0.35rem;
     }
 
+    /* Full card width, below the port columns. The track needs real width to
+       say anything: squeezed into the meta column it was 2px across. */
     .marble-strips {
         display: flex;
         flex-direction: column;
         gap: 2px;
-        margin-bottom: 0.2rem;
+        padding: 0 0.5rem 0.35rem;
     }
 
     .node-meta {

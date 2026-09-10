@@ -93,7 +93,22 @@ export function sanitizeIdentifier(value: string): string {
         .slice(0, 64);
 }
 
-export function getNodeHeight(node: EditorGraphNode): number {
+// One marble-strip row's height, including its gap (TEC-NATKIT-106). A card
+// reserves this per reported lane so the strips have somewhere to be drawn.
+//
+// ⚠️ THE STRIPS MUST NOT LIVE INSIDE `.node-meta`. They did at first, and that
+// column sits between the two port columns — so with a 2.4rem label and a
+// 1.8rem count either side, the track measured TWO PIXELS wide. It rendered all
+// 160 density columns into it, correctly, and looked like an empty box: every
+// unit test passed and the feature was invisible. They belong in a full-width
+// block below the body, which is why this height is added on rather than
+// absorbed into the existing slack.
+export const MARBLE_ROW_HEIGHT = 14;
+
+export function getNodeHeight(
+    node: EditorGraphNode,
+    marbleRows = 0,
+): number {
     const inputRows = Math.max(node.input_port_ids?.length ?? 0, 0);
     const outputRows = Math.max(node.output_port_ids?.length ?? 0, 0);
     const rows = Math.max(inputRows, outputRows, 1);
@@ -101,6 +116,9 @@ export function getNodeHeight(node: EditorGraphNode): number {
     if (node.kind === "viewer" && node.inline_graph) {
         height += INLINE_GRAPH_HEIGHT;
     }
+    // Ports are anchored to the TOP (see getPortPosition), so growing the card
+    // downward never moves one and edges stay attached.
+    height += marbleRows * MARBLE_ROW_HEIGHT;
     return height;
 }
 
