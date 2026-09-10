@@ -575,7 +575,13 @@ export type StreamGraphNodeKind =
   // marker lane — the backend's validation enforces that, and adding a third
   // means revisiting the rule rather than extending this union.
   | "threshold"
-  | "gate";
+  | "gate"
+  // The marker-lane algebra (TEC-NATKIT-105). All four are marker-in/
+  // marker-out, so none of them crosses lanes — only `threshold` and `gate` do.
+  | "marker_merge"
+  | "marker_filter"
+  | "marker_debounce"
+  | "marker_take_until";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -804,6 +810,56 @@ export interface StreamGraphGateNode extends StreamGraphBaseNode<"gate"> {
   config?: GateNodeConfig;
 }
 
+// The four flat marker-lane operators. Rx's higher-order family (flatMap,
+// switchMap, window-as-observable-of-observables) is deliberately absent: it
+// builds topology at run time, which a fixed node graph cannot draw.
+export interface MarkerFilterNodeConfig {
+  // "label" | "event" | "marker_type".
+  match_field?: string;
+  // Comma-separated on the wire; the backend splits and trims.
+  match_values?: string;
+  // "include" | "exclude".
+  mode?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface MarkerDebounceNodeConfig {
+  window_ms?: number;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphMarkerMergeNode
+  extends StreamGraphBaseNode<"marker_merge"> {
+  kind: "marker_merge";
+  output_identifier?: string;
+  output_stream_id?: string;
+}
+
+export interface StreamGraphMarkerFilterNode
+  extends StreamGraphBaseNode<"marker_filter"> {
+  kind: "marker_filter";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: MarkerFilterNodeConfig;
+}
+
+export interface StreamGraphMarkerDebounceNode
+  extends StreamGraphBaseNode<"marker_debounce"> {
+  kind: "marker_debounce";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: MarkerDebounceNodeConfig;
+}
+
+// Its two inputs are NOT interchangeable: `markers` is the primary and `until`
+// is the stop lane. Swapping them swaps which stream stops the other.
+export interface StreamGraphMarkerTakeUntilNode
+  extends StreamGraphBaseNode<"marker_take_until"> {
+  kind: "marker_take_until";
+  output_identifier?: string;
+  output_stream_id?: string;
+}
+
 export type StreamGraphNode =
   | StreamGraphSourceNode
   | StreamGraphTransformNode
@@ -815,7 +871,11 @@ export type StreamGraphNode =
   | StreamGraphTrainNode
   | StreamGraphExportNode
   | StreamGraphThresholdNode
-  | StreamGraphGateNode;
+  | StreamGraphGateNode
+  | StreamGraphMarkerMergeNode
+  | StreamGraphMarkerFilterNode
+  | StreamGraphMarkerDebounceNode
+  | StreamGraphMarkerTakeUntilNode;
 
 export interface StreamGraphEdge {
   id: string;

@@ -996,13 +996,37 @@
     // capability; these kinds are not transform capabilities, so without this
     // they would have no config UI at all — which is exactly why combine had
     // none before TEC-NATKIT-103 and threshold/gate would have none now.
-    const CATALOG_CONFIG_KINDS = ["combine", "threshold", "gate"];
+    const CATALOG_CONFIG_KINDS = [
+        "combine",
+        "threshold",
+        "gate",
+        "marker_merge",
+        "marker_filter",
+        "marker_debounce",
+        "marker_take_until",
+    ];
+
+    // Kinds that publish a topic and configure entirely from the catalog, so
+    // one inspector block serves them all: an output identifier plus their
+    // fields. Combine keeps its own block because it also has variadic
+    // input-port controls.
+    const TOPIC_PUBLISHING_KINDS = [
+        "threshold",
+        "gate",
+        "marker_merge",
+        "marker_filter",
+        "marker_debounce",
+        "marker_take_until",
+    ];
 
     // The two lane crossings share an inspector: both publish a topic (so both
     // need an identifier) and both configure entirely from the catalog.
     const selectedLaneCrossingNode = $derived(
-        selectedNode?.kind === "threshold" || selectedNode?.kind === "gate"
-            ? selectedNode
+        selectedNode && TOPIC_PUBLISHING_KINDS.includes(selectedNode.kind)
+            ? (selectedNode as EditorGraphNode & {
+                  output_identifier?: string;
+                  config?: Record<string, number | string | boolean | undefined>;
+              })
             : null,
     );
 
@@ -1015,6 +1039,18 @@
         }
         if (selectedNode?.kind === "gate") {
             return "Passes data only between the opening and closing markers. Labels match a marker's name OR its event, so a threshold in 'either' mode can open on 'rising' and close on 'falling'. Splitting at the sample is exact; the other modes trade accuracy at the window edges for uniform frame sizes.";
+        }
+        if (selectedNode?.kind === "marker_merge") {
+            return "Merges its marker inputs into one stream, ordered by each marker's own emitted time rather than by arrival. Output waits for the slowest input, so a silent input holds the merge.";
+        }
+        if (selectedNode?.kind === "marker_filter") {
+            return "Keeps only the markers whose chosen field matches. An empty value list passes everything, deliberately — a filter that blocked until configured would look exactly like a dead upstream.";
+        }
+        if (selectedNode?.kind === "marker_debounce") {
+            return "Suppresses markers arriving within the window of the last one PASSED, so a dense burst cannot extend the suppression indefinitely. Reads the markers' own timestamps, so a replay debounces identically.";
+        }
+        if (selectedNode?.kind === "marker_take_until") {
+            return "Passes the first input's markers until one arrives on 'until', then stops for good. 'Until' is decided by timestamp, not arrival, so the cut lands in the same place on a replay as it did live.";
         }
         return "";
     });
@@ -7493,8 +7529,9 @@
                                         ""}
                                     oninput={(event) =>
                                         updateSelectedNode((node) =>
-                                            node.kind === "threshold" ||
-                                            node.kind === "gate"
+                                            TOPIC_PUBLISHING_KINDS.includes(
+                                                node.kind,
+                                            )
                                                 ? {
                                                       ...node,
                                                       output_identifier:
@@ -7513,7 +7550,8 @@
                             {#if catalogConfigFields.length > 0}
                                 <NodeConfigFields
                                     fields={catalogConfigFields}
-                                    config={selectedLaneCrossingNode.config ?? {}}
+                                    config={selectedLaneCrossingNode.config ??
+                                        {}}
                                     onChange={updateCatalogConfigField}
                                 />
                             {/if}
