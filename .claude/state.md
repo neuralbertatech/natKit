@@ -11,36 +11,80 @@ Zach's observation was that VP is hard to formalize because messages arrive at
 unknown times in unknown quantities — which is what Rx's primitives were built
 for. Filed as **TEC-NATKIT-102** (epic, task 589) with what is now nine children.
 
-**MERGED AND PUSHED** at the end of the session:
+**MERGED AND PUSHED**, most recently TEC-NATKIT-115:
 
 ```
-natKit     origin/trunk  e1f19e9   (b926ad6 merges zach/593, 2c7891a merges zach/591)
-libnatkit  origin/trunk  8905567   (merges zach/593; contains all five commits)
+natKit     origin/trunk  83e3ba3   (merges zach/602; 97cf9ed bumps the submodule)
+libnatkit  origin/trunk  b3a0305   (merges zach/602)
 ```
 
-The branches were stacked, so it was two merges per repo rather than seven:
-`zach/593-marble-strips` carried all six natKit commits and all five libnatkit
-ones; `zach/591-stream-contract` was the only one outside that stack. natKit's
+Earlier in the session the Rx stack landed as `natKit e1f19e9` / `libnatkit
+8905567`. Those branches were stacked, so it was two merges per repo rather
+than seven: `zach/593-marble-strips` carried all six natKit commits and all
+five libnatkit ones; `zach/591-stream-contract` was the only one outside that stack. natKit's
 submodule pointer was bumped to libnatkit's merged trunk (e1f19e9) so the two
 repos agree rather than natKit sitting on a commit that is on trunk's history
 but is not trunk. Six pre-existing unpushed commits on natKit's trunk went up
 with it.
 
-⚠️ **Both pushes went STRAIGHT TO TRUNK and bypassed a branch-protection rule**
+⚠️ **Every push went STRAIGHT TO TRUNK and bypassed a branch-protection rule**
 ("Changes must be made through a pull request"), which this account is permitted
 to do. The history is full of direct `Merge zach/...` commits so it matches
 practice, but the rule exists — worth settling whether future work opens PRs.
 
 **Shipped and closed:** TEC-NATKIT-103 (combine join policies), TEC-NATKIT-109
 (threshold + gate).
-**In Verification:** 104 (the written contract), 105 (marker-lane operators),
-106 (marble strips), 108 (Kafka partitions).
-**Ice Box:** 107 + 110 (Briefs, need Zach), 111 (rig bench), 112 (per-message
-flush), 113 (unify the watermark).
+**Finished, at 100%:** 115 (the gap detector) — verified end to end off Kafka,
+merged and pushed. Needs moving to Verification by hand; `task update` has no
+`-bucket` flag, so buckets are readable from the CLI but not writable.
+**In Verification, awaiting Zach's greenlight:** 104 (the written contract),
+105 (marker-lane operators), 106 (marble strips), 108 (Kafka partitions).
+**Decided, children filed:** 107 (`groupBy` — keys come from the *registered*
+message structures, not from observed data), 110 (closed as "neither"; its
+deterministic half became 115).
+**Ice Box:** 111 (rig bench), 112 (per-message flush), 113 (unify the three
+watermark copies), 114 (`fan_out`).
 
-Verified across the session: **ctest 3/3, 119 gtest cases**, `npm run check`
-clean, **vitest 284 passed / 22 files**, backend builds clean, and the marble
-strips confirmed in the running app against live data.
+Verified across the session: **ctest 3/3, 129 gtest cases**, `npm run check`
+clean, **vitest 284 passed / 22 files**, backend builds clean, the marble strips
+confirmed in the running app against live data, and the gap marker read back off
+a real Kafka topic with every field correct.
+
+## ⚠️ Read this before adding another operator: six of them were INERT
+
+The worst bug of the session, and the tests could not see it. **One predicate,
+`isMarkerSourceKind`, was answering two different questions:** "does this node's
+output carry markers?" (a classifier, for lane rules and topic typing) and "is
+this *the* markers node?" (a dispatcher, for the start path). The start path's
+markers branch runs *before* the operator branches, so every kind that joined
+the predicate got claimed by it — `threshold`, `gap_detect`, `marker_merge`,
+`marker_filter`, `marker_debounce`, `marker_take_until` all reported `running`,
+carried the markers node's status message, **created no worker and processed
+nothing.** Introduced in 109, widened by 105 and 115. Fixed by splitting out
+`isExperimentMarkerNode()`.
+
+129 gtest cases, ctest 3/3, `npm run check` and a clean build were green the
+whole time, because the logic was all correct and simply never ran. **Unit tests
+cannot see an unreached code path.** The signal that separates a real start from
+this failure is `worker_id` — the status only carries one when a worker was
+actually created, so a node reporting `running` without one is the exact shape
+of the bug. That is what `libnatkit/scripts/natkit_operator_smoke.py` asserts,
+per kind, against the running stack. **Run it after touching the start path.**
+
+## The two verification scripts, and why each exists
+
+Both need the dev stack up and a live feed.
+
+- **`libnatkit/scripts/natkit_synthetic_feed.py`** — synthetic frames through
+  the REAL ingest path (MQTT `natKit/sending/` → bridge → Kafka → backend).
+  `--device fast|slow`, ⚠️ **one process per device** so a test can starve one
+  lane on demand; `--gap-at/--gap-for` scripts a silence without stopping the
+  process.
+- **`libnatkit/scripts/natkit_operator_smoke.py`** — does every operator kind
+  own a worker? The guard for the bug above.
+- **`libnatkit/scripts/natkit_gap_verify.py`** — does the gap marker's
+  **content** reach Kafka correctly? A screenshot cannot check content. Reads
+  the marker back and asserts its fields.
 
 ## The design finding worth keeping
 
