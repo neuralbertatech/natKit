@@ -133,11 +133,28 @@ it.
 
 1. **Nothing is in Done** beyond 103 and 109 — 104/105/106/108 await a
    greenlight.
-4. **Two Briefs need Zach:** 107 (`groupBy` — recommendation: declared fan-out,
-   since the lane rule does static analysis over a fixed node set and dynamic
-   topology would stop validating the largest part of a graph) and 110 (clock
-   source — recommendation: "neither", plus re-file the timeout/liveness case
-   against the deferred derived-liveness work).
+2. **Both Briefs are DECIDED** (2026-09-10), each with its remainder filed as a
+   child so the Brief closes when the child does:
+   - **107 → TEC-NATKIT-114 `fan_out`.** Zach's call, and a third option
+     neither the Brief nor I had: dynamic over **registered message structure**
+     rather than over observed data. Keys come from the upstream
+     `DataSchemaDescriptor`'s channels, or from the stream registry — declared
+     things, resolvable before the graph runs. Both of the Brief's objections
+     were objections to *runtime* topology and simply evaporate: the lane rule's
+     static analysis still holds, and the fixed `g_transform_slot_capacity`
+     becomes an author-time check rather than a run-time failure.
+     ⚠️ **It needs NO backend change.** `composites.ts` already flattens every
+     composite into namespaced primitives before save/validate/run, so the
+     runtime sees an ordinary static graph. The only new machinery is a
+     per-instance param override on `instantiateComposite`. Named `fan_out`
+     because nothing is grouped by a data value and `groupBy` would mislead.
+   - **110 → TEC-NATKIT-115, a data-time gap detector.** No clock node. The line
+     it was groping for was already drawn in the code and I had not noticed:
+     `classifyTransformWorkerStatus` uses the wall clock in the STATUS layer and
+     nothing in the data path does. So the question was never "should there be a
+     clock node" but **may a wall-clock event become data** — no. A gap between
+     consecutive timestamps is deterministic and replayable; "nothing arrived for
+     N real seconds" is a statement about the transport and stays in diagnostics.
 3. **`build-codex` is a tracked build directory** in libnatkit — 1450 files, 622
    of which Syncthing deleted. Untracking it needs sanction; it is a 622-path
    commit. `libnatkit/core/streams/` is untracked MSVC `.obj` output, same class.
@@ -151,6 +168,9 @@ it.
    — are not captured. The feeder written this session
    (`scratchpad/feed.py`, two devices at ~50 Hz and ~5 Hz) already scripts a
    silent gap, so capturing one is cheap.
+6. **`sample`'s stall behaviour is inherited, not chosen.** It holds rather than
+   continuing its grid when inputs stop. Holding is almost certainly right, but
+   it should be a decided one-line config on 103.
 
 ## Environment left changed
 
