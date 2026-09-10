@@ -7,10 +7,13 @@
     // per transform kind, so a new transform advertised by the backend catalog
     // is configurable with no frontend change.
     import type { TransformCapabilityConfigField } from "./types";
+    import { configOptionLabel } from "../VisualProgramming/streamGraph";
 
     interface Props {
         fields: TransformCapabilityConfigField[];
-        config: Record<string, number | string | boolean>;
+        // Values may be absent: a node dropped on the canvas has no config yet
+        // and each field falls back to its own advertised default.
+        config: Record<string, number | string | boolean | undefined>;
         onChange: (
             field: TransformCapabilityConfigField,
             rawValue: string,
@@ -38,7 +41,13 @@
                         )}
                 >
                     {#each field.options ?? [] as option}
-                        <option value={option}>{option}</option>
+                        <!-- The wire value stays terse because the backend
+                             parses it; the label says what the option DOES,
+                             which matters most where picking wrong is silently
+                             wrong rather than an error. -->
+                        <option value={option}
+                            >{configOptionLabel(field, option)}</option
+                        >
                     {/each}
                 </select>
             {:else if field.type === "string"}

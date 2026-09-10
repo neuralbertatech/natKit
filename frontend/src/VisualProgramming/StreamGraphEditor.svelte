@@ -140,6 +140,7 @@
         isProvenancePort,
         BOTH_LABEL,
         sanitizeIdentifier,
+        visibleConfigFields,
         PROVENANCE_PORT_MODELS,
         PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
@@ -177,6 +178,7 @@
         DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
+        CombineNodeConfig,
         NodeCatalogEntry,
         SessionProtocol,
         StreamGraphExperimentNode,
@@ -989,6 +991,37 @@
     const selectedCombineNode = $derived(
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
+
+    // Combine's config fields come from the runtime node catalog, not from
+    // transformCapabilities — combine is not a transform capability — and are
+    // filtered by each field's `visible_when` so a value the selected join
+    // policy would ignore is never offered. (TEC-NATKIT-103.)
+    const combineConfigFields = $derived(
+        selectedCombineNode
+            ? visibleConfigFields(
+                  nodeCatalog.find((entry) => entry.node_type === "combine")
+                      ?.config_fields ?? [],
+                  selectedCombineNode.config ?? {},
+              )
+            : [],
+    );
+
+    // Picking the wrong join policy is silently wrong rather than an error, so
+    // the inspector says what the selected one DOES rather than leaving the
+    // author to infer it from the name.
+    const combineJoinPolicyHint = $derived.by(() => {
+        const policy = selectedCombineNode?.config?.join_policy ?? "zip";
+        switch (policy) {
+            case "combine_latest":
+                return "Emits whenever any input produces, reusing every other input's most recent frame. For mixed-rate fusion, where waiting for the slow input would throw away most of the fast one.";
+            case "with_latest_from":
+                return "Only the FIRST input triggers output; the others are sampled at its cadence and contribute their most recent frame. A frame on another input emits nothing.";
+            case "sample":
+                return "A fixed rate on the data clock drives output, and every input contributes its latest frame. For logging sources with no common cadence.";
+            default:
+                return "Lockstep: one frame per input per output, waiting for laggards, pairing frames whose timestamps fall within the tolerance. Right when every input derives from a common window.";
+        }
+    });
 
     // A legacy `experiment` node on an unconverted board. It no longer authors
     // anything — the inspector offers to convert it instead.
@@ -3780,6 +3813,26 @@
                 ...node,
                 config: nextConfig,
             };
+        });
+        scheduleReactiveRestart(selectedNodeId);
+    }
+
+    // Combine's join policy and its policy-specific parameters. Restarting the
+    // node is required for the same reason a transform's config change is: the
+    // joiner's state (its queues, its current values, its tick phase) belongs to
+    // the running worker and cannot be re-policied in place.
+    function updateCombineConfigField(
+        field: TransformCapabilityConfigField,
+        rawValue: string,
+    ) {
+        updateSelectedNode((node) => {
+            if (node.kind !== "combine") {
+                return node;
+            }
+            const nextConfig: CombineNodeConfig = { ...(node.config ?? {}) };
+            nextConfig[field.id] =
+                field.type === "number" ? Number(rawValue) : rawValue;
+            return { ...node, config: nextConfig };
         });
         scheduleReactiveRestart(selectedNodeId);
     }
@@ -7381,6 +7434,16 @@
                                     </button>
                                 </div>
                             </div>
+                            {#if combineConfigFields.length > 0}
+                                <NodeConfigFields
+                                    fields={combineConfigFields}
+                                    config={selectedCombineNode.config ?? {}}
+                                    onChange={updateCombineConfigField}
+                                />
+                                <p class="muted-text">
+                                    {combineJoinPolicyHint}
+                                </p>
+                            {/if}
                         {/if}
 
                         {#if selectedMarkersNode}

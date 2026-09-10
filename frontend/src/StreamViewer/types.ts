@@ -76,6 +76,15 @@ export interface TransformCapabilityConfigField {
   default_value?: number;
   default_option?: string;
   options?: string[];
+  // Optional human-readable labels for `options`, positionally matched. Lets a
+  // wire value stay a terse identifier ("with_latest_from") while the picker
+  // explains what it does. Falls back to the raw option when absent.
+  option_labels?: string[];
+  // Show this field only while another field of the same node holds one of
+  // these values. Kept data-driven on purpose: a node whose config has
+  // mode-dependent fields (combine's join policy, for one) must not require the
+  // frontend to learn its shape. See visibleConfigFields().
+  visible_when?: { field: string; equals: string[] };
 }
 
 // The transform kinds compiled into the backend today. Kept for reference /
@@ -631,12 +640,30 @@ export interface StreamGraphSinkNode extends StreamGraphBaseNode<"sink"> {
 }
 
 // Fans in >=2 upstream streams (e.g. several feature-extraction transforms)
-// into one flattened feature-vector stream. Backend-only node kind — no
-// transform_kind/config, since it has no per-kind parameters of its own.
+// into one flattened feature-vector stream. Backend-only node kind — it carries
+// no transform_kind, but it DOES carry config: the join policy that decides how
+// inputs which did not arrive together are reconciled (TEC-NATKIT-103). The
+// fields are advertised by the node catalog, not declared here.
+export interface CombineNodeConfig {
+  // "zip" | "combine_latest" | "with_latest_from" | "sample". Open, like every
+  // other catalog-driven value — the backend's list is authoritative.
+  join_policy?: string;
+  // zip only: how far apart two frames may be and still count as a pair.
+  align_tolerance_ms?: number;
+  // sample only: the output grid's rate.
+  sample_rate_hz?: number;
+  // The node catalog is authoritative about which fields exist, so a backend
+  // that advertises a new one must be storable without a TypeScript edit —
+  // the same open-by-design rule as `TransformKind`. The named fields above
+  // document today's shape; they do not close it.
+  [key: string]: number | string | boolean | undefined;
+}
+
 export interface StreamGraphCombineNode extends StreamGraphBaseNode<"combine"> {
   kind: "combine";
   output_identifier?: string;
   output_stream_id?: string;
+  config?: CombineNodeConfig;
 }
 
 // Records N upstream sensor streams under one protocol/marker timeline and

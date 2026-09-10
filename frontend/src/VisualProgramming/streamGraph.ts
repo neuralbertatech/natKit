@@ -204,3 +204,69 @@ export function graphRunStateClass(
     }
     return "muted";
 }
+
+/**
+ * Filters a node's catalog config fields down to those that apply given its
+ * current config, honouring each field's optional `visible_when`.
+ *
+ * Why this exists rather than per-node conditionals in the inspector: combine's
+ * align tolerance is meaningful only under the `zip` join policy and its output
+ * rate only under `sample`, and showing all three at once invites setting a
+ * value that is silently ignored. Keeping the rule in the field's own
+ * advertisement means a future node with mode-dependent config needs no
+ * frontend change at all — which is the whole point of the runtime catalog.
+ *
+ * A field with no `visible_when` is always visible. A guard whose named field is
+ * absent from `config` falls back to that field's own default (`default_option`,
+ * then `default_value`), so an unsaved node shows the same fields the backend
+ * would actually run with rather than hiding everything.
+ */
+export function visibleConfigFields<
+    T extends {
+        id: string;
+        default_option?: string;
+        default_value?: number;
+        visible_when?: { field: string; equals: string[] };
+    },
+>(fields: T[], config: Record<string, unknown> | undefined | null): T[] {
+    const resolve = (fieldId: string): string | undefined => {
+        const current = config?.[fieldId];
+        if (current !== undefined && current !== null) {
+            return String(current);
+        }
+        const declared = fields.find((field) => field.id === fieldId);
+        if (declared?.default_option !== undefined) {
+            return declared.default_option;
+        }
+        if (declared?.default_value !== undefined) {
+            return String(declared.default_value);
+        }
+        return undefined;
+    };
+
+    return fields.filter((field) => {
+        if (!field.visible_when) {
+            return true;
+        }
+        const actual = resolve(field.visible_when.field);
+        if (actual === undefined) {
+            return false;
+        }
+        return field.visible_when.equals.includes(actual);
+    });
+}
+
+/**
+ * The label a config-field option should wear in a picker: its positionally
+ * matched `option_labels` entry, or the raw wire value when none is advertised.
+ */
+export function configOptionLabel(
+    field: { options?: string[]; option_labels?: string[] },
+    option: string,
+): string {
+    const index = field.options?.indexOf(option) ?? -1;
+    if (index < 0) {
+        return option;
+    }
+    return field.option_labels?.[index] ?? option;
+}
