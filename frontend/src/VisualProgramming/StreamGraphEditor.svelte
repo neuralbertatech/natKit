@@ -140,10 +140,12 @@
         isProvenancePort,
         BOTH_LABEL,
         sanitizeIdentifier,
+        visibleConfigFields,
         PROVENANCE_PORT_MODELS,
         PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
     } from "./streamGraph";
+    import { resolveAxisEndUs } from "./marbleStrip";
     import {
         extractCompositeFromSelection,
         flattenGraph,
@@ -177,6 +179,7 @@
         DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
+        ChannelActivity,
         NodeCatalogEntry,
         SessionProtocol,
         StreamGraphExperimentNode,
@@ -989,6 +992,125 @@
     const selectedCombineNode = $derived(
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
+
+    // The shared right-hand edge for every marble strip on the canvas
+    // (TEC-NATKIT-106): the newest event ANY lane in the graph has seen, on the
+    // DATA clock. Resolved once here rather than per card, because two rows are
+    // only comparable against one axis — per-card axes would right-align every
+    // row and make a stalled input indistinguishable from a live one, which is
+    // the failure the strips exist to reveal. Using the data clock also means a
+    // paused replay holds the strips still instead of draining them.
+    const marbleAxisEndUs = $derived.by(() => {
+        const lanes: (ChannelActivity | undefined)[] = [];
+        for (const status of Object.values(
+            selectedGraphStatus?.node_statuses ?? {},
+        )) {
+            lanes.push(status?.data_activity, status?.marker_activity);
+        }
+        return resolveAxisEndUs(lanes);
+    });
+
+    // Node kinds whose config comes from the runtime NODE CATALOG rather than
+    // from transformCapabilities. A transform's fields arrive with its
+    // capability; these kinds are not transform capabilities, so without this
+    // they would have no config UI at all — which is exactly why combine had
+    // none before TEC-NATKIT-103 and threshold/gate would have none now.
+    const CATALOG_CONFIG_KINDS = [
+        "combine",
+        "threshold",
+        "gate",
+        "marker_merge",
+        "marker_filter",
+        "marker_debounce",
+        "marker_take_until",
+    ];
+
+    // Kinds that publish a topic and configure entirely from the catalog, so
+    // one inspector block serves them all: an output identifier plus their
+    // fields. Combine keeps its own block because it also has variadic
+    // input-port controls.
+    const TOPIC_PUBLISHING_KINDS = [
+        "threshold",
+        "gate",
+        "marker_merge",
+        "marker_filter",
+        "marker_debounce",
+        "marker_take_until",
+    ];
+
+    // The two lane crossings share an inspector: both publish a topic (so both
+    // need an identifier) and both configure entirely from the catalog.
+    const selectedLaneCrossingNode = $derived(
+        selectedNode && TOPIC_PUBLISHING_KINDS.includes(selectedNode.kind)
+            ? (selectedNode as EditorGraphNode & {
+                  output_identifier?: string;
+                  config?: Record<string, number | string | boolean | undefined>;
+              })
+            : null,
+    );
+
+    // Each says what it DOES, because both are silently wrong when misconfigured
+    // rather than erroring: a threshold whose level sits in the noise floor
+    // fires constantly, and a gate whose labels never arrive passes nothing.
+    const laneCrossingHint = $derived.by(() => {
+        if (selectedNode?.kind === "threshold") {
+            return "Emits a marker when the channel crosses the level and stays past it for the dwell. The marker is stamped at the interpolated crossing time, not the frame's. Refractory suppresses repeat firing — raise it if a hovering signal floods the output.";
+        }
+        if (selectedNode?.kind === "gate") {
+            return "Passes data only between the opening and closing markers. Labels match a marker's name OR its event, so a threshold in 'either' mode can open on 'rising' and close on 'falling'. Splitting at the sample is exact; the other modes trade accuracy at the window edges for uniform frame sizes.";
+        }
+        if (selectedNode?.kind === "marker_merge") {
+            return "Merges its marker inputs into one stream, ordered by each marker's own emitted time rather than by arrival. Output waits for the slowest input, so a silent input holds the merge.";
+        }
+        if (selectedNode?.kind === "marker_filter") {
+            return "Keeps only the markers whose chosen field matches. An empty value list passes everything, deliberately — a filter that blocked until configured would look exactly like a dead upstream.";
+        }
+        if (selectedNode?.kind === "marker_debounce") {
+            return "Suppresses markers arriving within the window of the last one PASSED, so a dense burst cannot extend the suppression indefinitely. Reads the markers' own timestamps, so a replay debounces identically.";
+        }
+        if (selectedNode?.kind === "marker_take_until") {
+            return "Passes the first input's markers until one arrives on 'until', then stops for good. 'Until' is decided by timestamp, not arrival, so the cut lands in the same place on a replay as it did live.";
+        }
+        return "";
+    });
+
+    const selectedCatalogConfigNode = $derived(
+        selectedNode && CATALOG_CONFIG_KINDS.includes(selectedNode.kind)
+            ? selectedNode
+            : null,
+    );
+
+    // Filtered by each field's `visible_when`, so a value the selected mode
+    // would ignore is never offered (combine's tolerance under anything but
+    // zip, its output rate under anything but sample).
+    const catalogConfigFields = $derived(
+        selectedCatalogConfigNode
+            ? visibleConfigFields(
+                  nodeCatalog.find(
+                      (entry) => entry.node_type === selectedCatalogConfigNode.kind,
+                  )?.config_fields ?? [],
+                  (selectedCatalogConfigNode as { config?: Record<string, unknown> })
+                      .config ?? {},
+              )
+            : [],
+    );
+
+    // Picking the wrong join policy is silently wrong rather than an error, so
+    // the inspector says what the selected one DOES rather than leaving the
+    // author to infer it from the name.
+    const combineJoinPolicyHint = $derived.by(() => {
+        const policy = selectedCombineNode?.config?.join_policy ?? "zip";
+        switch (policy) {
+            case "combine_latest":
+                return "Emits whenever any input produces, reusing every other input's most recent frame. For mixed-rate fusion, where waiting for the slow input would throw away most of the fast one.";
+            case "with_latest_from":
+                return "Only the FIRST input triggers output; the others are sampled at its cadence and contribute their most recent frame. A frame on another input emits nothing.";
+            case "sample":
+                return "A fixed rate on the data clock drives output, and every input contributes its latest frame. For logging sources with no common cadence.";
+            default:
+                return "Lockstep: one frame per input per output, waiting for laggards, pairing frames whose timestamps fall within the tolerance. Right when every input derives from a common window.";
+        }
+    });
 
     // A legacy `experiment` node on an unconverted board. It no longer authors
     // anything — the inspector offers to convert it instead.
@@ -3784,6 +3906,31 @@
         scheduleReactiveRestart(selectedNodeId);
     }
 
+    // Config for a catalog-configured node. Restarting is required for the same
+    // reason a transform's config change is: the worker's state — a joiner's
+    // queues and tick phase, a detector's pending candidate, a gate's open
+    // window and buffered frames — belongs to the old settings and cannot be
+    // re-policied in place.
+    function updateCatalogConfigField(
+        field: TransformCapabilityConfigField,
+        rawValue: string,
+    ) {
+        updateSelectedNode((node) => {
+            if (!CATALOG_CONFIG_KINDS.includes(node.kind)) {
+                return node;
+            }
+            const current =
+                (node as { config?: Record<string, unknown> }).config ?? {};
+            const nextConfig: Record<string, number | string> = {
+                ...(current as Record<string, number | string>),
+            };
+            nextConfig[field.id] =
+                field.type === "number" ? Number(rawValue) : rawValue;
+            return { ...node, config: nextConfig } as typeof node;
+        });
+        scheduleReactiveRestart(selectedNodeId);
+    }
+
     // Phase 2: when a train job completes, auto-fill the resulting bundle path
     // into classify nodes so the operator never pastes a model path. Only fills
     // nodes whose model_path is empty, preserving a manually-edited path or one
@@ -6459,6 +6606,7 @@
                         <StreamGraphNodeCard
                             {node}
                             runtimeStatus={nodeRuntimeStatus(node.id)}
+                            {marbleAxisEndUs}
                             selected={selectedNodeIds.has(node.id)}
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
@@ -7381,6 +7529,53 @@
                                     </button>
                                 </div>
                             </div>
+                            {#if catalogConfigFields.length > 0}
+                                <NodeConfigFields
+                                    fields={catalogConfigFields}
+                                    config={selectedCombineNode.config ?? {}}
+                                    onChange={updateCatalogConfigField}
+                                />
+                                <p class="muted-text">
+                                    {combineJoinPolicyHint}
+                                </p>
+                            {/if}
+                        {/if}
+
+                        {#if selectedLaneCrossingNode}
+                            <label>
+                                <span>Output identifier</span>
+                                <input
+                                    value={selectedLaneCrossingNode.output_identifier ??
+                                        ""}
+                                    oninput={(event) =>
+                                        updateSelectedNode((node) =>
+                                            TOPIC_PUBLISHING_KINDS.includes(
+                                                node.kind,
+                                            )
+                                                ? {
+                                                      ...node,
+                                                      output_identifier:
+                                                          sanitizeIdentifier(
+                                                              (
+                                                                  event.currentTarget as HTMLInputElement
+                                                              ).value,
+                                                          ),
+                                                      output_stream_id:
+                                                          undefined,
+                                                  }
+                                                : node,
+                                        )}
+                                />
+                            </label>
+                            {#if catalogConfigFields.length > 0}
+                                <NodeConfigFields
+                                    fields={catalogConfigFields}
+                                    config={selectedLaneCrossingNode.config ??
+                                        {}}
+                                    onChange={updateCatalogConfigField}
+                                />
+                            {/if}
+                            <p class="muted-text">{laneCrossingHint}</p>
                         {/if}
 
                         {#if selectedMarkersNode}

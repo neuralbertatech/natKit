@@ -2,9 +2,172 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-08-26
+**Last updated:** 2026-09-10
 
 ## Where things stand
+
+**An Rx-style stream algebra for Visual Programming, built out over one session.**
+Zach's observation was that VP is hard to formalize because messages arrive at
+unknown times in unknown quantities — which is what Rx's primitives were built
+for. Filed as **TEC-NATKIT-102** (epic, task 589) with what is now nine children.
+
+⚠️ **NOTHING IS MERGED AND NOTHING IS PUSHED.** The branches are stacked, so it
+is two merges per repo, not seven:
+
+```
+zach/593-marble-strips     ALL SIX natKit commits (103 -> 109 -> 105 -> 108 -> 106)
+                           and all five in libnatkit
+zach/591-stream-contract   the one commit NOT in that stack: docs/STREAM_CONTRACT.md
+```
+
+Local `trunk` was already **6 commits ahead of `origin/trunk`** before this
+session; that is unrelated and also unpushed.
+
+**Shipped and closed:** TEC-NATKIT-103 (combine join policies), TEC-NATKIT-109
+(threshold + gate).
+**In Verification:** 104 (the written contract), 105 (marker-lane operators),
+106 (marble strips), 108 (Kafka partitions).
+**Ice Box:** 107 + 110 (Briefs, need Zach), 111 (rig bench), 112 (per-message
+flush), 113 (unify the watermark).
+
+Verified across the session: **ctest 3/3, 119 gtest cases**, `npm run check`
+clean, **vitest 284 passed / 22 files**, backend builds clean, and the marble
+strips confirmed in the running app against live data.
+
+## The design finding worth keeping
+
+**The runtime was already a hot, lossy Observable — it just had no name.** One
+worker per node, one channel per edge (in-process ring buffer or Kafka,
+transport-transparent), `DropOldest` overflow. So the epic was never a paradigm
+change; it was naming the paradigm and building the parts that were skipped.
+
+Two things follow, and both are now load-bearing across five operators:
+
+1. **Every multi-input operator needs a watermark.** An event may only be
+   processed once no input can still deliver something older, bounded by the
+   smallest per-input high-water mark. It is sound *only* because ingress
+   guarantees monotonicity (TEC-NATKIT-104). Get it wrong and the output depends
+   on inter-channel arrival skew, so a live run silently disagrees with a replay
+   of its own recording. That bug happened once, in the first cut of
+   `CombineJoiner`, and a test caught it — `CombineJoinContract.
+   OutputIsIndependentOfFeedRate` is its regression guard and must never be
+   edited to make a refactor pass.
+2. **The graph's clock is emergent from its data.** Every temporal operator
+   built — `sample`'s grid, `threshold`'s dwell/refractory, `gate`'s window,
+   `marker_debounce`, the marble strips — derives its clock from its inputs, not
+   from a wall clock or a config rate. This is why replay determinism holds by
+   construction, and it is why TEC-NATKIT-110 should probably close as "neither"
+   rather than add a clock node.
+
+**The two lanes want different algebras.** Marker/event lane: genuinely Rx.
+Data lane: DSP blocks, sample-clocked — `bufferCount(200)` is not
+`sliding_window(200 samples, hop 50)`. There is no need to unify them; every
+wire already has both.
+
+**Exactly two node kinds cross lanes** — `threshold` (data→markers) and `gate`
+(markers→data) — and that is what makes the split *enforceable*:
+`requiredInputLane()` plus a per-edge check now refuses data wired into a marker
+port at author time. A third crossing means revisiting that rule, not extending
+it.
+
+## ⚠️ Traps this session bought — do not re-learn these
+
+- **A stale git index fakes hundreds of dirty paths.** natKit read 189 dirty,
+  libnatkit 642, natKit-IMU 81, and **not one file on disk differed from HEAD**.
+  It presents as `MM` staged modifications plus an `AD` entry, which looks
+  exactly like deliberate partial staging — I misread it as Zach's in-flight
+  work and reported that twice before proving otherwise. The tells: a
+  `.gitignore` whose staged diff *removes* what its worktree diff *adds back*;
+  `MM` files whose bytes match `git cat-file blob HEAD:<path>`; staged deletions
+  whose files are present and identical; submodule pointers stale in the index
+  only. `git reset` fixed all three, touching nothing. Snapshot the index first
+  (`git commit-tree $(git write-tree) -p HEAD`) — an index is in no commit.
+  Snapshots kept at `refs/snapshots/stale-index-2026-09-10`.
+- **⚠️ Syncthing DELETES git-tracked source, and the fix is not yet live.**
+  `~/code/.stglobalignore` marked `docs`, `resources`, `package-lock.json` and
+  `third-party` as `(?d)` *unanchored*, so they matched at any depth. That ate
+  `natVR/docs/` and `natKit-hand-tracking/docs/` entirely, plus frontend-cljs
+  fixtures and 622 files in libnatkit — the deletions correlate one-to-one with
+  the patterns. Restored from HEAD. Patterns fixed (BNZ-IT-7) and verified: no
+  `(?d)` pattern now matches any tracked file except three `.DS_Store`. **But
+  Syncthing has not re-read the file — it needs a rescan or restart, and until
+  then the old patterns are still in force.** `(?d)pkg` was the worst: 42
+  tracked Go source files in `assistant/pkg/api/`.
+- **Unit tests can pass while a feature is invisible.** The marble strips
+  rendered all 160 density columns, correctly positioned, into a track **2 pixels
+  wide** — they were inside `.node-meta`, between the two port columns. Every
+  unit test passed because each asked the right question of the wrong layer
+  (where does a marble go as a *fraction* of the strip). Even a DOM assertion
+  ("marble elements exist") passed. Only `getBoundingClientRect` found it. The
+  e2e spec now asserts `trackWidth > 80`.
+- **The dev backend's source is BAKED INTO THE IMAGE** (the frontend is
+  bind-mounted, so frontend edits are live). The container was running a
+  2026-08-26 binary with none of this epic in it, so the strips could never have
+  appeared. Rebuild: `podman-compose -f docker-compose.dev.yml build
+  natkit-v0-backend`, then remove **the frontend container first** — it
+  `depends_on` the backend, so `podman rm` of the backend fails with "has
+  dependent containers" and the old one keeps running. Verify by the binary's
+  date inside the container, never by uptime.
+- **Inbound MQTT is `natKit/sending/`, NOT `natKit/receiving/`.** The latter is
+  the bridge's *outbound* (Kafka→device) prefix; its own comment says so.
+  Publishing there succeeds, forwards nothing, and looks like a working feed.
+- **`podman exec` per message costs ~0.5 s.** A publisher loop that spawns one
+  per frame produced 23 frames in 12 s where ~600 were wanted — slow enough to
+  look like a broken pipeline rather than a slow harness. Use one long-lived
+  `mosquitto_pub -l` per topic and write to its stdin.
+- **`kafka.tools.GetOffsetShell` is gone and `kafka-log-dirs` is the honest
+  measure** of whether a topic has data. Every partition under this broker is
+  `-0`, which independently confirms the single-partition assumption behind
+  TEC-NATKIT-108.
+
+## What is left
+
+1. ⚠️ **Merge and push.** Two branches per repo (see above). Nothing is on trunk.
+2. ⚠️ **Bounce Syncthing** so BNZ-IT-7's fix takes effect. Highest-risk item
+   here: until then the deletable patterns still apply.
+3. **Nothing is in Done** beyond 103 and 109 — 104/105/106/108 await a
+   greenlight.
+4. **Two Briefs need Zach:** 107 (`groupBy` — recommendation: declared fan-out,
+   since the lane rule does static analysis over a fixed node set and dynamic
+   topology would stop validating the largest part of a graph) and 110 (clock
+   source — recommendation: "neither", plus re-file the timeout/liveness case
+   against the deferred derived-liveness work).
+5. **`build-codex` is a tracked build directory** in libnatkit — 1450 files, 622
+   of which Syncthing deleted. Untracking it needs sanction; it is a 622-path
+   commit. `libnatkit/core/streams/` is untracked MSVC `.obj` output, same class.
+6. **TEC-NATKIT-111** (rig bench) is the honest gap across 103/105/109: none of
+   those operators has processed a real frame through Kafka. **113** unifies the
+   three copies of the watermark. **112** is the per-message producer flush —
+   note `flush()`'s correctness currently *depends* on it, so they must change
+   together.
+7. **106's evidence shows a healthy graph only.** The four failure modes the
+   strips exist to reveal — misaligning combine, starved input, drop-oldest gap
+   — are not captured. The feeder written this session
+   (`scratchpad/feed.py`, two devices at ~50 Hz and ~5 Hz) already scripts a
+   silent gap, so capturing one is cheap.
+
+## Environment left changed
+
+- The dev backend container now runs **today's** build (was 2026-08-26).
+- Two synthetic Kafka topics remain: `Data-909001-…` and `Data-909002-…`. Junk,
+  but they appear in the stream list. Not deleted.
+- Scratch boards from the e2e runs were stopped and deleted; the feeder is
+  stopped.
+
+# Prior sessions (retained)
+
+> ⚠️ Everything below predates 2026-08-25 and is kept deliberately. It spans the
+> C ABI bindings, the ML pipeline, the Visual Programming phases and the Docker
+> packaging work, and it is the only written record of several of them. On
+> 2026-08-25 this file was briefly overwritten wholesale — 4,160 lines for 106 —
+> and restored from `git show HEAD~1`. Append above this line; do not replace it.
+
+## Session 2026-08-26 — device controls are discovered (TEC-NATKIT-10)
+
+
+
+
+### Where things stand
 
 **Everything is merged, pushed, flashed and running.** All four repos on `trunk`,
 all on `origin/trunk`:
@@ -21,7 +184,7 @@ and bridge. Four leaves at ~12 fps.
 build green · frontend `npm run check` clean, 241 tests · Identify confirmed
 from the browser.
 
-## The headline: device controls are DISCOVERED, not declared
+### The headline: device controls are DISCOVERED, not declared
 
 TEC-NATKIT-10 shipped end to end. Nothing in the frontend says what a device can
 do; every control comes from that device's own advertisement.
@@ -55,7 +218,7 @@ have recreated it inside the mechanism built to prevent it.
 **Measured on the rig:** an unadvertised command is refused in **80 ms** with a
 named reason, against **17.6 s** for the old timeout path.
 
-## Migration is live and must be finished
+### Migration is live and must be finished
 
 `strictMode` is OFF. An un-advertised device is counted-and-allowed, so older
 firmware keeps working. `controls_unadvertised_allowed` is exposed on the
@@ -64,7 +227,7 @@ device_health message and currently reads 1 (the standalone WiFi node
 
 **Turn strict on only when that counter has been flat for a real session.**
 
-## Also shipped today
+### Also shipped today
 
 - **TEC-NATKIT-81** hub reports `nodes_present` beside `nodes_known`, plus a WARN
   on the edge. The roster is deliberately NOT aged out.
@@ -78,7 +241,7 @@ device_health message and currently reads 1 (the standalone WiFi node
 - **TEC-NATKIT-96** `npm run check` clean — 11 of 13 errors fixed themselves in
   the merge.
 
-## What is left
+### What is left
 
 1. ⚠️ **Nothing is in Done.** Everything above sits in Verification awaiting a
    greenlight.
@@ -91,7 +254,7 @@ device_health message and currently reads 1 (the standalone WiFi node
 5. Two branches deliberately unmerged: `vp-rework-phases-0-2` (605 files, 5 weeks
    stale) and `natKit-IMU/experimental` (pins a superseded platform).
 
-## ⚠️ Traps this session bought — do not re-learn these
+### ⚠️ Traps this session bought — do not re-learn these
 
 - **`podman-compose up -d --force-recreate <svc>` silently restarts the OLD
   container when it has dependents.** It prints the container name like success.
@@ -114,13 +277,6 @@ device_health message and currently reads 1 (the standalone WiFi node
 - **Hub telemetry cannot distinguish "all leaves lost power" from "the hub's
   receive path died"** — filed TEC-NATKIT-97 for the missing beacon-TX counter.
 
-# Prior sessions (retained)
-
-> ⚠️ Everything below predates 2026-08-25 and is kept deliberately. It spans the
-> C ABI bindings, the ML pipeline, the Visual Programming phases and the Docker
-> packaging work, and it is the only written record of several of them. On
-> 2026-08-25 this file was briefly overwritten wholesale — 4,160 lines for 106 —
-> and restored from `git show HEAD~1`. Append above this line; do not replace it.
 
 ## Where things stand
 

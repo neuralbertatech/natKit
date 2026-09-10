@@ -76,6 +76,15 @@ export interface TransformCapabilityConfigField {
   default_value?: number;
   default_option?: string;
   options?: string[];
+  // Optional human-readable labels for `options`, positionally matched. Lets a
+  // wire value stay a terse identifier ("with_latest_from") while the picker
+  // explains what it does. Falls back to the raw option when absent.
+  option_labels?: string[];
+  // Show this field only while another field of the same node holds one of
+  // these values. Kept data-driven on purpose: a node whose config has
+  // mode-dependent fields (combine's join policy, for one) must not require the
+  // frontend to learn its shape. See visibleConfigFields().
+  visible_when?: { field: string; equals: string[] };
 }
 
 // The transform kinds compiled into the backend today. Kept for reference /
@@ -559,7 +568,20 @@ export type StreamGraphNodeKind =
   // are still parsed and rendered; nothing creates one any more.
   | "experiment"
   | "train"
-  | "export";
+  | "export"
+  // The two lane crossings (TEC-NATKIT-109). `threshold` reads a data channel
+  // and emits markers; `gate` reads markers and passes data. They are the ONLY
+  // kinds that cross between the sample-clocked data lane and the unclocked
+  // marker lane — the backend's validation enforces that, and adding a third
+  // means revisiting the rule rather than extending this union.
+  | "threshold"
+  | "gate"
+  // The marker-lane algebra (TEC-NATKIT-105). All four are marker-in/
+  // marker-out, so none of them crosses lanes — only `threshold` and `gate` do.
+  | "marker_merge"
+  | "marker_filter"
+  | "marker_debounce"
+  | "marker_take_until";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -631,12 +653,30 @@ export interface StreamGraphSinkNode extends StreamGraphBaseNode<"sink"> {
 }
 
 // Fans in >=2 upstream streams (e.g. several feature-extraction transforms)
-// into one flattened feature-vector stream. Backend-only node kind — no
-// transform_kind/config, since it has no per-kind parameters of its own.
+// into one flattened feature-vector stream. Backend-only node kind — it carries
+// no transform_kind, but it DOES carry config: the join policy that decides how
+// inputs which did not arrive together are reconciled (TEC-NATKIT-103). The
+// fields are advertised by the node catalog, not declared here.
+export interface CombineNodeConfig {
+  // "zip" | "combine_latest" | "with_latest_from" | "sample". Open, like every
+  // other catalog-driven value — the backend's list is authoritative.
+  join_policy?: string;
+  // zip only: how far apart two frames may be and still count as a pair.
+  align_tolerance_ms?: number;
+  // sample only: the output grid's rate.
+  sample_rate_hz?: number;
+  // The node catalog is authoritative about which fields exist, so a backend
+  // that advertises a new one must be storable without a TypeScript edit —
+  // the same open-by-design rule as `TransformKind`. The named fields above
+  // document today's shape; they do not close it.
+  [key: string]: number | string | boolean | undefined;
+}
+
 export interface StreamGraphCombineNode extends StreamGraphBaseNode<"combine"> {
   kind: "combine";
   output_identifier?: string;
   output_stream_id?: string;
+  config?: CombineNodeConfig;
 }
 
 // Records N upstream sensor streams under one protocol/marker timeline and
@@ -723,6 +763,103 @@ export interface ExportDownloadResult {
   truncated?: boolean;
 }
 
+// Emits a MarkerEventV1 when a channel crosses a level and holds past it. The
+// marker is stamped at the interpolated crossing time, so an onset is reported
+// where it happened rather than quantised to the frame that carried it.
+export interface ThresholdNodeConfig {
+  channel_index?: number;
+  level?: number;
+  // "rising" | "falling" | "either" — open, like every catalog-driven value.
+  direction?: string;
+  // How long the signal must stay past the level before the crossing counts.
+  dwell_ms?: number;
+  // Suppression window after firing; this is `debounce` folded into the node,
+  // because an envelope hovering at the level would otherwise emit continuously.
+  refractory_ms?: number;
+  // The name the emitted markers carry. Defaults to the node's identifier.
+  marker_label?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphThresholdNode
+  extends StreamGraphBaseNode<"threshold"> {
+  kind: "threshold";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: ThresholdNodeConfig;
+}
+
+// Passes data only between an opening and a closing marker. Its two inputs are
+// NOT interchangeable — `in` takes data, `markers` takes markers — which is why
+// they are named ports rather than a variadic list.
+export interface GateNodeConfig {
+  // Matched against a marker's label OR its event, so one config serves an
+  // experiment's cues (named in `label`) and a threshold's crossings (which
+  // carry "rising"/"falling" in `event`).
+  open_label?: string;
+  close_label?: string;
+  // "split_at_sample" | "pass_whole_frame" | "drop_partial_frame".
+  edge_mode?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphGateNode extends StreamGraphBaseNode<"gate"> {
+  kind: "gate";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: GateNodeConfig;
+}
+
+// The four flat marker-lane operators. Rx's higher-order family (flatMap,
+// switchMap, window-as-observable-of-observables) is deliberately absent: it
+// builds topology at run time, which a fixed node graph cannot draw.
+export interface MarkerFilterNodeConfig {
+  // "label" | "event" | "marker_type".
+  match_field?: string;
+  // Comma-separated on the wire; the backend splits and trims.
+  match_values?: string;
+  // "include" | "exclude".
+  mode?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface MarkerDebounceNodeConfig {
+  window_ms?: number;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphMarkerMergeNode
+  extends StreamGraphBaseNode<"marker_merge"> {
+  kind: "marker_merge";
+  output_identifier?: string;
+  output_stream_id?: string;
+}
+
+export interface StreamGraphMarkerFilterNode
+  extends StreamGraphBaseNode<"marker_filter"> {
+  kind: "marker_filter";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: MarkerFilterNodeConfig;
+}
+
+export interface StreamGraphMarkerDebounceNode
+  extends StreamGraphBaseNode<"marker_debounce"> {
+  kind: "marker_debounce";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: MarkerDebounceNodeConfig;
+}
+
+// Its two inputs are NOT interchangeable: `markers` is the primary and `until`
+// is the stop lane. Swapping them swaps which stream stops the other.
+export interface StreamGraphMarkerTakeUntilNode
+  extends StreamGraphBaseNode<"marker_take_until"> {
+  kind: "marker_take_until";
+  output_identifier?: string;
+  output_stream_id?: string;
+}
+
 export type StreamGraphNode =
   | StreamGraphSourceNode
   | StreamGraphTransformNode
@@ -732,7 +869,13 @@ export type StreamGraphNode =
   | StreamGraphMarkersNode
   | StreamGraphExperimentNode
   | StreamGraphTrainNode
-  | StreamGraphExportNode;
+  | StreamGraphExportNode
+  | StreamGraphThresholdNode
+  | StreamGraphGateNode
+  | StreamGraphMarkerMergeNode
+  | StreamGraphMarkerFilterNode
+  | StreamGraphMarkerDebounceNode
+  | StreamGraphMarkerTakeUntilNode;
 
 export interface StreamGraphEdge {
   id: string;
@@ -1334,6 +1477,34 @@ export interface StreamGraphNodeStatus {
   frames_processed?: number;
   last_frame_at_us?: number;
   message?: string;
+  // Combine only: which join policy is running, and how many frames it
+  // discarded (TEC-NATKIT-103).
+  join_policy?: string;
+  frames_dropped?: number;
+  // Marble-strip activity per lane (TEC-NATKIT-106). ABSENT means the lane has
+  // never carried anything — a transform has no marker lane at all — which is a
+  // different claim from an empty row, so absence must not be rendered as one.
+  data_activity?: ChannelActivity;
+  marker_activity?: ChannelActivity;
+}
+
+// One lane's recent activity, for a marble strip. Two representations because
+// exact placement stops being renderable past ~1 marble per 2 px: below that the
+// backend sends individual times, above it per-bucket counts. Timestamps are
+// relative to `base_us` so the payload stays small integers on a 1 Hz poll.
+export interface ChannelActivity {
+  mode: "exact" | "density";
+  window_us: number;
+  bucket_us: number;
+  // A string because it is a microsecond epoch, which exceeds 2^53.
+  base_us: string;
+  // Events in the window. Exact in BOTH modes, so a density strip can still
+  // report a true count.
+  total: number;
+  // Exact mode: microseconds before base_us, newest first.
+  offsets_us?: number[];
+  // Density mode: counts per bucket, oldest bucket first.
+  buckets?: number[];
 }
 
 // The kind of a channel, derived from its topic set (Part A). Input ports
