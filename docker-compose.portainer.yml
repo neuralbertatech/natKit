@@ -50,6 +50,15 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: DOCKER_NETWORK_LISTENER:PLAINTEXT,CONTROLLER_LISTENER:PLAINTEXT,LOCALHOST_LISTENER:PLAINTEXT,REMOTE_LISTENER:PLAINTEXT
       # Persist KRaft data on a named volume (dev used /tmp — lost on restart).
       KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      # ONE PARTITION PER TOPIC, DECLARED RATHER THAN INHERITED (TEC-NATKIT-108).
+      # This is the default, so nothing changes by setting it -- which is the
+      # point: the stack's consumers rely on per-topic message ORDER, and Kafka
+      # only guarantees order within a partition. Production is keyed by topic
+      # name so one topic stays in one partition whatever this says, but leaving
+      # the value unset made a load-bearing assumption invisible. Parallelism
+      # here comes from having many topics (one per device+schema), not from
+      # splitting one.
+      KAFKA_NUM_PARTITIONS: "1"
     volumes:
       - natkit-v0-kafka-data:/var/lib/kafka/data
     # Kafka is reached internally by service name (natkit-v0-kafka:9092); it is not
