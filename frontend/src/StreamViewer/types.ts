@@ -1477,6 +1477,34 @@ export interface StreamGraphNodeStatus {
   frames_processed?: number;
   last_frame_at_us?: number;
   message?: string;
+  // Combine only: which join policy is running, and how many frames it
+  // discarded (TEC-NATKIT-103).
+  join_policy?: string;
+  frames_dropped?: number;
+  // Marble-strip activity per lane (TEC-NATKIT-106). ABSENT means the lane has
+  // never carried anything — a transform has no marker lane at all — which is a
+  // different claim from an empty row, so absence must not be rendered as one.
+  data_activity?: ChannelActivity;
+  marker_activity?: ChannelActivity;
+}
+
+// One lane's recent activity, for a marble strip. Two representations because
+// exact placement stops being renderable past ~1 marble per 2 px: below that the
+// backend sends individual times, above it per-bucket counts. Timestamps are
+// relative to `base_us` so the payload stays small integers on a 1 Hz poll.
+export interface ChannelActivity {
+  mode: "exact" | "density";
+  window_us: number;
+  bucket_us: number;
+  // A string because it is a microsecond epoch, which exceeds 2^53.
+  base_us: string;
+  // Events in the window. Exact in BOTH modes, so a density strip can still
+  // report a true count.
+  total: number;
+  // Exact mode: microseconds before base_us, newest first.
+  offsets_us?: number[];
+  // Density mode: counts per bucket, oldest bucket first.
+  buckets?: number[];
 }
 
 // The kind of a channel, derived from its topic set (Part A). Input ports

@@ -145,6 +145,7 @@
         PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
     } from "./streamGraph";
+    import { resolveAxisEndUs } from "./marbleStrip";
     import {
         extractCompositeFromSelection,
         flattenGraph,
@@ -178,6 +179,7 @@
         DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
+        ChannelActivity,
         NodeCatalogEntry,
         SessionProtocol,
         StreamGraphExperimentNode,
@@ -990,6 +992,23 @@
     const selectedCombineNode = $derived(
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
+
+    // The shared right-hand edge for every marble strip on the canvas
+    // (TEC-NATKIT-106): the newest event ANY lane in the graph has seen, on the
+    // DATA clock. Resolved once here rather than per card, because two rows are
+    // only comparable against one axis — per-card axes would right-align every
+    // row and make a stalled input indistinguishable from a live one, which is
+    // the failure the strips exist to reveal. Using the data clock also means a
+    // paused replay holds the strips still instead of draining them.
+    const marbleAxisEndUs = $derived.by(() => {
+        const lanes: (ChannelActivity | undefined)[] = [];
+        for (const status of Object.values(
+            selectedGraphStatus?.node_statuses ?? {},
+        )) {
+            lanes.push(status?.data_activity, status?.marker_activity);
+        }
+        return resolveAxisEndUs(lanes);
+    });
 
     // Node kinds whose config comes from the runtime NODE CATALOG rather than
     // from transformCapabilities. A transform's fields arrive with its
@@ -6587,6 +6606,7 @@
                         <StreamGraphNodeCard
                             {node}
                             runtimeStatus={nodeRuntimeStatus(node.id)}
+                            {marbleAxisEndUs}
                             selected={selectedNodeIds.has(node.id)}
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}

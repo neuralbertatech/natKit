@@ -1,4 +1,5 @@
 <script lang="ts">
+    import MarbleStrip from "./MarbleStrip.svelte";
     import {
         Archive,
         CircleDot,
@@ -61,6 +62,10 @@
     interface Props {
         node: EditorGraphNode;
         runtimeStatus: StreamGraphNodeStatus | null;
+        // The shared right-hand edge for this card's marble strips, resolved
+        // across the WHOLE graph by the editor (TEC-NATKIT-106). Per-card axes
+        // would right-align every row and make a stalled input look healthy.
+        marbleAxisEndUs?: number;
         selected: boolean;
         invalid: boolean;
         pendingConnection: { nodeId: string; portId: string } | null;
@@ -122,6 +127,7 @@
     let {
         node,
         runtimeStatus,
+        marbleAxisEndUs = 0,
         selected,
         invalid,
         pendingConnection,
@@ -395,6 +401,31 @@
             {/if}
         </div>
         <div class="node-column node-meta">
+            <!-- Marble strips (TEC-NATKIT-106). Rendered only for a lane the
+                 backend actually reported: an ABSENT lane means "this node has
+                 no such lane", which is a different claim from an empty one, so
+                 drawing an empty row for it would say the markers had stopped.
+                 Both rows share one axis, resolved across the whole graph. -->
+            {#if runtimeStatus?.data_activity || runtimeStatus?.marker_activity}
+                <div class="marble-strips">
+                    {#if runtimeStatus.data_activity}
+                        <MarbleStrip
+                            activity={runtimeStatus.data_activity}
+                            axisEndUs={marbleAxisEndUs}
+                            label="data"
+                            lane="data"
+                        />
+                    {/if}
+                    {#if runtimeStatus.marker_activity}
+                        <MarbleStrip
+                            activity={runtimeStatus.marker_activity}
+                            axisEndUs={marbleAxisEndUs}
+                            label="marks"
+                            lane="markers"
+                        />
+                    {/if}
+                </div>
+            {/if}
             {#if node.kind === "stream_source"}
                 <span title={`Stream ${node.stream_id}`}>Stream {node.stream_id}</span>
                 <span title={node.schema_name}>{node.schema_name ?? "Descriptor pending"}</span>
@@ -786,6 +817,13 @@
         flex-direction: column;
         padding: 0.55rem 0.4rem;
         gap: 0.35rem;
+    }
+
+    .marble-strips {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-bottom: 0.2rem;
     }
 
     .node-meta {
