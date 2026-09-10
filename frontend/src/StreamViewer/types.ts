@@ -568,7 +568,14 @@ export type StreamGraphNodeKind =
   // are still parsed and rendered; nothing creates one any more.
   | "experiment"
   | "train"
-  | "export";
+  | "export"
+  // The two lane crossings (TEC-NATKIT-109). `threshold` reads a data channel
+  // and emits markers; `gate` reads markers and passes data. They are the ONLY
+  // kinds that cross between the sample-clocked data lane and the unclocked
+  // marker lane — the backend's validation enforces that, and adding a third
+  // means revisiting the rule rather than extending this union.
+  | "threshold"
+  | "gate";
 
 export interface StreamGraphBaseNode<K extends StreamGraphNodeKind = StreamGraphNodeKind> {
   id: string;
@@ -750,6 +757,53 @@ export interface ExportDownloadResult {
   truncated?: boolean;
 }
 
+// Emits a MarkerEventV1 when a channel crosses a level and holds past it. The
+// marker is stamped at the interpolated crossing time, so an onset is reported
+// where it happened rather than quantised to the frame that carried it.
+export interface ThresholdNodeConfig {
+  channel_index?: number;
+  level?: number;
+  // "rising" | "falling" | "either" — open, like every catalog-driven value.
+  direction?: string;
+  // How long the signal must stay past the level before the crossing counts.
+  dwell_ms?: number;
+  // Suppression window after firing; this is `debounce` folded into the node,
+  // because an envelope hovering at the level would otherwise emit continuously.
+  refractory_ms?: number;
+  // The name the emitted markers carry. Defaults to the node's identifier.
+  marker_label?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphThresholdNode
+  extends StreamGraphBaseNode<"threshold"> {
+  kind: "threshold";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: ThresholdNodeConfig;
+}
+
+// Passes data only between an opening and a closing marker. Its two inputs are
+// NOT interchangeable — `in` takes data, `markers` takes markers — which is why
+// they are named ports rather than a variadic list.
+export interface GateNodeConfig {
+  // Matched against a marker's label OR its event, so one config serves an
+  // experiment's cues (named in `label`) and a threshold's crossings (which
+  // carry "rising"/"falling" in `event`).
+  open_label?: string;
+  close_label?: string;
+  // "split_at_sample" | "pass_whole_frame" | "drop_partial_frame".
+  edge_mode?: string;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphGateNode extends StreamGraphBaseNode<"gate"> {
+  kind: "gate";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: GateNodeConfig;
+}
+
 export type StreamGraphNode =
   | StreamGraphSourceNode
   | StreamGraphTransformNode
@@ -759,7 +813,9 @@ export type StreamGraphNode =
   | StreamGraphMarkersNode
   | StreamGraphExperimentNode
   | StreamGraphTrainNode
-  | StreamGraphExportNode;
+  | StreamGraphExportNode
+  | StreamGraphThresholdNode
+  | StreamGraphGateNode;
 
 export interface StreamGraphEdge {
   id: string;

@@ -178,7 +178,6 @@
         DeviceHealthMessage,
         TransformCapability,
         TransformCapabilityConfigField,
-        CombineNodeConfig,
         NodeCatalogEntry,
         SessionProtocol,
         StreamGraphExperimentNode,
@@ -992,16 +991,51 @@
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
 
-    // Combine's config fields come from the runtime node catalog, not from
-    // transformCapabilities — combine is not a transform capability — and are
-    // filtered by each field's `visible_when` so a value the selected join
-    // policy would ignore is never offered. (TEC-NATKIT-103.)
-    const combineConfigFields = $derived(
-        selectedCombineNode
+    // Node kinds whose config comes from the runtime NODE CATALOG rather than
+    // from transformCapabilities. A transform's fields arrive with its
+    // capability; these kinds are not transform capabilities, so without this
+    // they would have no config UI at all — which is exactly why combine had
+    // none before TEC-NATKIT-103 and threshold/gate would have none now.
+    const CATALOG_CONFIG_KINDS = ["combine", "threshold", "gate"];
+
+    // The two lane crossings share an inspector: both publish a topic (so both
+    // need an identifier) and both configure entirely from the catalog.
+    const selectedLaneCrossingNode = $derived(
+        selectedNode?.kind === "threshold" || selectedNode?.kind === "gate"
+            ? selectedNode
+            : null,
+    );
+
+    // Each says what it DOES, because both are silently wrong when misconfigured
+    // rather than erroring: a threshold whose level sits in the noise floor
+    // fires constantly, and a gate whose labels never arrive passes nothing.
+    const laneCrossingHint = $derived.by(() => {
+        if (selectedNode?.kind === "threshold") {
+            return "Emits a marker when the channel crosses the level and stays past it for the dwell. The marker is stamped at the interpolated crossing time, not the frame's. Refractory suppresses repeat firing — raise it if a hovering signal floods the output.";
+        }
+        if (selectedNode?.kind === "gate") {
+            return "Passes data only between the opening and closing markers. Labels match a marker's name OR its event, so a threshold in 'either' mode can open on 'rising' and close on 'falling'. Splitting at the sample is exact; the other modes trade accuracy at the window edges for uniform frame sizes.";
+        }
+        return "";
+    });
+
+    const selectedCatalogConfigNode = $derived(
+        selectedNode && CATALOG_CONFIG_KINDS.includes(selectedNode.kind)
+            ? selectedNode
+            : null,
+    );
+
+    // Filtered by each field's `visible_when`, so a value the selected mode
+    // would ignore is never offered (combine's tolerance under anything but
+    // zip, its output rate under anything but sample).
+    const catalogConfigFields = $derived(
+        selectedCatalogConfigNode
             ? visibleConfigFields(
-                  nodeCatalog.find((entry) => entry.node_type === "combine")
-                      ?.config_fields ?? [],
-                  selectedCombineNode.config ?? {},
+                  nodeCatalog.find(
+                      (entry) => entry.node_type === selectedCatalogConfigNode.kind,
+                  )?.config_fields ?? [],
+                  (selectedCatalogConfigNode as { config?: Record<string, unknown> })
+                      .config ?? {},
               )
             : [],
     );
@@ -3817,22 +3851,27 @@
         scheduleReactiveRestart(selectedNodeId);
     }
 
-    // Combine's join policy and its policy-specific parameters. Restarting the
-    // node is required for the same reason a transform's config change is: the
-    // joiner's state (its queues, its current values, its tick phase) belongs to
-    // the running worker and cannot be re-policied in place.
-    function updateCombineConfigField(
+    // Config for a catalog-configured node. Restarting is required for the same
+    // reason a transform's config change is: the worker's state — a joiner's
+    // queues and tick phase, a detector's pending candidate, a gate's open
+    // window and buffered frames — belongs to the old settings and cannot be
+    // re-policied in place.
+    function updateCatalogConfigField(
         field: TransformCapabilityConfigField,
         rawValue: string,
     ) {
         updateSelectedNode((node) => {
-            if (node.kind !== "combine") {
+            if (!CATALOG_CONFIG_KINDS.includes(node.kind)) {
                 return node;
             }
-            const nextConfig: CombineNodeConfig = { ...(node.config ?? {}) };
+            const current =
+                (node as { config?: Record<string, unknown> }).config ?? {};
+            const nextConfig: Record<string, number | string> = {
+                ...(current as Record<string, number | string>),
+            };
             nextConfig[field.id] =
                 field.type === "number" ? Number(rawValue) : rawValue;
-            return { ...node, config: nextConfig };
+            return { ...node, config: nextConfig } as typeof node;
         });
         scheduleReactiveRestart(selectedNodeId);
     }
@@ -7434,16 +7473,51 @@
                                     </button>
                                 </div>
                             </div>
-                            {#if combineConfigFields.length > 0}
+                            {#if catalogConfigFields.length > 0}
                                 <NodeConfigFields
-                                    fields={combineConfigFields}
+                                    fields={catalogConfigFields}
                                     config={selectedCombineNode.config ?? {}}
-                                    onChange={updateCombineConfigField}
+                                    onChange={updateCatalogConfigField}
                                 />
                                 <p class="muted-text">
                                     {combineJoinPolicyHint}
                                 </p>
                             {/if}
+                        {/if}
+
+                        {#if selectedLaneCrossingNode}
+                            <label>
+                                <span>Output identifier</span>
+                                <input
+                                    value={selectedLaneCrossingNode.output_identifier ??
+                                        ""}
+                                    oninput={(event) =>
+                                        updateSelectedNode((node) =>
+                                            node.kind === "threshold" ||
+                                            node.kind === "gate"
+                                                ? {
+                                                      ...node,
+                                                      output_identifier:
+                                                          sanitizeIdentifier(
+                                                              (
+                                                                  event.currentTarget as HTMLInputElement
+                                                              ).value,
+                                                          ),
+                                                      output_stream_id:
+                                                          undefined,
+                                                  }
+                                                : node,
+                                        )}
+                                />
+                            </label>
+                            {#if catalogConfigFields.length > 0}
+                                <NodeConfigFields
+                                    fields={catalogConfigFields}
+                                    config={selectedLaneCrossingNode.config ?? {}}
+                                    onChange={updateCatalogConfigField}
+                                />
+                            {/if}
+                            <p class="muted-text">{laneCrossingHint}</p>
                         {/if}
 
                         {#if selectedMarkersNode}
