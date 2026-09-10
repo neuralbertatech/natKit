@@ -576,6 +576,9 @@ export type StreamGraphNodeKind =
   // means revisiting the rule rather than extending this union.
   | "threshold"
   | "gate"
+  // The second DATA -> MARKER crossing: `threshold` fires on a level,
+  // `gap_detect` fires on silence (TEC-NATKIT-115).
+  | "gap_detect"
   // The marker-lane algebra (TEC-NATKIT-105). All four are marker-in/
   // marker-out, so none of them crosses lanes — only `threshold` and `gate` do.
   | "marker_merge"
@@ -803,6 +806,25 @@ export interface GateNodeConfig {
   [key: string]: number | string | boolean | undefined;
 }
 
+// Emits a marker when consecutive frames arrive further apart than they should.
+// Decided from the frames' own timestamps, so it replays identically — it
+// detects a dropout in the DATA, not a quiet network. A wall-clock liveness
+// timeout deliberately does NOT exist: see TEC-NATKIT-110.
+export interface GapDetectNodeConfig {
+  // The smallest inter-frame gap that counts, as slack on top of the normal
+  // frame cadence rather than an absolute spacing.
+  gap_ms?: number;
+  [key: string]: number | string | boolean | undefined;
+}
+
+export interface StreamGraphGapDetectNode
+  extends StreamGraphBaseNode<"gap_detect"> {
+  kind: "gap_detect";
+  output_identifier?: string;
+  output_stream_id?: string;
+  config?: GapDetectNodeConfig;
+}
+
 export interface StreamGraphGateNode extends StreamGraphBaseNode<"gate"> {
   kind: "gate";
   output_identifier?: string;
@@ -872,6 +894,7 @@ export type StreamGraphNode =
   | StreamGraphExportNode
   | StreamGraphThresholdNode
   | StreamGraphGateNode
+  | StreamGraphGapDetectNode
   | StreamGraphMarkerMergeNode
   | StreamGraphMarkerFilterNode
   | StreamGraphMarkerDebounceNode
