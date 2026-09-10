@@ -84,7 +84,14 @@ export const test = base.extend<Fixtures>({
             health.consoleErrors.push(text);
         });
         page.on("pageerror", (error) => {
-            health.consoleErrors.push(`uncaught: ${error.message}`);
+            // The stack, not just the message: an intermittent
+            // "Cannot read properties of null (reading 'ownerDocument')" is
+            // unattributable without it, and the message alone cannot say
+            // whether it came from app code or from a framework teardown race.
+            const frame = (error.stack ?? "").split("\n").slice(1, 4).join(" <- ").trim();
+            health.consoleErrors.push(
+                `uncaught: ${error.message}${frame ? ` @ ${frame}` : ""}`,
+            );
         });
 
         await use(health);
