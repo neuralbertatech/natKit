@@ -1062,7 +1062,7 @@
             return "Passes data only between the opening and closing markers. Labels match a marker's name OR its event, so a threshold in 'either' mode can open on 'rising' and close on 'falling'. Splitting at the sample is exact; the other modes trade accuracy at the window edges for uniform frame sizes.";
         }
         if (selectedNode?.kind === "gap_detect") {
-            return "Emits a marker when consecutive frames arrive further apart than they should — a DROPOUT in the data, decided from the frames' own timestamps, so it replays identically. The marker says whether frames were lost (seq_no jumped) or the producer paused, and it is stamped where the data STOPPED, not where it resumed. A quiet network is a different thing and is reported as a stalled node, not as a marker.";
+            return "Emits a marker when consecutive frames arrive further apart than they should, decided from the frames' own timestamps so it replays identically. Stamped where the data STOPPED, and it says whether frames were lost (seq_no jumped) or the producer paused. ⚠️ It fires when data RESUMES — a gap is the distance between two frames — so a dropout still in progress shows as a stalled node and a quiet strip, not as a marker.";
         }
         if (selectedNode?.kind === "marker_merge") {
             return "Merges its marker inputs into one stream, ordered by each marker's own emitted time rather than by arrival. Output waits for the slowest input, so a silent input holds the merge.";
