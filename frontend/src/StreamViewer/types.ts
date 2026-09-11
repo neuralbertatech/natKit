@@ -1509,6 +1509,12 @@ export interface StreamGraphNodeStatus {
   // different claim from an empty row, so absence must not be rendered as one.
   data_activity?: ChannelActivity;
   marker_activity?: ChannelActivity;
+  // One row per INPUT (TEC-NATKIT-119). Both lanes above are recorded at
+  // EMISSION, so without these a card can only say "something came out at these
+  // times" — the same picture whatever the operator is. These are what let a
+  // strip draw inputs against the output, and what makes a starved input
+  // visible beside a busy sibling.
+  input_activities?: NamedChannelActivity[];
 }
 
 // One lane's recent activity, for a marble strip. Two representations because
@@ -1528,6 +1534,13 @@ export interface ChannelActivity {
   offsets_us?: number[];
   // Density mode: counts per bucket, oldest bucket first.
   buckets?: number[];
+}
+
+// One input's activity, named by the port it arrived on. The port id rather
+// than an index, so the row is labelled with the same name the edge uses and a
+// variadic combine's rows survive an input being added or removed.
+export interface NamedChannelActivity extends ChannelActivity {
+  port_id: string;
 }
 
 // The kind of a channel, derived from its topic set (Part A). Input ports

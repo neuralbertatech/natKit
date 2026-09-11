@@ -1,5 +1,6 @@
 <script lang="ts">
     import MarbleStrip from "./MarbleStrip.svelte";
+    import { buildOperatorStrip } from "./marbleStrip";
     import {
         Archive,
         CircleDot,
@@ -178,9 +179,40 @@
     // How many strip rows this card will draw, from what the backend actually
     // reported. Derived here rather than in getNodeHeight because the lanes are
     // a RUNTIME fact and that function only sees the node definition.
+    // An operator-shaped strip (TEC-NATKIT-120): inputs above, output below,
+    // with a glyph naming the operation between them. Built only when the
+    // backend reported per-input rows — the kinds that have not been converted
+    // still draw their original one-lane strips, so this cannot regress them.
+    //
+    // The output lane is whichever one the node actually publishes: a combine
+    // emits data, a threshold emits markers.
+    const operatorStrip = $derived.by(() => {
+        const inputs = runtimeStatus?.input_activities;
+        if (!inputs || inputs.length === 0) return null;
+        const emitsMarkers = node.kind === "threshold";
+        return buildOperatorStrip(
+            node.kind,
+            node.config as Record<string, unknown> | undefined,
+            inputs,
+            emitsMarkers
+                ? runtimeStatus?.marker_activity
+                : runtimeStatus?.data_activity,
+            emitsMarkers ? "markers" : "out",
+            marbleAxisEndUs,
+        );
+    });
+    // The output lane's kind, for colouring. Input rows are data in both
+    // converted kinds; only the output differs.
+    const operatorOutputLane = $derived(
+        node.kind === "threshold" ? "markers" : "data",
+    );
+
     const marbleRows = $derived(
-        (runtimeStatus?.data_activity ? 1 : 0) +
-            (runtimeStatus?.marker_activity ? 1 : 0),
+        operatorStrip
+            ? // Every row, plus the glyph line between inputs and output.
+              operatorStrip.rows.length + 1
+            : (runtimeStatus?.data_activity ? 1 : 0) +
+              (runtimeStatus?.marker_activity ? 1 : 0),
     );
     const nodeHeight = $derived(node.height ?? getNodeHeight(node, marbleRows));
     const runtimeStreamId = $derived(
@@ -562,7 +594,28 @@
          no such lane", which is a different claim from an empty one, so
          drawing an empty row for it would say the markers had stopped.
          Both rows share one axis, resolved across the whole graph. -->
-    {#if runtimeStatus?.data_activity || runtimeStatus?.marker_activity}
+    {#if operatorStrip}
+        <!-- Operator-shaped strip (TEC-NATKIT-120): the rows ARE the diagram.
+             Inputs stack above the output with a glyph naming the operation
+             between them, so a zip and a threshold no longer look identical. -->
+        <div class="marble-strips">
+            {#each operatorStrip.rows as stripRow (stripRow.role + stripRow.label)}
+                {#if stripRow.role === "output"}
+                    <div class="marble-glyph">
+                        <span class="marble-glyph-rule"></span>
+                        <span class="marble-glyph-name">{operatorStrip.glyph}</span>
+                        <span class="marble-glyph-rule"></span>
+                    </div>
+                {/if}
+                <MarbleStrip
+                    row={stripRow}
+                    axisEndUs={marbleAxisEndUs}
+                    label={stripRow.label}
+                    lane={stripRow.role === "output" ? operatorOutputLane : "data"}
+                />
+            {/each}
+        </div>
+    {:else if runtimeStatus?.data_activity || runtimeStatus?.marker_activity}
         <div class="marble-strips">
             {#if runtimeStatus.data_activity}
                 <MarbleStrip
@@ -834,6 +887,31 @@
         flex-direction: column;
         gap: 2px;
         padding: 0 0.5rem 0.35rem;
+    }
+
+    /* The operation, named between the input rows and the output row. This is
+       what stops two combines with different join policies — or a combine and a
+       threshold — looking identical on the canvas. */
+    .marble-glyph {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        margin: 1px 0 1px 2.75rem;
+        font-size: 0.56rem;
+        letter-spacing: 0.04em;
+        text-transform: lowercase;
+        color: #8fa4d8;
+    }
+
+    .marble-glyph-rule {
+        flex: 1 1 auto;
+        height: 1px;
+        background: rgba(114, 142, 255, 0.22);
+    }
+
+    .marble-glyph-name {
+        flex: 0 0 auto;
+        white-space: nowrap;
     }
 
     .node-meta {

@@ -185,3 +185,150 @@ export function describeStrip(
   const shown = rate >= 100 ? rate.toFixed(0) : rate.toFixed(1);
   return `${activity.total} in ${seconds.toFixed(0)}s · ~${shown}/s`;
 }
+
+// --- operator-shaped strips (TEC-NATKIT-119 / 120) ------------------------
+//
+// A strip used to be one anonymous row per node — "something came out at these
+// times" — which is the identical picture whether the node is a zip, a filter
+// or a threshold. Zach, looking at a live board: "the visualization does not
+// make sense to me... currently they are not very useful."
+//
+// The grammar is: inputs on their own rows ABOVE, output BELOW, on the shared
+// axis, with a glyph between them naming the operation. The merge is implied by
+// the layout rather than drawn as converging geometry — cheap enough to read at
+// 270px and it keeps the cards close to their current height.
+//
+// ⚠️ THE STARVED-INPUT CASE IS THE ACCEPTANCE TEST. One input silent while its
+// sibling stays dense, and an output that dies with it, must be readable
+// without opening anything.
+
+import type { NamedChannelActivity } from "../StreamViewer/types";
+
+export interface StripRow {
+  role: "input" | "output";
+  label: string;
+  layout: StripLayout;
+  caption: string;
+  // The row's lane has said nothing for the whole window. Called out explicitly
+  // because an empty row and a row that never existed mean different things,
+  // and because this is the failure the rows were added to reveal.
+  silent: boolean;
+}
+
+export interface OperatorStrip {
+  rows: StripRow[];
+  // Names the operation between the input rows and the output row. Carries the
+  // join policy for a combine and the level/direction for a threshold, so the
+  // two are distinguishable without opening the inspector.
+  glyph: string;
+}
+
+/** A rate, or how long a lane has been quiet — whichever the row is saying. */
+export function captionFor(
+  activity: ChannelActivityLike | undefined,
+  layout: StripLayout,
+  axisEndUs: number,
+): string {
+  if (!activity || activity.total <= 0) {
+    if (!activity) return "—";
+    // Total 0 inside a live window still means "nothing recently".
+    return "0/s";
+  }
+  if (layout.stale) {
+    const quietUs = axisEndUs - Number(activity.base_us);
+    const seconds = quietUs / 1_000_000;
+    return seconds >= 1
+      ? `silent ${seconds.toFixed(0)}s`
+      : `silent ${Math.round(quietUs / 1000)}ms`;
+  }
+  const seconds = activity.window_us / 1_000_000;
+  if (seconds <= 0) return `${activity.total}`;
+  const rate = activity.total / seconds;
+  if (rate < 1) return `${activity.total} in ${seconds.toFixed(0)}s`;
+  return `${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)}/s`;
+}
+
+// Structural subset, so this stays usable from tests without the full wire type.
+interface ChannelActivityLike {
+  window_us: number;
+  base_us: string;
+  total: number;
+}
+
+const JOIN_POLICY_GLYPH: Record<string, string> = {
+  zip: "zip",
+  combine_latest: "combine latest",
+  with_latest_from: "with latest from",
+  sample: "sample",
+};
+
+const DIRECTION_ARROW: Record<string, string> = {
+  rising: "↑",
+  falling: "↓",
+  either: "↕",
+};
+
+/**
+ * The glyph between the input rows and the output row.
+ *
+ * Deliberately carries the CONFIG that changes the operator's behaviour, not
+ * just its name: two combines differ only by join policy, and two thresholds
+ * only by level and direction, so a name alone would make them indistinguishable
+ * on the canvas — which is the problem this whole change is fixing.
+ */
+export function operatorGlyph(
+  kind: string,
+  config: Record<string, unknown> | undefined,
+): string {
+  if (kind === "combine") {
+    const policy = String(config?.join_policy ?? "zip");
+    return JOIN_POLICY_GLYPH[policy] ?? policy;
+  }
+  if (kind === "threshold") {
+    const level = config?.level;
+    const arrow = DIRECTION_ARROW[String(config?.direction ?? "either")] ?? "↕";
+    return level === undefined ? `threshold ${arrow}` : `${level} ${arrow}`;
+  }
+  return kind.replace(/_/g, " ");
+}
+
+/**
+ * Builds the stacked rows for one node.
+ *
+ * `inputs` come from the backend already named by port; the output row is
+ * whichever lane the node actually publishes. Returns null when there is
+ * nothing to draw at all, so the card renders no block rather than an empty
+ * one — an empty block reads as "this stopped", a different claim.
+ */
+export function buildOperatorStrip(
+  kind: string,
+  config: Record<string, unknown> | undefined,
+  inputs: NamedChannelActivity[] | undefined,
+  output: ChannelActivity | undefined,
+  outputLabel: string,
+  axisEndUs: number,
+): OperatorStrip | null {
+  const rows: StripRow[] = [];
+  for (const input of inputs ?? []) {
+    const layout = layoutStrip(input, axisEndUs);
+    rows.push({
+      role: "input",
+      label: input.port_id,
+      layout,
+      caption: captionFor(input, layout, axisEndUs),
+      silent: layout.stale || input.total === 0,
+    });
+  }
+  if (rows.length === 0 && !output) return null;
+
+  const outLayout = layoutStrip(output, axisEndUs);
+  rows.push({
+    role: "output",
+    label: outputLabel,
+    layout: outLayout,
+    caption: captionFor(output, outLayout, axisEndUs),
+    silent: !!output && (outLayout.stale || output.total === 0),
+  });
+
+  return { rows, glyph: operatorGlyph(kind, config) };
+}

@@ -11,10 +11,17 @@
     // All layout arithmetic lives in marbleStrip.ts so it is testable; this file
     // is presentation only.
     import { describeStrip, layoutStrip } from "./marbleStrip";
+    import type { StripRow } from "./marbleStrip";
     import type { ChannelActivity } from "../StreamViewer/types";
 
     interface Props {
-        activity: ChannelActivity | undefined;
+        // A row prepared by buildOperatorStrip (TEC-NATKIT-120): carries its own
+        // layout, caption and silence flag, because an operator-shaped strip
+        // decides those across the whole node rather than per lane. When absent
+        // this falls back to the original one-lane behaviour, so kinds that have
+        // not been converted yet draw exactly as before.
+        row?: StripRow;
+        activity?: ChannelActivity | undefined;
         // The shared right-hand edge for EVERY strip on the card. Positioning
         // each row against its own newest event would right-align them all, so
         // a stalled input would look identical to a live one.
@@ -23,17 +30,23 @@
         lane: "data" | "markers";
     }
 
-    let { activity, axisEndUs, label, lane }: Props = $props();
+    let { row, activity, axisEndUs, label, lane }: Props = $props();
 
-    const layout = $derived(layoutStrip(activity, axisEndUs));
-    const caption = $derived(describeStrip(activity));
+    const layout = $derived(row ? row.layout : layoutStrip(activity, axisEndUs));
+    const caption = $derived(row ? row.caption : describeStrip(activity));
+    const rowLabel = $derived(row ? row.label : label);
+    // ⚠️ An operator row is silent when its lane said nothing for the WHOLE
+    // window, which is a stronger claim than layout.stale alone: a lane with no
+    // events at all is stale-by-default and would otherwise read the same as one
+    // that genuinely stopped.
+    const silent = $derived(row ? row.silent : layout.stale);
 </script>
 
-<div class="marble-row" class:stale={layout.stale}>
-    <span class="marble-label" class:marker-lane={lane === "markers"}>{label}</span>
+<div class="marble-row" class:stale={silent} class:is-input={row?.role === "input"}>
+    <span class="marble-label" class:marker-lane={lane === "markers"}>{rowLabel}</span>
     <div
         class="marble-track"
-        title={`${label}: ${caption}${layout.stale ? " (nothing in the window)" : ""}`}
+        title={`${rowLabel}: ${caption}${silent ? " (nothing in the window)" : ""}`}
     >
         {#if layout.mode === "exact"}
             {#each layout.marbles as marble}
@@ -52,10 +65,12 @@
                 ></span>
             {/each}
         {:else}
-            <span class="marble-quiet">quiet</span>
+            <span class="marble-quiet">{silent ? "silent" : "quiet"}</span>
         {/if}
     </div>
-    <span class="marble-count">{layout.total}</span>
+    <span class="marble-count" class:warn={silent && row?.role === "input"}
+        >{row ? caption : layout.total}</span
+    >
 </div>
 
 <style>
@@ -79,6 +94,26 @@
         flex: 0 0 2.4rem;
         text-align: right;
         color: #6d7fae;
+    }
+
+    /* An input row is indented and dimmer than the output row below it, so the
+       stack reads as "these went in, this came out" at a glance rather than as
+       a list of equal lanes. */
+    .marble-row.is-input .marble-label {
+        color: #5d6e9c;
+    }
+
+    .marble-row.is-input .marble-track {
+        margin-left: 0.3rem;
+    }
+
+    /* ⚠️ A SILENT INPUT IS THE ONE THING THIS STRIP EXISTS TO SHOW. It is called
+       out in warning colour rather than merely dimmed, because a dimmed row
+       beside a busy one still reads as "quiet, probably fine" — and a starved
+       input is not fine. */
+    .marble-count.warn {
+        color: #e08b6a;
+        font-weight: 600;
     }
 
     .marble-label.marker-lane {
@@ -131,7 +166,10 @@
 
     .marble-count {
         flex: 0 0 auto;
-        min-width: 1.8rem;
+        /* Wide enough for a caption ("400/s", "silent 7s") rather than the bare
+           integer this used to carry. */
+        min-width: 2.9rem;
+        text-align: right;
         color: #6d7fae;
         font-variant-numeric: tabular-nums;
     }

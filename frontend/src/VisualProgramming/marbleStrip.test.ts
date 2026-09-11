@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+    buildOperatorStrip,
+    captionFor,
     describeStrip,
     layoutStrip,
+    operatorGlyph,
     resolveAxisEndUs,
 } from "./marbleStrip";
 import { getNodeHeight, MARBLE_ROW_HEIGHT } from "./streamGraph";
-import type { ChannelActivity } from "../StreamViewer/types";
+import type {
+    ChannelActivity,
+    NamedChannelActivity,
+} from "../StreamViewer/types";
 
 const WINDOW = 4_000_000;
 const BUCKET = 25_000;
@@ -231,5 +237,159 @@ describe("card height reservation", () => {
             position: { x: 0, y: 0 },
         };
         expect(getNodeHeight(node as never)).toBe(getNodeHeight(node as never, 0));
+    });
+});
+
+
+// --- operator-shaped strips (TEC-NATKIT-119 / 120) -----------------------
+
+const named = (portId: string, activity: ChannelActivity): NamedChannelActivity => ({
+    ...activity,
+    port_id: portId,
+});
+
+describe("operatorGlyph", () => {
+    // Two combines differ ONLY by join policy and two thresholds only by level
+    // and direction, so a glyph carrying just the kind would leave them
+    // indistinguishable on the canvas — the exact problem being fixed.
+    it("names a combine's join policy, not just 'combine'", () => {
+        expect(operatorGlyph("combine", { join_policy: "zip" })).toBe("zip");
+        expect(operatorGlyph("combine", { join_policy: "combine_latest" })).toBe(
+            "combine latest",
+        );
+        expect(operatorGlyph("combine", { join_policy: "with_latest_from" })).toBe(
+            "with latest from",
+        );
+    });
+
+    it("defaults a combine to zip, matching the catalog default", () => {
+        expect(operatorGlyph("combine", undefined)).toBe("zip");
+    });
+
+    it("carries a threshold's level AND direction", () => {
+        expect(operatorGlyph("threshold", { level: 0.5, direction: "either" })).toBe(
+            "0.5 ↕",
+        );
+        expect(operatorGlyph("threshold", { level: 0.5, direction: "rising" })).toBe(
+            "0.5 ↑",
+        );
+        expect(operatorGlyph("threshold", { level: 2, direction: "falling" })).toBe(
+            "2 ↓",
+        );
+    });
+
+    it("falls back to a readable name for kinds with no special glyph", () => {
+        expect(operatorGlyph("marker_debounce", {})).toBe("marker debounce");
+    });
+});
+
+describe("captionFor", () => {
+    it("reports a rate for a live lane", () => {
+        const activity = density(10_000_000, [40, 40, 40, 40]);
+        const layout = layoutStrip(activity, 10_000_000);
+        // 160 events over a 4s window.
+        expect(captionFor(activity, layout, 10_000_000)).toBe("40.0/s");
+    });
+
+    // ⚠️ A stale lane must say HOW LONG it has been quiet rather than report a
+    // rate computed over a window it stopped contributing to — which would read
+    // as healthy.
+    it("says how long a stale lane has been silent, not its old rate", () => {
+        const activity = exact(10_000_000, [0, 50_000]);
+        const axisEnd = 10_000_000 + WINDOW + 3_000_000;
+        const layout = layoutStrip(activity, axisEnd);
+        expect(layout.stale).toBe(true);
+        expect(captionFor(activity, layout, axisEnd)).toBe("silent 7s");
+    });
+
+    it("reports a count rather than a rate below 1/s", () => {
+        const activity = exact(10_000_000, [0, 1_000_000]);
+        const layout = layoutStrip(activity, 10_000_000);
+        expect(captionFor(activity, layout, 10_000_000)).toBe("2 in 4s");
+    });
+});
+
+describe("buildOperatorStrip", () => {
+    it("stacks inputs above the output, in port order", () => {
+        const strip = buildOperatorStrip(
+            "combine",
+            { join_policy: "zip" },
+            [
+                named("in1", density(10_000_000, [40, 40, 40, 40])),
+                named("in2", density(10_000_000, [2, 2, 2, 2])),
+            ],
+            density(10_000_000, [2, 2, 2, 2]),
+            "out",
+            10_000_000,
+        );
+        expect(strip).not.toBeNull();
+        expect(strip!.rows.map((row) => row.label)).toEqual(["in1", "in2", "out"]);
+        expect(strip!.rows.map((row) => row.role)).toEqual([
+            "input",
+            "input",
+            "output",
+        ]);
+        expect(strip!.glyph).toBe("zip");
+    });
+
+    // ⚠️ THE CASE THE WHOLE CHANGE EXISTS FOR. A combine whose slow input died
+    // used to look identical to a healthy one: the output just got quieter,
+    // with nothing saying which input stopped or that one had.
+    it("shows a starved input as silent beside a busy sibling", () => {
+        const axisEnd = 20_000_000;
+        const strip = buildOperatorStrip(
+            "combine",
+            { join_policy: "zip" },
+            [
+                named("in1", density(axisEnd, [40, 40, 40, 40])),
+                // Stopped a whole window ago.
+                named("in2", exact(axisEnd - WINDOW - 2_000_000, [0])),
+            ],
+            exact(axisEnd - WINDOW - 2_000_000, [0]),
+            "out",
+            axisEnd,
+        );
+        const [busy, starved, output] = strip!.rows;
+        expect(busy.silent).toBe(false);
+        expect(starved.silent).toBe(true);
+        expect(starved.caption).toMatch(/^silent /);
+        // And the output dies with it, which is the other half of the reading.
+        expect(output.silent).toBe(true);
+    });
+
+    it("draws a threshold as its input against its crossings", () => {
+        const strip = buildOperatorStrip(
+            "threshold",
+            { level: 0.5, direction: "either" },
+            [named("in", density(10_000_000, [100, 100, 100, 100]))],
+            exact(10_000_000, [0, 500_000, 1_000_000]),
+            "markers",
+            10_000_000,
+        );
+        expect(strip!.rows.map((row) => row.label)).toEqual(["in", "markers"]);
+        expect(strip!.glyph).toBe("0.5 ↕");
+        // The ratio is the reading: 400 frames in, 3 crossings out.
+        expect(strip!.rows[0].layout.total).toBe(400);
+        expect(strip!.rows[1].layout.total).toBe(3);
+    });
+
+    it("returns null when there is nothing at all to draw", () => {
+        expect(
+            buildOperatorStrip("combine", {}, [], undefined, "out", 0),
+        ).toBeNull();
+    });
+
+    // A node with no reported inputs still draws its output row, so this change
+    // cannot regress the kinds that have not been converted yet.
+    it("still draws an output-only strip for an unconverted kind", () => {
+        const strip = buildOperatorStrip(
+            "gap_detect",
+            { gap_ms: 250 },
+            undefined,
+            exact(10_000_000, [0]),
+            "markers",
+            10_000_000,
+        );
+        expect(strip!.rows.map((row) => row.label)).toEqual(["markers"]);
     });
 });
