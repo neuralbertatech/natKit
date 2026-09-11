@@ -72,6 +72,12 @@
         backendNowUs?: number;
         // Double-click opens the node detail view (TEC-NATKIT-124).
         onOpenDetail?: (nodeId: string) => void;
+        // Renders the card as a static PREVIEW for the detail view's left pane
+        // (TEC-NATKIT-125): same card, no canvas positioning, no dragging, no
+        // port interaction. Reusing the component rather than re-describing the
+        // card is the point — a second rendering of "what a node looks like"
+        // would drift from the real one the first time either changed.
+        preview?: boolean;
         selected: boolean;
         invalid: boolean;
         pendingConnection: { nodeId: string; portId: string } | null;
@@ -136,6 +142,7 @@
         marbleAxisEndUs = 0,
         backendNowUs = 0,
         onOpenDetail,
+        preview = false,
         selected,
         invalid,
         pendingConnection,
@@ -329,18 +336,27 @@
     class:inline-viewer={showInlineGraph}
     class:resized={node.width != null || node.height != null}
     class="node"
+    class:preview
     role="button"
     tabindex="0"
-    style={`left:${node.position.x}px; top:${node.position.y}px; height:${nodeHeight}px;${
-        node.width != null ? ` width:${node.width}px;` : ""
-    }`}
+    style={preview
+        ? ""
+        : `left:${node.position.x}px; top:${node.position.y}px; height:${nodeHeight}px;${
+              node.width != null ? ` width:${node.width}px;` : ""
+          }`}
     onmousedown={(event) => {
         event.stopPropagation();
+        // A preview is not on the canvas, so there is nothing to drag it
+        // around and nothing to select it against.
+        if (preview) return;
         handleNodeMouseDown(event);
     }}
     onclick={(event) => event.stopPropagation()}
     ondblclick={(event) => {
         event.stopPropagation();
+        // Already in the detail view; re-opening it from its own preview would
+        // be a no-op at best and a loop at worst.
+        if (preview) return;
         // ⚠️ EVERY kind opens the detail view, n8n style. This used to expand
         // composite / viewer / markers nodes and do nothing at all for the
         // rest, so the same gesture meant three things and usually nothing.
@@ -691,6 +707,24 @@
         /* Flex column so the body / inline chart fill any (resized) card height. */
         display: flex;
         flex-direction: column;
+    }
+
+    /* The card as a static preview inside the detail view (TEC-NATKIT-125).
+       ⚠️ height:auto as well as position:static. The canvas sets an explicit
+       pixel height in the style attribute, which the preview omits — without
+       this the card collapses to whatever the .node rule implies rather than
+       growing to its own content. */
+    .node.preview {
+        position: static;
+        width: 100%;
+        height: auto;
+        cursor: default;
+        box-shadow: none;
+    }
+
+    /* Ports are decoration here: there is nothing to connect a preview to. */
+    .node.preview :global(.port-dot) {
+        cursor: default;
     }
 
     /* A viewer node hosting an inline live chart is wider to give the plot room;
