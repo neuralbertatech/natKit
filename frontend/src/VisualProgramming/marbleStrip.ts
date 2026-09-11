@@ -205,7 +205,11 @@ export function describeStrip(
 import type { NamedChannelActivity } from "../StreamViewer/types";
 
 export interface StripRow {
-  role: "input" | "output";
+  // ⚠️ "rejected" is neither. It rides in on the input_activities list because
+  // that is where the backend can measure it, but it is an OUTPUT of the
+  // operator — what it threw away — so it must not be counted as a starved
+  // input when it is empty. A filter that rejects nothing is working.
+  role: "input" | "output" | "rejected";
   label: string;
   layout: StripLayout;
   caption: string;
@@ -332,6 +336,35 @@ export function operatorGlyph(
     // characters.
     return level === undefined ? `cross ${arrow}` : `cross ${level} ${arrow}`;
   }
+  // The remaining kinds (TEC-NATKIT-121). Each names its operation AND the
+  // config that changes it, for the same reason combine and threshold do: two
+  // nodes of one kind that behave differently must not read identically.
+  if (kind === "gap_detect") {
+    const ms = config?.gap_ms;
+    return ms === undefined ? "gap" : `gap > ${ms}ms`;
+  }
+  if (kind === "marker_debounce") {
+    const ms = config?.window_ms;
+    return ms === undefined ? "debounce" : `debounce ${ms}ms`;
+  }
+  if (kind === "marker_filter") {
+    const field = String(config?.match_field ?? "event");
+    const values = String(config?.match_values ?? "").trim();
+    return values ? `${field} = ${values}` : `filter ${field}`;
+  }
+  if (kind === "gate") {
+    // The labels that open and close it are the whole behaviour; the edge mode
+    // only decides what happens at the boundary.
+    const open = String(config?.open_label ?? "").trim();
+    const close = String(config?.close_label ?? "").trim();
+    if (open && close) return `gate ${open} → ${close}`;
+    return open ? `gate on ${open}` : "gate";
+  }
+  if (kind === "marker_take_until") {
+    const stop = String(config?.until_label ?? "").trim();
+    return stop ? `until ${stop}` : "take until";
+  }
+  if (kind === "marker_merge") return "merge";
   return kind.replace(/_/g, " ");
 }
 
@@ -355,20 +388,30 @@ export function buildOperatorStrip(
   nowWallUs = 0,
 ): OperatorStrip | null {
   const rows: StripRow[] = [];
+  const rejectedRows: StripRow[] = [];
   for (const input of inputs ?? []) {
     const layout = layoutStrip(input, axisEndUs);
-    rows.push({
-      role: "input",
+    const rejected = input.port_id === "dropped";
+    const row: StripRow = {
+      role: rejected ? "rejected" : "input",
       label: input.port_id,
       layout,
       caption: captionFor(input, layout, axisEndUs, nowWallUs),
-      silent:
-        layout.stale ||
-        input.total === 0 ||
-        laneIsSilent(input, nowWallUs),
-    });
+      // A rejected row is never "silent" in the alarming sense: a filter that
+      // drops nothing is a filter that is working, and flagging it orange
+      // would train people to ignore the colour that means a starved input.
+      silent: rejected
+        ? false
+        : layout.stale ||
+          input.total === 0 ||
+          laneIsSilent(input, nowWallUs),
+    };
+    // ⚠️ Held back, not pushed. What an operator THREW AWAY belongs under the
+    // output beside what it kept — above the glyph it would read as a third
+    // input, which is the opposite of what it is.
+    (rejected ? rejectedRows : rows).push(row);
   }
-  if (rows.length === 0 && !output) return null;
+  if (rows.length === 0 && rejectedRows.length === 0 && !output) return null;
 
   const outLayout = layoutStrip(output, axisEndUs);
   rows.push({
@@ -383,5 +426,6 @@ export function buildOperatorStrip(
         laneIsSilent(output, nowWallUs)),
   });
 
+  rows.push(...rejectedRows);
   return { rows, glyph: operatorGlyph(kind, config) };
 }

@@ -279,8 +279,11 @@ describe("operatorGlyph", () => {
         );
     });
 
+    // marker_debounce used to be the example here; it has a real glyph now
+    // (TEC-NATKIT-121), so the fallback is demonstrated with a kind that still
+    // has none.
     it("falls back to a readable name for kinds with no special glyph", () => {
-        expect(operatorGlyph("marker_debounce", {})).toBe("marker debounce");
+        expect(operatorGlyph("stream_source", {})).toBe("stream source");
     });
 });
 
@@ -507,5 +510,121 @@ describe("buildOperatorStrip — wall-clock liveness", () => {
         expect(make(45_000_000)).toBe("silent 45s");
         expect(make(600_000_000)).toBe("silent 10m");
         expect(make(9_000_000_000)).toBe("silent 2.5h");
+    });
+});
+
+
+// --- the remaining operator kinds (TEC-NATKIT-121) -----------------------
+
+describe("operatorGlyph — the remaining kinds", () => {
+    // Each names its operation AND the config that changes it, so two nodes of
+    // one kind that behave differently cannot read identically.
+    it("carries a gap detector's threshold", () => {
+        expect(operatorGlyph("gap_detect", { gap_ms: 250 })).toBe("gap > 250ms");
+        expect(operatorGlyph("gap_detect", {})).toBe("gap");
+    });
+
+    it("carries a debounce window", () => {
+        expect(operatorGlyph("marker_debounce", { window_ms: 200 })).toBe(
+            "debounce 200ms",
+        );
+    });
+
+    it("carries a filter's field and values", () => {
+        expect(
+            operatorGlyph("marker_filter", {
+                match_field: "event",
+                match_values: "rising",
+            }),
+        ).toBe("event = rising");
+        expect(operatorGlyph("marker_filter", { match_field: "label" })).toBe(
+            "filter label",
+        );
+    });
+
+    it("carries a gate's open and close labels", () => {
+        expect(
+            operatorGlyph("gate", { open_label: "start", close_label: "stop" }),
+        ).toBe("gate start → stop");
+        expect(operatorGlyph("gate", { open_label: "start" })).toBe(
+            "gate on start",
+        );
+        expect(operatorGlyph("gate", {})).toBe("gate");
+    });
+
+    it("carries take-until's stop label, and merge needs no config", () => {
+        expect(operatorGlyph("marker_take_until", { until_label: "end" })).toBe(
+            "until end",
+        );
+        expect(operatorGlyph("marker_merge", {})).toBe("merge");
+    });
+});
+
+describe("buildOperatorStrip — the rejected row", () => {
+    const filterStrip = (droppedTotal: number) =>
+        buildOperatorStrip(
+            "marker_filter",
+            { match_field: "event", match_values: "rising" },
+            [
+                named("in", density(10_000_000, [8, 8, 8, 8])),
+                named(
+                    "dropped",
+                    droppedTotal > 0
+                        ? density(10_000_000, [6, 6, 6, 6])
+                        : { ...density(10_000_000, []), total: 0 },
+                ),
+            ],
+            density(10_000_000, [2, 2, 2, 2]),
+            "markers",
+            10_000_000,
+        )!;
+
+    // ⚠️ UNDER the output, not above it. What an operator threw away belongs
+    // beside what it kept; above the glyph it reads as a third input, which is
+    // the opposite of what it is.
+    it("puts the dropped row below the output", () => {
+        const rows = filterStrip(24).rows;
+        expect(rows.map((r) => r.role)).toEqual(["input", "output", "rejected"]);
+        expect(rows.map((r) => r.label)).toEqual(["in", "markers", "dropped"]);
+    });
+
+    // ⚠️ A filter that drops nothing is a filter that is WORKING. Flagging an
+    // empty rejected row as silent would train people to ignore the colour
+    // that means a starved input.
+    it("never marks a dropped row silent, even when empty", () => {
+        const rows = filterStrip(0).rows;
+        const dropped = rows.find((r) => r.role === "rejected")!;
+        expect(dropped.layout.total).toBe(0);
+        expect(dropped.silent).toBe(false);
+    });
+
+    it("still flags a starved real input beside it", () => {
+        const axisEnd = 20_000_000;
+        const strip = buildOperatorStrip(
+            "marker_filter",
+            {},
+            [
+                named("in", exact(axisEnd - WINDOW - 2_000_000, [0])),
+                named("dropped", { ...density(axisEnd, []), total: 0 }),
+            ],
+            exact(axisEnd - WINDOW - 2_000_000, [0]),
+            "markers",
+            axisEnd,
+        )!;
+        expect(strip.rows.find((r) => r.role === "input")!.silent).toBe(true);
+        expect(strip.rows.find((r) => r.role === "rejected")!.silent).toBe(false);
+    });
+
+    it("omits the rejected row for kinds that reject nothing", () => {
+        const strip = buildOperatorStrip(
+            "marker_merge",
+            {},
+            [named("in1", density(10_000_000, [4, 4])), named("in2", density(10_000_000, [4, 4]))],
+            density(10_000_000, [8, 8]),
+            "markers",
+            10_000_000,
+        )!;
+        expect(strip.rows.some((r) => r.role === "rejected")).toBe(false);
+        expect(strip.glyph).toBe("merge");
     });
 });

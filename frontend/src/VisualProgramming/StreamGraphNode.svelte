@@ -204,7 +204,17 @@
     const operatorStrip = $derived.by(() => {
         const inputs = runtimeStatus?.input_activities;
         if (!inputs || inputs.length === 0) return null;
-        const emitsMarkers = node.kind === "threshold";
+        // Which lane the node PUBLISHES. Every marker-lane operator emits
+        // markers, not just threshold — colouring their output row as data
+        // would contradict the port dot right above it (TEC-NATKIT-121).
+        const emitsMarkers = [
+            "threshold",
+            "gap_detect",
+            "marker_merge",
+            "marker_filter",
+            "marker_debounce",
+            "marker_take_until",
+        ].includes(node.kind);
         return buildOperatorStrip(
             node.kind,
             node.config as Record<string, unknown> | undefined,
@@ -220,7 +230,16 @@
     // The output lane's kind, for colouring. Input rows are data in both
     // converted kinds; only the output differs.
     const operatorOutputLane = $derived(
-        node.kind === "threshold" ? "markers" : "data",
+        [
+            "threshold",
+            "gap_detect",
+            "marker_merge",
+            "marker_filter",
+            "marker_debounce",
+            "marker_take_until",
+        ].includes(node.kind)
+            ? "markers"
+            : "data",
     );
 
 
@@ -649,7 +668,7 @@
                     row={stripRow}
                     axisEndUs={marbleAxisEndUs}
                     label={stripRow.label}
-                    lane={stripRow.role === "output" ? operatorOutputLane : "data"}
+                    lane={stripRow.role === "input" ? "data" : operatorOutputLane}
                 />
             {/each}
         </div>
