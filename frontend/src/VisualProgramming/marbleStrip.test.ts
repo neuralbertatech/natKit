@@ -4,6 +4,7 @@ import {
     captionFor,
     describeStrip,
     layoutStrip,
+    laneIsSilent,
     layoutTrackDiagram,
     operatorGlyph,
     resolveAxisEndUs,
@@ -550,5 +551,120 @@ describe("layoutTrackDiagram — fork", () => {
     it("carries the same glyph as the rows grammar", () => {
         const diagram = layoutTrackDiagram(thresholdStrip(), "fork", "markers");
         expect(diagram.glyph).toBe("0.5 ↕");
+    });
+});
+
+
+// --- wall-clock liveness (TEC-NATKIT-123) --------------------------------
+
+// ⚠️ A REALISTIC MICROSECOND EPOCH. A small NOW makes "2.5 hours ago" a
+// NEGATIVE timestamp, which laneIsSilent correctly refuses to judge — so the
+// test fails for a reason that has nothing to do with what it is testing.
+const NOW = 1_789_000_000_000_000;
+const withWall = (
+    activity: ChannelActivity,
+    lastSeenWallUs: number,
+): ChannelActivity => ({
+    ...activity,
+    last_seen_wall_us: String(lastSeenWallUs),
+});
+
+describe("laneIsSilent", () => {
+    it("calls a lane silent once its wall-clock heartbeat is stale", () => {
+        expect(laneIsSilent(withWall(exact(1, [0]), NOW - 10_000_000), NOW)).toBe(
+            true,
+        );
+        expect(laneIsSilent(withWall(exact(1, [0]), NOW - 500_000), NOW)).toBe(
+            false,
+        );
+    });
+
+    // A missing signal must never INVENT silence: an older backend sends no
+    // stamp, and a lane that never recorded sends 0.
+    it("reports nothing when there is no stamp to judge by", () => {
+        expect(laneIsSilent(exact(1, [0]), NOW)).toBe(false);
+        expect(laneIsSilent(withWall(exact(1, [0]), 0), NOW)).toBe(false);
+        expect(laneIsSilent(withWall(exact(1, [0]), NOW - 10_000_000), 0)).toBe(
+            false,
+        );
+    });
+});
+
+describe("buildOperatorStrip — wall-clock liveness", () => {
+    // ⚠️ THE BUG. Every lane stopped at the same instant, so NONE is stale
+    // relative to the others and the relative test sees a perfectly healthy
+    // board. Zach's screenshot showed "50.0/s" two and a half hours after the
+    // feeds had exited.
+    it("calls a wholly dead board silent, which the relative test cannot", () => {
+        const axisEnd = 10_000_000;
+        const dead = (a: ChannelActivity) => withWall(a, NOW - 9_000_000_000);
+
+        const relativeOnly = buildOperatorStrip(
+            "combine",
+            { join_policy: "zip" },
+            [
+                named("in1", dead(density(axisEnd, [40, 40, 40, 40]))),
+                named("in2", dead(density(axisEnd, [2, 2, 2, 2]))),
+            ],
+            dead(density(axisEnd, [2, 2, 2, 2])),
+            "out",
+            axisEnd,
+            // No wall clock: the old behaviour, kept so an older backend still
+            // renders rather than going blank.
+            0,
+        )!;
+        expect(relativeOnly.rows.every((row) => !row.silent)).toBe(true);
+        expect(relativeOnly.rows[0].caption).toBe("40.0/s");
+
+        const withClock = buildOperatorStrip(
+            "combine",
+            { join_policy: "zip" },
+            [
+                named("in1", dead(density(axisEnd, [40, 40, 40, 40]))),
+                named("in2", dead(density(axisEnd, [2, 2, 2, 2]))),
+            ],
+            dead(density(axisEnd, [2, 2, 2, 2])),
+            "out",
+            axisEnd,
+            NOW,
+        )!;
+        expect(withClock.rows.every((row) => row.silent)).toBe(true);
+        for (const row of withClock.rows) {
+            expect(row.caption).toMatch(/^silent /);
+        }
+    });
+
+    it("leaves a live board alone", () => {
+        const axisEnd = 10_000_000;
+        const live = (a: ChannelActivity) => withWall(a, NOW - 200_000);
+        const strip = buildOperatorStrip(
+            "combine",
+            {},
+            [named("in1", live(density(axisEnd, [40, 40, 40, 40])))],
+            live(density(axisEnd, [40, 40, 40, 40])),
+            "out",
+            axisEnd,
+            NOW,
+        )!;
+        expect(strip.rows.every((row) => !row.silent)).toBe(true);
+    });
+
+    // Long silences get readable units — "silent 9000s" is not a duration
+    // anybody parses at a glance.
+    it("scales the silence caption to minutes and hours", () => {
+        const axisEnd = 10_000_000;
+        const make = (agoUs: number) =>
+            buildOperatorStrip(
+                "combine",
+                {},
+                [named("in1", withWall(density(axisEnd, [4, 4]), NOW - agoUs))],
+                withWall(density(axisEnd, [4, 4]), NOW - agoUs),
+                "out",
+                axisEnd,
+                NOW,
+            )!.rows[0].caption;
+        expect(make(45_000_000)).toBe("silent 45s");
+        expect(make(600_000_000)).toBe("silent 10m");
+        expect(make(9_000_000_000)).toBe("silent 2.5h");
     });
 });

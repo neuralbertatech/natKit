@@ -76,6 +76,9 @@
         // Which marble grammar to draw (TEC-NATKIT-122). A reading preference
         // held by the editor, not a property of the node.
         stripStyle?: "rows" | "tracks";
+        // The backend's wall clock, for telling a lane that STOPPED from one
+        // that merely stopped when everything else did (TEC-NATKIT-123).
+        backendNowUs?: number;
         selected: boolean;
         invalid: boolean;
         pendingConnection: { nodeId: string; portId: string } | null;
@@ -139,6 +142,7 @@
         runtimeStatus,
         marbleAxisEndUs = 0,
         stripStyle = "rows",
+        backendNowUs = 0,
         selected,
         invalid,
         pendingConnection,
@@ -209,6 +213,7 @@
                 : runtimeStatus?.data_activity,
             emitsMarkers ? "markers" : "out",
             marbleAxisEndUs,
+            backendNowUs,
         );
     });
     // The output lane's kind, for colouring. Input rows are data in both

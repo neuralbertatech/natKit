@@ -1534,6 +1534,13 @@ export interface ChannelActivity {
   offsets_us?: number[];
   // Density mode: counts per bucket, oldest bucket first.
   buckets?: number[];
+  // ⚠️ WALL CLOCK, and the only field here that is — everything else is on the
+  // data clock, which positions a marble correctly and cannot answer "is this
+  // lane still alive". Staleness used to be measured against the graph's own
+  // newest event, so a board where every lane died together kept reporting its
+  // last known rates (TEC-NATKIT-123). Compare against the status message's
+  // `now_us`. Absent on an older backend; "0" when the lane never recorded.
+  last_seen_wall_us?: string;
 }
 
 // One input's activity, named by the port it arrived on. The port id rather
@@ -1655,6 +1662,11 @@ export interface StreamGraphStatusMessage {
   request_id: string;
   graph_id: string;
   status: StreamGraphStatusSummary;
+  // The BACKEND's wall clock when this was assembled, so a lane's
+  // `last_seen_wall_us` is compared against the clock that stamped it rather
+  // than the browser's, which can be skewed by minutes. Absent on an older
+  // backend, which disables the absolute liveness test rather than guessing.
+  now_us?: string;
 }
 
 export interface StreamGraphStartedMessage {

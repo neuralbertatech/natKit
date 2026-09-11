@@ -223,16 +223,54 @@ export interface OperatorStrip {
   glyph: string;
 }
 
+// How long a lane may go without an event before the strip calls it silent.
+// Matches classifyTransformWorkerStatus's own 3s, so the card and the node
+// badge cannot disagree about whether something is still running.
+export const LANE_SILENCE_US = 3_000_000;
+
+/**
+ * Is this lane dead by the WALL clock?
+ *
+ * ⚠️ THE RELATIVE TEST CANNOT ANSWER THIS. `layoutStrip`'s `stale` is measured
+ * against the graph's own newest event, so it only ever says "this lane is
+ * behind the others" — when every lane stops at the same moment none is behind
+ * any other, and the strips go on reporting their last known rates. A board
+ * whose feeds had been dead for two and a half hours still read "50.0/s"
+ * (TEC-NATKIT-123).
+ *
+ * Returns false when the backend sent no stamp (older build) or the lane has
+ * never recorded anything, so a missing signal never invents silence.
+ */
+export function laneIsSilent(
+  activity: { last_seen_wall_us?: string } | undefined,
+  nowWallUs: number,
+): boolean {
+  if (!activity || !nowWallUs) return false;
+  const lastSeen = Number(activity.last_seen_wall_us ?? 0);
+  if (!Number.isFinite(lastSeen) || lastSeen <= 0) return false;
+  return nowWallUs - lastSeen > LANE_SILENCE_US;
+}
+
 /** A rate, or how long a lane has been quiet — whichever the row is saying. */
 export function captionFor(
   activity: ChannelActivityLike | undefined,
   layout: StripLayout,
   axisEndUs: number,
+  nowWallUs = 0,
 ): string {
   if (!activity || activity.total <= 0) {
     if (!activity) return "—";
     // Total 0 inside a live window still means "nothing recently".
     return "0/s";
+  }
+  // The wall clock first: a lane everything else also stopped with is invisible
+  // to the relative test below, and reporting its old rate is the bug.
+  if (laneIsSilent(activity, nowWallUs)) {
+    const quietUs = nowWallUs - Number(activity.last_seen_wall_us ?? 0);
+    const seconds = quietUs / 1_000_000;
+    if (seconds >= 3600) return `silent ${(seconds / 3600).toFixed(1)}h`;
+    if (seconds >= 60) return `silent ${Math.round(seconds / 60)}m`;
+    return `silent ${seconds.toFixed(0)}s`;
   }
   if (layout.stale) {
     const quietUs = axisEndUs - Number(activity.base_us);
@@ -253,6 +291,7 @@ interface ChannelActivityLike {
   window_us: number;
   base_us: string;
   total: number;
+  last_seen_wall_us?: string;
 }
 
 const JOIN_POLICY_GLYPH: Record<string, string> = {
@@ -307,6 +346,9 @@ export function buildOperatorStrip(
   output: ChannelActivity | undefined,
   outputLabel: string,
   axisEndUs: number,
+  // The backend's wall clock at snapshot time. 0 disables the absolute test,
+  // which is what an older backend gets.
+  nowWallUs = 0,
 ): OperatorStrip | null {
   const rows: StripRow[] = [];
   for (const input of inputs ?? []) {
@@ -315,8 +357,11 @@ export function buildOperatorStrip(
       role: "input",
       label: input.port_id,
       layout,
-      caption: captionFor(input, layout, axisEndUs),
-      silent: layout.stale || input.total === 0,
+      caption: captionFor(input, layout, axisEndUs, nowWallUs),
+      silent:
+        layout.stale ||
+        input.total === 0 ||
+        laneIsSilent(input, nowWallUs),
     });
   }
   if (rows.length === 0 && !output) return null;
@@ -326,8 +371,12 @@ export function buildOperatorStrip(
     role: "output",
     label: outputLabel,
     layout: outLayout,
-    caption: captionFor(output, outLayout, axisEndUs),
-    silent: !!output && (outLayout.stale || output.total === 0),
+    caption: captionFor(output, outLayout, axisEndUs, nowWallUs),
+    silent:
+      !!output &&
+      (outLayout.stale ||
+        output.total === 0 ||
+        laneIsSilent(output, nowWallUs)),
   });
 
   return { rows, glyph: operatorGlyph(kind, config) };
