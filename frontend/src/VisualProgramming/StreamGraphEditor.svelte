@@ -24,6 +24,7 @@
         RefreshCw,
         Save,
         ScanSearch,
+        ChevronDown,
         Clock,
         SquareDashedMousePointer,
         Square,
@@ -1020,6 +1021,37 @@
     // Seventeen transforms in one flat column is a list you scan, not a menu
     // you use. Matches the label AND the kind, because somebody who knows the
     // kind (`bandpass_iir`) should not have to remember its prose label.
+    // ⚠️ ONE OPEN SECTION AT A TIME (TEC-NATKIT-127 item 7). The left sidebar
+    // had SEVEN independently scrolling regions stacked in one column, so every
+    // one of them got a sliver: the node library showed a single row of a
+    // seventeen-item catalogue. An accordion gives whichever section you are
+    // using the whole remaining height and exactly one scrollbar.
+    //
+    // Per browser, like the workspace: which section somebody works out of is a
+    // preference, not a property of any board.
+    const SIDEBAR_PANEL_KEY = "natkit.vp.sidebar-panel";
+
+    function readStoredSidebarPanel(): string {
+        try {
+            return localStorage.getItem(SIDEBAR_PANEL_KEY) || "boards";
+        } catch {
+            return "boards";
+        }
+    }
+
+    let sidebarPanel = $state(readStoredSidebarPanel());
+
+    function toggleSidebarPanel(key: string) {
+        // Clicking the open one collapses it, which lets somebody shrink the
+        // sidebar to just its headers when they want the canvas.
+        sidebarPanel = sidebarPanel === key ? "" : key;
+        try {
+            localStorage.setItem(SIDEBAR_PANEL_KEY, sidebarPanel);
+        } catch {
+            // Non-fatal: the choice just will not survive a reload.
+        }
+    }
+
     let paletteFilter = $state("");
 
     function paletteMatches(...fields: (string | undefined | null)[]): boolean {
@@ -7749,6 +7781,18 @@
             </div>
         </div>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "boards"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("boards")}
+                    aria-expanded={sidebarPanel === "boards"}
+                >
+                    <span>Boards</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "boards"}
+                    <div class="sidebar-panel-body">
         <div class="graph-list">
             {#if boardDefinitions.length === 0}
                 <div class="empty-state">
@@ -7779,7 +7823,22 @@
                 {/each}
             {/if}
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "experiments"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("experiments")}
+                    aria-expanded={sidebarPanel === "experiments"}
+                >
+                    <span>Experiments & history</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "experiments"}
+                    <div class="sidebar-panel-body">
         <div class="library-group">
             <div class="library-header-row">
                 <span class="library-title">Experiments &amp; history</span>
@@ -7822,7 +7881,22 @@
                 {/if}
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "templates"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("templates")}
+                    aria-expanded={sidebarPanel === "templates"}
+                >
+                    <span>Starter templates</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "templates"}
+                    <div class="sidebar-panel-body">
         <div class="library-group">
             <span class="library-title">Starter templates</span>
             <div class="library-actions">
@@ -7839,7 +7913,22 @@
                 {/each}
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "profiles"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("profiles")}
+                    aria-expanded={sidebarPanel === "profiles"}
+                >
+                    <span>Profiles</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "profiles"}
+                    <div class="sidebar-panel-body">
         <div class="library-group">
             <div class="library-header-row">
                 <span class="library-title">Profiles</span>
@@ -7891,7 +7980,22 @@
                 {/if}
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "status"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("status")}
+                    aria-expanded={sidebarPanel === "status"}
+                >
+                    <span>Status</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "status"}
+                    <div class="sidebar-panel-body">
         <div class="summary-card">
             <div class="summary-row">
                 <span>Connection</span>
@@ -7912,9 +8016,23 @@
                 <strong>{draftGraph.edges.length}</strong>
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "library"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("library")}
+                    aria-expanded={sidebarPanel === "library"}
+                >
+                    <span>Node library</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "library"}
+                    <div class="sidebar-panel-body">
         <div class="summary-card">
-            <p class="eyebrow">Node Library</p>
             <div class="library-group">
                 <span class="library-title">Utility</span>
                 <div class="library-actions">
@@ -7981,10 +8099,24 @@
                 </div>
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
 
+            <section class="sidebar-panel" class:open={sidebarPanel === "composites"}>
+                <button
+                    type="button"
+                    class="sidebar-panel-header"
+                    onclick={() => toggleSidebarPanel("composites")}
+                    aria-expanded={sidebarPanel === "composites"}
+                >
+                    <span>Composites</span>
+                    <ChevronDown size={14} class="sidebar-panel-chevron" />
+                </button>
+                {#if sidebarPanel === "composites"}
+                    <div class="sidebar-panel-body">
         <div class="summary-card">
             <div class="library-header">
-                <p class="eyebrow">Composites</p>
                 <div class="sidebar-actions">
                     <button
                         type="button"
@@ -8043,6 +8175,9 @@
                 {/if}
             </div>
         </div>
+                    </div>
+                {/if}
+            </section>
     </div>
 
     <div class="graph-main">
@@ -9701,6 +9836,82 @@
         border-radius: 8px;
     }
 
+    /* ACCORDION (TEC-NATKIT-127 item 7). Seven sections each with its own
+       scrollbar meant each got a sliver of a fixed-height column — the node
+       library showed ONE row of a seventeen-item catalogue. Only the open
+       panel takes space, so it gets the whole remainder and one scrollbar. */
+    .sidebar-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        /* Closed: just its header. */
+        flex: 0 0 auto;
+        /* ⚠️ .graph-sidebar sets align-items:center, so a section with no width
+           shrinks to its content and centres itself — every CLOSED header
+           rendered as centred text with a stub underline while the open one,
+           whose content is wide, looked correct. Stretch explicitly. */
+        align-self: stretch;
+        width: 100%;
+    }
+
+    .sidebar-panel.open {
+        flex: 1 1 auto;
+    }
+
+    .sidebar-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        gap: 0.5rem;
+        padding: 0.4rem 0.15rem;
+        border: none;
+        background: none;
+        color: #b9c6ee;
+        font-size: 0.74rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-align: left;
+        cursor: pointer;
+        border-bottom: 1px solid rgba(110, 138, 255, 0.14);
+    }
+
+    .sidebar-panel-header:hover {
+        color: #e8eeff;
+    }
+
+    .sidebar-panel.open .sidebar-panel-header {
+        color: #e8eeff;
+    }
+
+    .sidebar-panel :global(.sidebar-panel-chevron) {
+        flex: 0 0 auto;
+        transition: transform 120ms ease;
+        transform: rotate(-90deg);
+    }
+
+    .sidebar-panel.open :global(.sidebar-panel-chevron) {
+        transform: none;
+    }
+
+    /* ⚠️ THE ONLY SCROLLER. The sections inside still carry their own
+       max-height/overflow rules for other contexts, so those are unset here —
+       otherwise the panel scrolls AND its contents scroll, which is the nested
+       scrollbar problem this is meant to remove. */
+    .sidebar-panel-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding-top: 0.5rem;
+    }
+
+    .sidebar-panel-body :global(.library-actions),
+    .sidebar-panel-body :global(.graph-list),
+    .sidebar-panel-body :global(.library-group) {
+        max-height: none;
+        overflow: visible;
+    }
+
     .graph-sidebar {
         position: absolute;
         top: var(--panel-top, 72px);
@@ -9711,7 +9922,10 @@
         padding: 1rem;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
+        /* Tightened from 1rem: with the accordion most children are now just a
+           header row, and a 16px gap between them made the closed sidebar read
+           as a list of unrelated fragments. */
+        gap: 0.35rem;
         /* ⚠️ min-width:0 so a long child (a stream label like
            "Stream 13793649553360 - NatImuBulkDataSchema") can shrink instead of
            forcing the panel wider than itself. A flex item's default min-width
