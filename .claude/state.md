@@ -27,23 +27,40 @@ repos agree rather than natKit sitting on a commit that is on trunk's history
 but is not trunk. Six pre-existing unpushed commits on natKit's trunk went up
 with it.
 
-⚠️ **Every push went STRAIGHT TO TRUNK and bypassed a branch-protection rule**
-("Changes must be made through a pull request"), which this account is permitted
-to do. The history is full of direct `Merge zach/...` commits so it matches
-practice, but the rule exists — worth settling whether future work opens PRs.
+**Pushing straight to trunk is fine — settled 2026-09-11.** Every push bypasses
+a branch-protection rule ("Changes must be made through a pull request"), which
+this account is permitted to do. Zach's call: "we are still in the initial
+development phase." Stop re-raising it; revisit if that phase ends.
 
 **Shipped and closed:** TEC-NATKIT-103 (combine join policies), TEC-NATKIT-109
 (threshold + gate).
-**Finished, at 100%:** 115 (the gap detector) — verified end to end off Kafka,
-merged and pushed. Needs moving to Verification by hand; `task update` has no
-`-bucket` flag, so buckets are readable from the CLI but not writable.
-**In Verification, awaiting Zach's greenlight:** 104 (the written contract),
-105 (marker-lane operators), 106 (marble strips), 108 (Kafka partitions).
+**DONE** (Zach's greenlight, 2026-09-11): 104 (the written contract), 105
+(marker-lane operators), 106 (marble strips), 108 (Kafka partitions), 115 (the
+gap detector). All merged, pushed and moved with `task update <id> -bucket Done
+-done`.
 **Decided, children filed:** 107 (`groupBy` — keys come from the *registered*
 message structures, not from observed data), 110 (closed as "neither"; its
 deterministic half became 115).
 **Ice Box:** 111 (rig bench), 112 (per-message flush), 113 (unify the three
 watermark copies), 114 (`fan_out`).
+**Epic 102 (#589) stays open** on 594/597/598/600. ⚠️ **597 (the clock-node
+Brief, closed as "neither") has only 602 under it and 602 is done** — by the
+board rule a Brief is finished when its last child is, so it is waiting on
+Zach's word only.
+
+**`build-codex/` is untracked** (libnatkit `c350212`, 2026-09-11, sanctioned).
+1450 generated files went in because the ignore said `build/` and the directory
+was called `build-codex/`; Syncthing then deleted 622 of them, which is what
+made `git status` unreadable all session. Now `build*/`, verified to hide no
+tracked source. The directory is untouched on disk.
+
+One untracked leftover remains and is **not** a bug: `libnatkit/core/streams/
+.../registry/JsonEncoder.hpp`. `core/streams` was deliberately deleted in
+TEC-NATKIT-78 ("not built since Feb 2024"); this file is byte-identical to the
+deleted version apart from CRLF, and its `encode()` body is empty. The
+`.vcxproj` reference to "JsonEncoder" points at a different path
+(`lib\libnatkit-core\src\`), so nothing depends on it. Recoverable at
+`871a4ac~1` if it is ever wanted.
 
 Verified across the session: **ctest 3/3, 129 gtest cases**, `npm run check`
 clean, **vitest 284 passed / 22 files**, backend builds clean, the marble strips
