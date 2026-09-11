@@ -5841,6 +5841,9 @@
                 </div>
 {/snippet}
 
+<!-- NODE-scoped inspector: the fields that edit ONE node. Rendered only
+     by the detail view now (TEC-NATKIT-128) — the sidebar copy is gone,
+     so there is exactly one place a node is edited. -->
 {#snippet inspectorBody()}
 
                 {#if selectedInstance}
@@ -7418,6 +7421,13 @@
                     </div>
                 {/if}
 
+{/snippet}
+
+<!-- GRAPH-scoped: Diagnostics, naming conflicts and run status are about
+     the whole board, not the selected node, so they stay in the sidebar
+     where they are visible while you work rather than only when a node
+     happens to be open. -->
+{#snippet inspectorDiagnostics()}
                 <div class="inspector-section">
                     <p class="eyebrow">Diagnostics</p>
                     {#if graphValidationCount === 0 && runtimeIssues.length === 0 && labelMismatches.length === 0}
@@ -8729,8 +8739,31 @@
 
             <div class="graph-inspector" class:panel-hidden={!showInspector}>
                 {@render inspectorGraphSection()}
-                {@render inspectorBody()}
-                {@render inspectorRuntimeCard()}
+                <!-- ⚠️ THE NODE INSPECTOR IS NOT HERE ANY MORE (TEC-NATKIT-128).
+                     There were two of it — this rail and the detail view — with
+                     the same fields bound to the same selectedNodeId, so the
+                     same edit could be made in two places and neither was
+                     obviously the real one. The detail view won: it has room
+                     for the fields, and it shows the node beside them.
+                     What stays is what is about the BOARD rather than a node. -->
+                {#if selectedNode}
+                    <button
+                        type="button"
+                        class="inspector-open-node"
+                        onclick={() => openNodeDetail(selectedNode.id)}
+                    >
+                        <Maximize2 size={14} />
+                        <span>
+                            Edit <strong>{selectedNode.label || selectedNode.id}</strong>
+                        </span>
+                        <small>or double-click it on the canvas</small>
+                    </button>
+                {:else}
+                    <p class="muted-text inspector-hint">
+                        Double-click a node to open it.
+                    </p>
+                {/if}
+                {@render inspectorDiagnostics()}
                 {@render inspectorGeneratedJson()}
             </div>
         </div>
@@ -11197,6 +11230,40 @@
     .graph-id,
     .workspace-hidden {
         color: #93a5cf;
+    }
+
+    /* The way into the detail view, where the rail's node fields used to be.
+       A selected node must still lead somewhere from the sidebar, or selecting
+       one on the canvas would appear to do nothing. */
+    .inspector-open-node {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+        width: 100%;
+        margin-bottom: 0.9rem;
+        padding: 0.6rem 0.7rem;
+        border-radius: 7px;
+        border: 1px solid rgba(110, 138, 255, 0.26);
+        background: rgba(20, 28, 52, 0.7);
+        color: #dce5ff;
+        font-size: 0.78rem;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .inspector-open-node:hover {
+        border-color: rgba(110, 138, 255, 0.5);
+        background: rgba(26, 36, 66, 0.85);
+    }
+
+    .inspector-open-node small {
+        color: #93a5cf;
+        font-size: 0.68rem;
+    }
+
+    .inspector-hint {
+        margin: 0 0 0.9rem;
     }
 
     .context-header {
