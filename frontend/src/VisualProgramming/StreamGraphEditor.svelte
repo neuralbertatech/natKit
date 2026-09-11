@@ -5640,7 +5640,82 @@
      inspectorBody so the node detail view (TEC-NATKIT-124) can render the
      NODE's sections without the board's description, which belongs to the
      graph rather than to any node. -->
+<!-- The node's live runtime block. Split out of inspectorBody so the detail
+     view (TEC-NATKIT-126) can put it in the LEFT pane under the node card,
+     where 'what this node IS and what it is doing' belongs — leaving the
+     right pane as purely the fields you edit. The sidebar renders it in its
+     original position. -->
+{#snippet inspectorRuntimeCard()}
+                        {#if selectedNodeRuntimeStatus}
+                            <div class="runtime-card">
+                                <div class="summary-row">
+                                    <span>Runtime</span>
+                                    <strong class={graphRunStateClass(selectedNodeRuntimeStatus.state)}>
+                                        {selectedNodeRuntimeStatus.state}
+                                    </strong>
+                                </div>
+                                {#if selectedNodeRuntimeStatus.output_stream_id}
+                                    <div class="summary-row">
+                                        <span>Resolved stream</span>
+                                        <strong>{selectedNodeRuntimeStatus.output_stream_id}</strong>
+                                    </div>
+                                {/if}
+                                {#if selectedNodeRuntimeStatus.worker_id}
+                                    <div class="summary-row">
+                                        <span>Worker</span>
+                                        <strong>{selectedNodeRuntimeStatus.worker_id}</strong>
+                                    </div>
+                                {/if}
+                                {#if selectedNodeRuntimeStatus.message}
+                                    <p class="muted-text">
+                                        {selectedNodeRuntimeStatus.message}
+                                    </p>
+                                {/if}
+                                {#if selectedNode.kind === "viewer" &&
+                                    selectedNodeRuntimeStatus.output_stream_id}
+                                    <button
+                                        type="button"
+                                        class="action-btn secondary inspector-action"
+                                        onclick={() =>
+                                            openViewerData(selectedNode)}
+                                    >
+                                        <Monitor size={15} />
+                                        Open Live Stream
+                                    </button>
+                                {/if}
+                                {#if (selectedNode as { display_mode?: string }).display_mode === "imu_calibration"}
+                                    <!-- Which body position this board is worn at,
+                                         so the readout is labelled the way the
+                                         person is actually set up. -->
+                                    <label>
+                                        <span>Worn at</span>
+                                        <select
+                                            disabled={boardIsImmutable}
+                                            value={(selectedNode as { sensor_position?: string })
+                                                .sensor_position ?? "N/A"}
+                                            onchange={(event) =>
+                                                updateSelectedNode((node) => ({
+                                                    ...node,
+                                                    sensor_position: (
+                                                        event.currentTarget as HTMLSelectElement
+                                                    ).value,
+                                                }))}
+                                        >
+                                            {#each SENSOR_POSITION_NAMES as name}
+                                                <option value={name}>{name}</option>
+                                            {/each}
+                                        </select>
+                                    </label>
+                                {/if}
+                            </div>
+                        {/if}
+{/snippet}
+
 {#snippet inspectorGraphSection()}
+                <div class="inspector-section">
+                    <p class="eyebrow">Generated JSON</p>
+                    <pre>{graphJsonPreview}</pre>
+                </div>
                 <div class="inspector-section">
                     <p class="eyebrow">Graph</p>
                     <label>
@@ -6989,69 +7064,6 @@
                             </div>
                         {/if}
 
-                        {#if selectedNodeRuntimeStatus}
-                            <div class="runtime-card">
-                                <div class="summary-row">
-                                    <span>Runtime</span>
-                                    <strong class={graphRunStateClass(selectedNodeRuntimeStatus.state)}>
-                                        {selectedNodeRuntimeStatus.state}
-                                    </strong>
-                                </div>
-                                {#if selectedNodeRuntimeStatus.output_stream_id}
-                                    <div class="summary-row">
-                                        <span>Resolved stream</span>
-                                        <strong>{selectedNodeRuntimeStatus.output_stream_id}</strong>
-                                    </div>
-                                {/if}
-                                {#if selectedNodeRuntimeStatus.worker_id}
-                                    <div class="summary-row">
-                                        <span>Worker</span>
-                                        <strong>{selectedNodeRuntimeStatus.worker_id}</strong>
-                                    </div>
-                                {/if}
-                                {#if selectedNodeRuntimeStatus.message}
-                                    <p class="muted-text">
-                                        {selectedNodeRuntimeStatus.message}
-                                    </p>
-                                {/if}
-                                {#if selectedNode.kind === "viewer" &&
-                                    selectedNodeRuntimeStatus.output_stream_id}
-                                    <button
-                                        type="button"
-                                        class="action-btn secondary inspector-action"
-                                        onclick={() =>
-                                            openViewerData(selectedNode)}
-                                    >
-                                        <Monitor size={15} />
-                                        Open Live Stream
-                                    </button>
-                                {/if}
-                                {#if (selectedNode as { display_mode?: string }).display_mode === "imu_calibration"}
-                                    <!-- Which body position this board is worn at,
-                                         so the readout is labelled the way the
-                                         person is actually set up. -->
-                                    <label>
-                                        <span>Worn at</span>
-                                        <select
-                                            disabled={boardIsImmutable}
-                                            value={(selectedNode as { sensor_position?: string })
-                                                .sensor_position ?? "N/A"}
-                                            onchange={(event) =>
-                                                updateSelectedNode((node) => ({
-                                                    ...node,
-                                                    sensor_position: (
-                                                        event.currentTarget as HTMLSelectElement
-                                                    ).value,
-                                                }))}
-                                        >
-                                            {#each SENSOR_POSITION_NAMES as name}
-                                                <option value={name}>{name}</option>
-                                            {/each}
-                                        </select>
-                                    </label>
-                                {/if}
-                            </div>
-                        {/if}
 
                         {#if nodeDiagnostics(selectedNode.id).length > 0}
                             <div class="diagnostic-list">
@@ -7333,10 +7345,6 @@
                     </div>
                 {/if}
 
-                <div class="inspector-section">
-                    <p class="eyebrow">Generated JSON</p>
-                    <pre>{graphJsonPreview}</pre>
-                </div>
 {/snippet}
 
 {#snippet streamRenderer(
@@ -8601,6 +8609,7 @@
             <div class="graph-inspector" class:panel-hidden={!showInspector}>
                 {@render inspectorGraphSection()}
                 {@render inspectorBody()}
+                {@render inspectorRuntimeCard()}
             </div>
         </div>
 
@@ -8737,7 +8746,6 @@
                          rendering of "what a node looks like" would drift from
                          the real card the first time either changed. -->
                     <aside class="node-detail-preview">
-                        <p class="eyebrow">Node</p>
                         <StreamGraphNodeCard
                             node={detailNode}
                             runtimeStatus={nodeRuntimeStatus(detailNode.id)}
@@ -8765,6 +8773,11 @@
                                 {/each}
                             </ul>
                         {/if}
+                        <!-- What the node IS and what it is doing lives with the
+                             node; the right pane is then purely the fields you
+                             edit. It also fills a column that was otherwise a
+                             small card above a lot of nothing. -->
+                        {@render inspectorRuntimeCard()}
                     </aside>
                     <div class="node-detail-fields">
                         {@render inspectorBody()}
@@ -9379,25 +9392,72 @@
         min-height: 0;
         overflow-y: auto;
         padding: 0;
+        /* ⚠️ hidden here, and each pane scrolls itself. One shared scroll made
+           both panes 1705px tall inside an 880px panel, so the node scrolled
+           away the moment you touched the fields beside it. */
+        overflow: hidden;
         /* The node on the left, the fields editing it on the right.
            ⚠️ A GRID, not CSS columns. Columns fill sequentially and an
            .inspector-section cannot break across them, so an earlier cut put
            the node's single tall section entirely in the right column with the
            left one empty — worse than the rail it replaced. */
         display: grid;
-        grid-template-columns: 300px minmax(0, 1fr);
-        align-items: start;
+        grid-template-columns: 340px minmax(0, 1fr);
+        align-items: stretch;
     }
 
+    /* The left pane reads as part of the panel rather than a card dropped onto
+       it: its own ground, a full-height divider, and the node sitting at the
+       top of a column that carries its runtime beneath. */
     .node-detail-preview {
-        position: sticky;
-        top: 0;
-        padding: 1.2rem 1rem 1.2rem 1.4rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.9rem;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 1.2rem;
+        background: rgba(6, 10, 22, 0.6);
         border-right: 1px solid rgba(110, 138, 255, 0.14);
     }
 
-    .node-detail-preview .eyebrow {
-        margin: 0 0 0.55rem;
+    /* The preview card is the pane's content, not a floating object on it:
+       flush to the column, no drop shadow competing with the panel's own. */
+    .node-detail-preview :global(.node.preview) {
+        border-color: rgba(122, 148, 255, 0.3);
+    }
+
+    /* ⚠️ Inside the detail view the recommended-next list must NOT scroll. A
+       240px scroll area nested inside the panel's own scroll gives two
+       scrollbars a few pixels apart, and the inner one swallows the wheel. */
+    .node-detail-fields :global(.library-actions) {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .node-detail-preview :global(.runtime-card) {
+        margin: 0;
+    }
+
+    /* The runtime rows are label-left / value-right at sidebar width. In a
+       340px pane a 19-digit stream id wraps under its own label and reads as a
+       mistake, so stack them deliberately instead. */
+    .node-detail-preview :global(.runtime-card .summary-row) {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.1rem;
+    }
+
+    .node-detail-preview :global(.runtime-card .summary-row:first-child) {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .node-detail-preview :global(.runtime-card .summary-row strong) {
+        font-size: 0.74rem;
+        font-weight: 500;
+        word-break: break-all;
     }
 
     .node-detail-diagnostics {
@@ -9410,6 +9470,8 @@
     .node-detail-fields {
         padding: 1.2rem 1.4rem;
         min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
     }
 
     .node-detail-fields :global(.inspector-section) {
