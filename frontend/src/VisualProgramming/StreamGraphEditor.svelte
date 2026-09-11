@@ -13,11 +13,13 @@
         FolderOpen,
         Pencil,
         Network,
+        Waypoints,
         GitBranch,
         Lightbulb,
         Monitor,
         Package,
         PanelLeft,
+        Rows3,
         PanelRight,
         Plus,
         RefreshCw,
@@ -992,6 +994,41 @@
     const selectedCombineNode = $derived(
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
+
+    // Which marble grammar the cards draw (TEC-NATKIT-122). The two answer
+    // different questions, which is why this is a switch rather than a choice
+    // made once: ROWS are denser and read like a table, best for comparing
+    // rates across several nodes at once; TRACKS are bigger but draw what the
+    // operator DOES, which is what somebody meeting a board for the first time
+    // needs.
+    //
+    // Per browser rather than per board: it is a reading preference, not a
+    // property of the graph, so it must not travel to somebody else when a
+    // board is shared.
+    const STRIP_STYLE_KEY = "natkit.vp.strip-style";
+    type StripStyle = "rows" | "tracks";
+
+    function readStoredStripStyle(): StripStyle {
+        try {
+            return localStorage.getItem(STRIP_STYLE_KEY) === "tracks"
+                ? "tracks"
+                : "rows";
+        } catch {
+            // Private mode / blocked storage: fall back rather than fail to mount.
+            return "rows";
+        }
+    }
+
+    let stripStyle = $state<StripStyle>(readStoredStripStyle());
+
+    function toggleStripStyle() {
+        stripStyle = stripStyle === "rows" ? "tracks" : "rows";
+        try {
+            localStorage.setItem(STRIP_STYLE_KEY, stripStyle);
+        } catch {
+            // Non-fatal: the choice just will not survive a reload.
+        }
+    }
 
     // The shared right-hand edge for every marble strip on the canvas
     // (TEC-NATKIT-106): the newest event ANY lane in the graph has seen, on the
@@ -6423,6 +6460,26 @@
                 >
                     <Clock size={16} />
                 </button>
+                <!-- Marble grammar (TEC-NATKIT-122). Rows read like a table
+                     and compare rates across nodes; tracks draw what each
+                     operator does. A switch rather than one choice, because the
+                     two answer different questions. -->
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={stripStyle === "tracks"}
+                    onclick={toggleStripStyle}
+                    title={stripStyle === "tracks"
+                        ? "Marble strips: tracks — click for compact rows"
+                        : "Marble strips: rows — click for operator tracks"}
+                    aria-pressed={stripStyle === "tracks"}
+                >
+                    {#if stripStyle === "tracks"}
+                        <Waypoints size={16} />
+                    {:else}
+                        <Rows3 size={16} />
+                    {/if}
+                </button>
                 <button
                     type="button"
                     class="icon-btn"
@@ -6612,6 +6669,7 @@
                             {node}
                             runtimeStatus={nodeRuntimeStatus(node.id)}
                             {marbleAxisEndUs}
+                            {stripStyle}
                             selected={selectedNodeIds.has(node.id)}
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
