@@ -1,6 +1,11 @@
 <script lang="ts">
     import MarbleStrip from "./MarbleStrip.svelte";
-    import { buildOperatorStrip } from "./marbleStrip";
+    import MarbleTracks from "./MarbleTracks.svelte";
+    import {
+        buildOperatorStrip,
+        layoutTrackDiagram,
+        trackModeFor,
+    } from "./marbleStrip";
     import {
         Archive,
         CircleDot,
@@ -19,6 +24,7 @@
         graphRunStateClass,
         isProvenancePort,
         BOTH_LABEL,
+        MARBLE_ROW_HEIGHT,
     } from "./streamGraph";
     import type { StreamGraphNodeStatus } from "../StreamViewer/types";
     import type { EditorGraphNode } from "./composites";
@@ -67,6 +73,9 @@
         // across the WHOLE graph by the editor (TEC-NATKIT-106). Per-card axes
         // would right-align every row and make a stalled input look healthy.
         marbleAxisEndUs?: number;
+        // Which marble grammar to draw (TEC-NATKIT-122). A reading preference
+        // held by the editor, not a property of the node.
+        stripStyle?: "rows" | "tracks";
         selected: boolean;
         invalid: boolean;
         pendingConnection: { nodeId: string; portId: string } | null;
@@ -129,6 +138,7 @@
         node,
         runtimeStatus,
         marbleAxisEndUs = 0,
+        stripStyle = "rows",
         selected,
         invalid,
         pendingConnection,
@@ -207,12 +217,33 @@
         node.kind === "threshold" ? "markers" : "data",
     );
 
+    const trackDiagram = $derived(
+        operatorStrip && stripStyle === "tracks"
+            ? layoutTrackDiagram(
+                  operatorStrip,
+                  trackModeFor(node.kind),
+                  operatorOutputLane,
+              )
+            : null,
+    );
+    // How much card height to reserve. The SVG sizes itself from its viewBox
+    // aspect ratio against the card's content width, which is close to the
+    // design width — so the rendered height is about the diagram's own, and
+    // erring slightly large costs padding rather than clipping the last lane.
+    const trackHeightPx = $derived(
+        trackDiagram ? Math.round(trackDiagram.height * 1.15) : 0,
+    );
+
     const marbleRows = $derived(
-        operatorStrip
-            ? // Every row, plus the glyph line between inputs and output.
-              operatorStrip.rows.length + 1
-            : (runtimeStatus?.data_activity ? 1 : 0) +
-              (runtimeStatus?.marker_activity ? 1 : 0),
+        trackDiagram
+            ? // The SVG block, expressed in row-heights so the card grows the
+              // same way it does for the rows grammar.
+              Math.ceil(trackHeightPx / MARBLE_ROW_HEIGHT)
+            : operatorStrip
+              ? // Every row, plus the glyph line between inputs and output.
+                operatorStrip.rows.length + 1
+              : (runtimeStatus?.data_activity ? 1 : 0) +
+                (runtimeStatus?.marker_activity ? 1 : 0),
     );
     const nodeHeight = $derived(node.height ?? getNodeHeight(node, marbleRows));
     const runtimeStreamId = $derived(
@@ -594,7 +625,14 @@
          no such lane", which is a different claim from an empty one, so
          drawing an empty row for it would say the markers had stopped.
          Both rows share one axis, resolved across the whole graph. -->
-    {#if operatorStrip}
+    {#if trackDiagram}
+        <!-- Tracks grammar (TEC-NATKIT-122): the marbles ride rails that
+             converge for a merge and split for a fork, so the card draws the
+             operation rather than implying it. -->
+        <div class="marble-strips marble-strips-tracks">
+            <MarbleTracks diagram={trackDiagram} />
+        </div>
+    {:else if operatorStrip}
         <!-- Operator-shaped strip (TEC-NATKIT-120): the rows ARE the diagram.
              Inputs stack above the output with a glyph naming the operation
              between them, so a zip and a threshold no longer look identical. -->
@@ -892,6 +930,13 @@
     /* The operation, named between the input rows and the output row. This is
        what stops two combines with different join policies — or a combine and a
        threshold — looking identical on the canvas. */
+    /* The tracks block sets its own height from the diagram, so the column
+       gap that separates stacked rows would only add dead space. */
+    .marble-strips-tracks {
+        gap: 0;
+        padding-top: 0.15rem;
+    }
+
     .marble-glyph {
         display: flex;
         align-items: center;
