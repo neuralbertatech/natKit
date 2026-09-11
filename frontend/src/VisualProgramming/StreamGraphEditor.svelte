@@ -13,13 +13,12 @@
         FolderOpen,
         Pencil,
         Network,
-        Waypoints,
         GitBranch,
         Lightbulb,
+        Maximize2,
         Monitor,
         Package,
         PanelLeft,
-        Rows3,
         PanelRight,
         Plus,
         RefreshCw,
@@ -476,6 +475,15 @@
     }
 
     function handleWindowKeydown(event: KeyboardEvent) {
+        // The node detail view (TEC-NATKIT-124) is the topmost layer, so it
+        // takes Escape first. ⚠️ Folded into the EXISTING handler rather than a
+        // second <svelte:window>: Svelte allows only one per component, and
+        // svelte-check does not catch the duplicate — only the vite compile
+        // does, as a blank page at runtime.
+        if (event.key === "Escape" && detailNodeId) {
+            closeNodeDetail();
+            return;
+        }
         if (event.key === "Escape" && openBadgeEdgeId) {
             openBadgeEdgeId = null;
             return;
@@ -999,39 +1007,28 @@
         selectedNode?.kind === "combine" ? selectedNode : null,
     );
 
-    // Which marble grammar the cards draw (TEC-NATKIT-122). The two answer
-    // different questions, which is why this is a switch rather than a choice
-    // made once: ROWS are denser and read like a table, best for comparing
-    // rates across several nodes at once; TRACKS are bigger but draw what the
-    // operator DOES, which is what somebody meeting a board for the first time
-    // needs.
+    // The node detail view (TEC-NATKIT-124): double-click a node to open it
+    // full-screen, n8n style, instead of reading a 1,700-line inspector through
+    // a narrow right-hand rail.
     //
-    // Per browser rather than per board: it is a reading preference, not a
-    // property of the graph, so it must not travel to somebody else when a
-    // board is shared.
-    const STRIP_STYLE_KEY = "natkit.vp.strip-style";
-    type StripStyle = "rows" | "tracks";
+    // It holds no state of its own — it renders the SAME inspector snippet the
+    // sidebar does, against the SAME selectedNodeId. Opening it selects the
+    // node, so the sidebar and the detail view can never disagree about which
+    // node is being edited.
+    let detailNodeId = $state<string | null>(null);
+    const detailNode = $derived(
+        detailNodeId
+            ? (draftGraph.nodes.find((node) => node.id === detailNodeId) ?? null)
+            : null,
+    );
 
-    function readStoredStripStyle(): StripStyle {
-        try {
-            return localStorage.getItem(STRIP_STYLE_KEY) === "tracks"
-                ? "tracks"
-                : "rows";
-        } catch {
-            // Private mode / blocked storage: fall back rather than fail to mount.
-            return "rows";
-        }
+    function openNodeDetail(nodeId: string) {
+        selectNode(nodeId);
+        detailNodeId = nodeId;
     }
 
-    let stripStyle = $state<StripStyle>(readStoredStripStyle());
-
-    function toggleStripStyle() {
-        stripStyle = stripStyle === "rows" ? "tracks" : "rows";
-        try {
-            localStorage.setItem(STRIP_STYLE_KEY, stripStyle);
-        } catch {
-            // Non-fatal: the choice just will not survive a reload.
-        }
+    function closeNodeDetail() {
+        detailNodeId = null;
     }
 
     // The shared right-hand edge for every marble strip on the canvas
@@ -5628,1291 +5625,22 @@
     onkeydown={handleWindowKeydown}
 />
 
-{#snippet streamRenderer(
-    streamId: string | null,
-    compact: boolean,
-    showMarkers: boolean = false,
-)}
-    {@const view = liveStreamView(streamId)}
-    {#if !streamId}
-        <p class="inline-note">Start the graph to see live data.</p>
-    {:else if !view.subscribed}
-        <p class="inline-note">Connecting…</p>
-    {:else if view.renderer === "muse"}
-        {#if view.latestMuse}
-            <MuseViewer sample={view.latestMuse} {formatNumber} />
-        {:else}
-            <p class="inline-note">Waiting for data…</p>
-        {/if}
-    {:else if view.renderer === "marker"}
-        <MarkerViewer markers={view.markers} />
-    {:else if view.renderer === "classification"}
-        <ClassificationViewer samples={view.emgSamples} {formatNumber} />
-    {:else if view.renderer === "feature_vector"}
-        <FeatureVectorViewer samples={view.emgSamples} {formatNumber} />
-    {:else if view.renderer === "channel_frame"}
-        {#if view.emgSamples.length > 0}
-            <ChannelFrameViewer
-                samples={view.emgSamples}
-                markers={showMarkers ? view.markers : []}
-                {formatNumber}
-                {compact}
-            />
-        {:else}
-            <p class="inline-note">Waiting for data…</p>
-        {/if}
-    {:else if view.renderer === "imu"}
-        {#if view.imuSamples.length > 0}
-            <ImuViewer samples={view.imuSamples} {formatNumber} {compact} />
-        {:else}
-            <p class="inline-note">Waiting for data…</p>
-        {/if}
-    {:else if view.descriptor}
-        <SchemaDescriptorInspector
-            descriptor={view.descriptor}
-            recordValue={view.recordValue}
-        />
-    {:else}
-        <p class="inline-note">Waiting for data on this stream…</p>
-    {/if}
-{/snippet}
+<!-- The inspector body, as a SNIPPET so the sidebar and the node detail view
+     (TEC-NATKIT-124) render the SAME markup. It is ~1,700 lines driven
+     entirely by selectedNodeId, so a second copy for the modal would
+     guarantee the two drift apart — it would quietly stop growing the moment
+     anybody edited only the first.
 
-{#snippet inlineViewerChart(node: EditorGraphNode)}
-    {#if (node as { display_mode?: string }).display_mode === "imu_calibration"}
-        {@render calibrationReadout(node)}
-    {:else}
-        {@const streamId = viewableStreamId(node.id)}
-        {@render streamRenderer(
-            streamId,
-            true,
-            viewerShowsMarkers(node),
-        )}
-    {/if}
-{/snippet}
-
-<!-- Calibration quality of the upstream IMU while it is worn: the worst-case
-     status headline, then each sub-sensor. Colour language matches the IMU
-     Experiment tab so the two surfaces cannot disagree. -->
-{#snippet calibrationReadout(node: EditorGraphNode)}
-    {@const view = calibrationViewFor(node)}
-    <div class="calib-panel">
-        {#if !view.streamId}
-            <p class="inline-note">
-                {#if view.unresolvedReason === "unbound_source"}
-                    Pick a stream on the upstream Stream node to read its
-                    calibration.
-                {:else if view.unresolvedReason === "no_source"}
-                    Wire this to a Stream node to read its calibration.
-                {:else if view.unresolvedReason === "needs_worker"}
-                    Start the graph to read calibration — this reads through a
-                    transform, which needs the graph running.
-                {:else}
-                    Start the graph to read calibration.
-                {/if}
-            </p>
-        {:else if view.selectionMissing}
-            <p class="inline-note">
-                No IMU streams selected. Pick them under IMU Experiment → Stream
-                Selection (the choice lives in backend memory, so redo it after a
-                backend restart).
-            </p>
-        {:else if view.streamNotSelected}
-            <p class="inline-note">
-                This stream is not in the IMU selection — add it under IMU
-                Experiment → Stream Selection.
-            </p>
-        {:else}
-            <div class="calib-headline">
-                <span class={`calib-dot ${view.overallColor}`}></span>
-                <strong>{view.overallLabel}</strong>
-                {#if view.position !== "N/A"}
-                    <span class="calib-position">{view.position}</span>
-                {/if}
-            </div>
-            {#if view.parts.length > 0}
-                <div class="calib-parts">
-                    {#each view.parts as part}
-                        <div class="calib-part">
-                            <span class={`calib-dot ${part.color}`}></span>
-                            <span class="calib-part-label">{part.label}</span>
-                            <span class="calib-part-value">{part.text}</span>
-                        </div>
-                    {/each}
-                </div>
-            {:else}
-                <p class="inline-note">
-                    No accuracy reported for this stream yet.
-                </p>
-            {/if}
-        {/if}
-
-        <!-- Deliberately OUTSIDE the branches above: these talk to the sensor and
-             need nothing but its stream id. Nesting them under the "accuracy is
-             readable" branch made them vanish whenever the IMU selection was
-             missing -- which is exactly when you want to ask the device what it
-             thinks its calibration is. -->
-        {#if view.streamId}
-            <!-- Commands to the sensor itself, over the EXECUTION_COMMAND
-                 channel. "Save to device" matters because the hub only writes
-                 dynamic calibration to flash on a non-power-up reset, so a board
-                 that is simply switched off forgets what it learned. -->
-            {@const savePending =
-                deviceCommandPending[
-                    `${view.streamId}:calibrate.save_dcd`
-                ] === true}
-            {@const statusPending =
-                deviceCommandPending[`${view.streamId}:calibrate.status`] ===
-                true}
-            {@const result = deviceCommandResults[view.streamId]}
-            <div
-                class="calib-commands"
-                onmousedown={(e) => e.stopPropagation()}
-                role="presentation"
-            >
-                <button
-                    type="button"
-                    class="calib-command-btn"
-                    disabled={savePending}
-                    title="Persist the sensor's current calibration to its flash, so it survives a power cycle"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        sendDeviceCommand(
-                            view.streamId!,
-                            "calibrate.save_dcd",
-                        );
-                    }}
-                >
-                    {savePending ? "Saving…" : "Save to device"}
-                </button>
-                <button
-                    type="button"
-                    class="calib-command-btn"
-                    disabled={statusPending}
-                    title="Ask the sensor what calibration it has enabled and what accuracy it reports"
-                    onclick={(e) => {
-                        e.stopPropagation();
-                        sendDeviceCommand(view.streamId!, "calibrate.status");
-                    }}
-                >
-                    {statusPending ? "Reading…" : "Read config"}
-                </button>
-            </div>
-            {#if result}
-                <p
-                    class="calib-command-result"
-                    class:failed={!result.ok}
-                    title={result.command}
-                >
-                    {result.records.at(-1)?.message ??
-                        result.error ??
-                        (result.ok ? "Done." : "No answer.")}
-                </p>
-            {/if}
-        {/if}
-    </div>
-{/snippet}
-
-{#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
-    <!-- `data-graph-id` is an explicit, stable handle. The `title` below is the
-         run's MESSAGE when it has one, so keying on the title identifies a row
-         only for runs that finished cleanly — which is how a test looking for a
-         FAILED run concluded it was missing from the tree entirely
-         (TEC-NATKIT-80). -->
-    {@const status = entry.graph.recording?.status ?? "unknown"}
-    {@const rows = entry.graph.recording?.artifacts?.total_rows}
-    <button
-        type="button"
-        class="tree-instance"
-        class:selected={entry.graph.graph_id === selectedGraphId}
-        style={`padding-left: ${0.5 + depth * 0.7}rem`}
-        data-graph-id={entry.graph.graph_id}
-        title={entry.graph.recording?.message ?? entry.graph.graph_id}
-        onclick={() => selectGraph(entry.graph.graph_id)}
-    >
-        <span class="tree-instance-id">
-            {entry.graph.origin === "fork" ? "↳ " : ""}{entry.graph.instance_id}
-        </span>
-        <span class={`tree-instance-status ${status}`}>
-            {status === "complete"
-                ? `${rows ?? 0} rows`
-                : status === "failed"
-                  ? "failed"
-                  : status}
-        </span>
-    </button>
-    {#each entry.children as child}
-        {@render instanceBranch(child, depth + 1)}
-    {/each}
-{/snippet}
-
-{#snippet inlineExperiment(node: EditorGraphNode)}
-    {#if node.kind === "markers" || node.kind === "experiment"}
-        {@const view = experimentRunView()}
-        {#if view && boundExperimentView}
-            <ExperimentRunner
-                protocolLabel={view.protocolLabel}
-                protocol={view.protocol}
-                classes={view.classes}
-                recording={view.recording}
-                recordingElsewhere={view.recordingElsewhere}
-                elapsedMs={view.elapsedMs}
-                durationMs={view.durationMs}
-                activeCue={view.activeCue}
-                nextCue={view.nextCue}
-                totalReps={view.totalReps}
-                currentRep={view.currentRep}
-                holdsRemaining={view.holdsRemaining}
-                holdsTotal={view.holdsTotal}
-                summary={view.summary}
-                onRecord={() => startSessionRecording(boundExperimentView)}
-                onStop={() => finishSessionRecording(false)}
-                onContinue={continueSessionWait}
-            />
-        {:else}
-            <p class="inline-note">
-                No experiment bound to this board — bind one from the Experiment
-                panel to run a protocol.
-            </p>
-        {/if}
-    {/if}
-{/snippet}
-
-<div
-    class="graph-editor"
-    style={`--panel-top: ${toolbarHeight + 28}px`}
->
-    <div class="graph-sidebar" class:panel-hidden={!showSidebar}>
-        <div class="sidebar-header">
-            <div>
-                <p class="eyebrow">Stream Graphs</p>
-                <h3>Boards</h3>
-            </div>
-            <div class="sidebar-actions">
-                <button type="button" class="icon-btn" onclick={createGraph}>
-                    <Plus size={16} />
-                </button>
-                <button
-                    type="button"
-                    class="icon-btn"
-                    onclick={listStreamGraphs}
-                    title="Refresh saved graphs"
-                >
-                    <RefreshCw size={16} />
-                </button>
-            </div>
-        </div>
-
-        <div class="graph-list">
-            {#if boardDefinitions.length === 0}
-                <div class="empty-state">
-                    <Workflow size={18} />
-                    <p>No saved graphs yet.</p>
-                </div>
-            {:else}
-                {#each boardDefinitions as graph}
-                    <button
-                        type="button"
-                        class:selected={graph.graph_id === selectedGraphId}
-                        class="graph-list-item"
-                        onclick={() => selectGraph(graph.graph_id)}
-                    >
-                        <span class="graph-list-row">
-                            <span class="graph-list-title">{graph.label}</span>
-                            <span
-                                class={`run-pill ${graphRunStateClass(
-                                    graphStatuses[graph.graph_id]?.run_state,
-                                )}`}
-                            >
-                                {graphStatuses[graph.graph_id]?.run_state ??
-                                    "draft"}
-                            </span>
-                        </span>
-                        <span class="graph-list-meta">{graph.graph_id}</span>
-                    </button>
-                {/each}
-            {/if}
-        </div>
-
-        <div class="library-group">
-            <div class="library-header-row">
-                <span class="library-title">Experiments &amp; history</span>
-            </div>
-            <div class="library-actions">
-                {#if experimentTree.length === 0}
-                    <div class="empty-state">
-                        <p>
-                            No experiments yet. Bind one to a board from the header
-                            to start recording.
-                        </p>
-                    </div>
-                {:else}
-                    {#each experimentTree as branch}
-                        <div class="tree-experiment">
-                            <button
-                                type="button"
-                                class="tree-experiment-row"
-                                class:bound={branch.experiment.experiment_id ===
-                                    boundExperimentId}
-                                title={`Open this experiment's board (${branch.experiment.live_graph_id || "no board bound"})`}
-                                onclick={() =>
-                                    branch.experiment.live_graph_id &&
-                                    selectGraph(branch.experiment.live_graph_id)}
-                            >
-                                <FlaskConical size={13} />
-                                <span class="tree-experiment-label">
-                                    {branch.experiment.label ||
-                                        branch.experiment.experiment_id}
-                                </span>
-                                <span class="tree-count">
-                                    {branch.instances.length}
-                                </span>
-                            </button>
-                            {#each branch.instances as instance}
-                                {@render instanceBranch(instance, 1)}
-                            {/each}
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        </div>
-
-        <div class="library-group">
-            <span class="library-title">Starter templates</span>
-            <div class="library-actions">
-                {#each STARTER_TEMPLATES as template}
-                    <button
-                        type="button"
-                        class="graph-list-item"
-                        title={template.description}
-                        onclick={() => loadStarterTemplate(template)}
-                    >
-                        <span class="graph-list-title">{template.label}</span>
-                        <span class="graph-list-meta">{template.description}</span>
-                    </button>
-                {/each}
-            </div>
-        </div>
-
-        <div class="library-group">
-            <div class="library-header-row">
-                <span class="library-title">Profiles</span>
-                <button
-                    type="button"
-                    class="icon-btn"
-                    onclick={saveCurrentAsProfile}
-                    title="Save the current saved graph as a profile"
-                >
-                    <UserPlus size={16} />
-                </button>
-            </div>
-            <div class="library-actions">
-                {#if profiles.length === 0}
-                    <div class="empty-state">
-                        <p>
-                            No profiles yet. Train a person's classifier, save the
-                            graph, then save it as a profile to resume later.
-                        </p>
-                    </div>
-                {:else}
-                    {#each profiles as profile}
-                        <div class="profile-row">
-                            <button
-                                type="button"
-                                class="graph-list-item profile-load"
-                                title={`Resume ${profile.display_name}'s classifier`}
-                                onclick={() => loadProfile(profile)}
-                            >
-                                <span class="graph-list-title"
-                                    >{profile.display_name}</span
-                                >
-                                <span class="graph-list-meta">
-                                    {profile.best_accuracy > 0
-                                        ? `${(profile.best_accuracy * 100).toFixed(0)}% · `
-                                        : ""}{profile.graph_id}
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                class="icon-btn"
-                                title={`Delete ${profile.display_name}`}
-                                onclick={() => removeProfile(profile)}
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        </div>
-
-        <div class="summary-card">
-            <div class="summary-row">
-                <span>Connection</span>
-                <strong>{connectionState}</strong>
-            </div>
-            <div class="summary-row">
-                <span>Run state</span>
-                <strong class={graphRunStateClass(selectedGraphStatus?.run_state)}>
-                    {selectedGraphStatus?.run_state ?? "stopped"}
-                </strong>
-            </div>
-            <div class="summary-row">
-                <span>Nodes</span>
-                <strong>{draftGraph.nodes.length}</strong>
-            </div>
-            <div class="summary-row">
-                <span>Edges</span>
-                <strong>{draftGraph.edges.length}</strong>
-            </div>
-        </div>
-
-        <div class="summary-card">
-            <p class="eyebrow">Node Library</p>
-            <div class="library-group">
-                <span class="library-title">Utility</span>
-                <div class="library-actions">
-                    {#each utilityCatalog as entry}
-                        <button
-                            type="button"
-                            class="graph-list-item"
-                            title={entry.description}
-                            onclick={() => addCatalogNode(entry)}
-                        >
-                            <span class="graph-list-title">{entry.label}</span>
-                            <span class="graph-list-meta">{entry.description}</span>
-                        </button>
-                    {/each}
-                    <button
-                        type="button"
-                        class="graph-list-item"
-                        title="A slider whose value drives a downstream transform's config field, live."
-                        onclick={() => addParamNode()}
-                    >
-                        <span class="graph-list-title">Param</span>
-                        <span class="graph-list-meta"
-                            >Slider bound to a transform config field</span
-                        >
-                    </button>
-                </div>
-            </div>
-
-            <div class="library-group">
-                <span class="library-title">Transforms</span>
-                <div class="library-actions">
-                    {#each transformCapabilities as capability}
-                        <button
-                            type="button"
-                            class="graph-list-item"
-                            onclick={() => addTransformNode(capability.kind)}
-                        >
-                            <span class="graph-list-title">{capability.label}</span>
-                            <span class="graph-list-meta">{capability.kind}</span>
-                        </button>
-                    {/each}
-                </div>
-            </div>
-
-            <div class="library-group">
-                <span class="library-title">Streams</span>
-                <div class="library-actions">
-                    <!-- ⚠️ ONE ENTRY, not one per live stream. The old palette
-                         changed shape with the rig, so a board could not be laid
-                         out before the hardware was on and the same board offered
-                         different nodes on different days. Which stream this
-                         carries is chosen in the inspector. -->
-                    <button
-                        type="button"
-                        class="graph-list-item"
-                        onclick={() => addSourceNode()}
-                    >
-                        <span class="graph-list-title">Stream</span>
-                        <span class="graph-list-meta">
-                            {availableStreams.length} available — pick one after
-                            adding
-                        </span>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <div class="summary-card">
-            <div class="library-header">
-                <p class="eyebrow">Composites</p>
-                <div class="sidebar-actions">
-                    <button
-                        type="button"
-                        class="icon-btn"
-                        title="Import composites"
-                        onclick={() => compositeFileInput?.click()}
-                    >
-                        <Upload size={15} />
-                    </button>
-                </div>
-            </div>
-            <div class="library-actions">
-                {#if compositeTemplates.length === 0}
-                    <div class="empty-state">
-                        <Package size={16} />
-                        <p>No saved composites yet.</p>
-                    </div>
-                {:else}
-                    {#each compositeTemplates as template}
-                        <div class="composite-row">
-                            <button
-                                type="button"
-                                class="graph-list-item composite-add"
-                                onclick={() => addCompositeInstance(template)}
-                            >
-                                <span class="graph-list-title">{template.label}</span>
-                                <span class="graph-list-meta">
-                                    {template.nodes.length} nodes ·
-                                    {template.inputs.length} in /
-                                    {template.outputs.length} out
-                                </span>
-                            </button>
-                            <div class="composite-row-actions">
-                                <button
-                                    type="button"
-                                    class="icon-btn"
-                                    title="Export composite"
-                                    onclick={() => exportComposite(template)}
-                                >
-                                    <Download size={14} />
-                                </button>
-                                <button
-                                    type="button"
-                                    class="icon-btn danger"
-                                    title="Delete composite"
-                                    onclick={() =>
-                                        removeCompositeTemplate(
-                                            template.composite_id,
-                                        )}
-                                >
-                                    <Trash2 size={14} />
-                                </button>
-                            </div>
-                        </div>
-                    {/each}
-                {/if}
-            </div>
-        </div>
-    </div>
-
-    <div class="graph-main">
-        <div class="graph-toolbar" bind:clientHeight={toolbarHeight}>
-            <div class="toolbar-group">
-                <button
-                    type="button"
-                    class="icon-btn"
-                    class:active={showSidebar}
-                    onclick={() => (showSidebar = !showSidebar)}
-                    title={showSidebar ? "Hide boards & palette" : "Show boards & palette"}
-                    aria-pressed={showSidebar}
-                >
-                    <PanelLeft size={16} />
-                </button>
-                <!-- Workspace picker (TEC-NATKIT-56). First in the toolbar
-                     because it scopes everything to its right: which boards are
-                     listed, which experiments can be bound, whose names the
-                     participant roster offers. -->
-                <div class="workspace-picker">
-                    <FolderOpen size={14} />
-                    <select
-                        class="workspace-select"
-                        bind:value={workspaceSelectValue}
-                        onchange={(event) => {
-                            const picked = (
-                                event.currentTarget as HTMLSelectElement
-                            ).value;
-                            selectWorkspace(picked === "" ? null : picked);
-                        }}
-                        title="Workspace — scopes the boards, experiments and participant roster"
-                    >
-                        <!-- Unfiled is a real view, not a migration artifact:
-                             everything that predates workspaces lives here. -->
-                        <option value="">Unfiled</option>
-                        {#each workspaces as workspace}
-                            <option value={workspace.workspace_id}>
-                                {workspace.label || workspace.workspace_id}
-                            </option>
-                        {/each}
-                    </select>
-                    <button
-                        type="button"
-                        class="icon-btn"
-                        onclick={createWorkspace}
-                        title="New workspace"
-                    >
-                        <Plus size={14} />
-                    </button>
-                    {#if selectedWorkspace}
-                        <button
-                            type="button"
-                            class="icon-btn"
-                            onclick={renameWorkspace}
-                            title="Rename this workspace"
-                        >
-                            <Pencil size={13} />
-                        </button>
-                        <button
-                            type="button"
-                            class="icon-btn"
-                            onclick={removeWorkspace}
-                            title="Delete this workspace — its contents move to Unfiled"
-                        >
-                            <Trash2 size={13} />
-                        </button>
-                    {/if}
-                    <button
-                        type="button"
-                        class="icon-btn"
-                        onclick={downloadCohort}
-                        disabled={cohortDownload.status === "downloading"}
-                        title="Download every completed run in this workspace as one archive"
-                    >
-                        <Download size={13} />
-                    </button>
-                    {#if cohortDownload.status !== "idle"}
-                        <span
-                            class="cohort-status"
-                            class:failed={cohortDownload.status === "failed"}
-                            title={cohortDownload.message}
-                        >
-                            {cohortDownload.status === "downloading"
-                                ? "Collecting…"
-                                : cohortDownload.message}
-                        </span>
-                    {/if}
-                    {#if hiddenTotal > 0}
-                        <span
-                            class="workspace-hidden"
-                            title={`Filed in other workspaces: ${hiddenCounts.graphs} board(s), ${hiddenCounts.experiments} experiment(s), ${hiddenCounts.profiles} participant(s). Switch workspace to see them.`}
-                        >
-                            {hiddenTotal} elsewhere
-                        </span>
-                    {/if}
-                </div>
-                <SquareDashedMousePointer size={16} />
-                <input
-                    class="graph-title-input"
-                    value={draftGraph.label}
-                    oninput={(event) =>
-                        updateGraphMetadata(
-                            "label",
-                            (event.currentTarget as HTMLInputElement).value,
-                        )}
-                />
-                <span class="graph-id">{draftGraph.graph_id}</span>
-                {#if graphDirty}
-                    <span class="dirty-pill">Unsaved</span>
-                {/if}
-                {#if boardIsImmutable}
-                    <span class="immutable-pill" title="Recorded snapshot — read-only">
-                        Immutable
-                    </span>
-                {/if}
-                <button
-                    type="button"
-                    class="experiment-pill"
-                    class:bound={boundExperimentView !== null}
-                    onclick={() => (showExperimentPanel = !showExperimentPanel)}
-                    title="Bind an experiment, author its protocol, and record"
-                >
-                    <FlaskConical size={13} />
-                    {boundExperimentView
-                        ? boundExperimentView.label ||
-                          boundExperimentView.experiment_id
-                        : "No experiment"}
-                </button>
-                {#if sessionRecording}
-                    <span class="recording-pill">
-                        ● REC {(sessionRecording.elapsedMs / 1000).toFixed(0)}s
-                    </span>
-                {/if}
-                <span
-                    class="conn-pill {connectionState}"
-                    title={`Backend: ${connectionState}`}
-                >
-                    <span class="conn-dot"></span>
-                    {connectionState === "connected"
-                        ? "Connected"
-                        : connectionState === "connecting"
-                          ? "Connecting…"
-                          : "Disconnected"}
-                </span>
-                <!-- Next to the connection pill on purpose: "is the backend
-                     there?" and "is the rig there?" are the same question asked
-                     of two different things, and they are asked together. -->
-                <DeviceHealthPanel
-                    health={deviceHealth}
-                    {connectionState}
-                    {sendDeviceCommand}
-                    {deviceCommandPending}
-                    {deviceCommandResults}
-                />
-            </div>
-            <div class="toolbar-actions">
-                {#if boardIsImmutable}
-                    <!-- A sealed recording has no live input, so "Start" is
-                         meaningless here — but replaying it is exactly the
-                         equivalent action, so the primary button becomes that
-                         rather than a greyed-out control that does nothing. Mode
-                         and speed stay in the Instance panel. -->
-                    {#if replayForSelectedInstance}
-                        <button
-                            type="button"
-                            class="action-btn secondary"
-                            onclick={stopSelectedReplay}
-                            title="Stop replaying this recording"
-                        >
-                            <Square size={16} />
-                            Stop replay
-                        </button>
-                    {:else}
-                        <button
-                            type="button"
-                            class="action-btn secondary"
-                            onclick={replaySelectedInstance}
-                            disabled={!canReplaySelectedInstance}
-                            title={canReplaySelectedInstance
-                                ? "Replay this recording through the board's pipeline (mode and speed in the Instance panel)"
-                                : "This recording has no materialised data to replay"}
-                        >
-                            <Play size={16} />
-                            Replay
-                        </button>
-                    {/if}
-                {:else}
-                    <button
-                        type="button"
-                        class="action-btn secondary"
-                        onclick={startSelectedGraph}
-                        disabled={selectedGraphStatus?.run_state === "starting"}
-                        title="Start this graph"
-                    >
-                        {#if selectedGraphStatus?.run_state === "starting"}
-                            <RefreshCw size={16} class="spin" />
-                            Starting…
-                        {:else}
-                            <Play size={16} />
-                            Start
-                        {/if}
-                    </button>
-                {/if}
-                <button
-                    type="button"
-                    class="action-btn secondary"
-                    onclick={stopSelectedGraph}
-                >
-                    <Square size={16} />
-                    Stop
-                </button>
-                <button type="button" class="action-btn secondary" onclick={runValidation}>
-                    <ScanSearch size={16} />
-                    Validate
-                </button>
-                <button
-                    type="button"
-                    class="action-btn secondary"
-                    onclick={() => (paletteOpen = true)}
-                    title="Add a node (⌘K / Ctrl+K)"
-                >
-                    <Plus size={16} />
-                    Add Node
-                </button>
-                <button
-                    type="button"
-                    class="action-btn secondary"
-                    onclick={createCompositeFromSelection}
-                    disabled={selectedNodeIds.size === 0}
-                    title="Group the selected nodes into a reusable composite"
-                >
-                    <Package size={16} />
-                    Group
-                </button>
-                {#if selectedIsComposite}
-                    <button
-                        type="button"
-                        class="action-btn secondary"
-                        onclick={() => openCompositeInternals(selectedIsComposite)}
-                        title="View the nodes inside this composite"
-                    >
-                        <Eye size={16} />
-                        View internals
-                    </button>
-                    <button
-                        type="button"
-                        class="action-btn secondary"
-                        onclick={ungroupSelectedComposite}
-                        title="Expand this composite back into its nodes"
-                    >
-                        <Ungroup size={16} />
-                        Ungroup
-                    </button>
-                {/if}
-                <button type="button" class="action-btn" onclick={saveDraftGraph}>
-                    <Save size={16} />
-                    Save
-                </button>
-                <button
-                    type="button"
-                    class="icon-btn"
-                    class:active={showTimeline}
-                    onclick={() => (showTimeline = !showTimeline)}
-                    title={showTimeline ? "Hide timeline" : "Show timeline"}
-                    aria-pressed={showTimeline}
-                >
-                    <Clock size={16} />
-                </button>
-                <!-- Marble grammar (TEC-NATKIT-122). Rows read like a table
-                     and compare rates across nodes; tracks draw what each
-                     operator does. A switch rather than one choice, because the
-                     two answer different questions.
-                     ⚠️ LABELLED, not an icon. As a bare icon next to the two
-                     panel toggles it read as a third panel button and Zach could
-                     not find it at all — "I am not seeing the toggle". The label
-                     also says which grammar is CURRENT, which an icon cannot. -->
-                <button
-                    type="button"
-                    class="strip-style-btn"
-                    onclick={toggleStripStyle}
-                    title={stripStyle === "tracks"
-                        ? "Marble strips: operator tracks — click for compact rows"
-                        : "Marble strips: compact rows — click for operator tracks"}
-                    aria-label={`Marble strips: ${stripStyle}. Click to switch.`}
-                >
-                    {#if stripStyle === "tracks"}
-                        <Waypoints size={14} />
-                        <span>Tracks</span>
-                    {:else}
-                        <Rows3 size={14} />
-                        <span>Rows</span>
-                    {/if}
-                </button>
-                <button
-                    type="button"
-                    class="icon-btn"
-                    class:active={showInspector}
-                    onclick={() => (showInspector = !showInspector)}
-                    title={showInspector ? "Hide inspector" : "Show inspector"}
-                    aria-pressed={showInspector}
-                >
-                    <PanelRight size={16} />
-                </button>
-            </div>
-        </div>
-
-        <div class="graph-workspace">
-            {#if connectionMessage}
-                <div class="connection-note">
-                    <span>{connectionMessage}</span>
-                    <button
-                        type="button"
-                        class="connection-note-dismiss"
-                        onclick={() => (connectionMessage = null)}
-                        aria-label="Dismiss">×</button
-                    >
-                </div>
-            {/if}
-            <!-- The board is a pan/zoom drawing surface: role="application" is the
-                 honest role and it needs focus for keyboard panning, but Svelte's
-                 checker only accepts tabindex/mouse handlers on widget roles. -->
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <div
-                bind:this={canvasElement}
-                class="graph-canvas"
-                role="application"
-                tabindex="0"
-                aria-label="Stream graph canvas"
-                oncontextmenu={openContextMenu}
-                onmousedown={startPan}
-                onwheel={handleCanvasWheel}
-            >
-                <!-- contextmenu bubbles to .graph-canvas above, and openContextMenu
-                     reads only clientX/clientY — inner handlers would be redundant. -->
-                <div class="canvas-grid"></div>
-                <svg class="graph-edges">
-                    <g
-                        transform={`translate(${draftGraph.ui?.viewport?.x ?? 0}, ${
-                            draftGraph.ui?.viewport?.y ?? 0
-                        }) scale(${draftGraph.ui?.viewport?.zoom ?? 1})`}
-                    >
-                    {#each draftGraph.edges as edge}
-                        {@const sourceNode =
-                            draftGraph.nodes.find(
-                                (node) => node.id === edge.source_node_id,
-                            )}
-                        {@const targetNode =
-                            draftGraph.nodes.find(
-                                (node) => node.id === edge.target_node_id,
-                            )}
-                        {#if sourceNode && targetNode}
-                            {@const sourcePoint = getPortPoint(
-                                sourceNode,
-                                edge.source_port,
-                                "output",
-                            )}
-                            {@const targetPoint = getPortPoint(
-                                targetNode,
-                                edge.target_port,
-                                "input",
-                            )}
-                            {@const lines = edgeLines(edge, sourcePoint, targetPoint)}
-                            {#each lines as line, lineIndex}
-                                <path
-                                    class:selected={edge.id === selectedEdgeId}
-                                    class:edge-invalid={edgeDiagnostics(edge.id)
-                                        .length > 0}
-                                    class:edge-provenance={edge.edge_kind ===
-                                        "provenance"}
-                                    class:edge-running={selectedGraphStatus?.run_state ===
-                                        "running" && edge.edge_kind !== "provenance"}
-                                    class:edge-markers={line.type === "Marker"}
-                                    class="graph-edge"
-                                    d={line.d}
-                                />
-                            {/each}
-                            <!-- ⚠️ The CLICK TARGET is this invisible 18px-wide
-                                 path, not the 3px line above. Selecting an edge
-                                 was the only way to delete one and it needed a
-                                 pixel-perfect hit; edges were effectively
-                                 undeletable. Drawn after the visible lines so it
-                                 sits on top, and with no stroke of its own so it
-                                 never changes what is seen. -->
-                            <path
-                                class="graph-edge-hit"
-                                role="button"
-                                tabindex="0"
-                                aria-label={`Link ${edge.source_node_id} to ${edge.target_node_id}`}
-                                d={lines[0].d}
-                                onmousedown={(event) => event.stopPropagation()}
-                                onclick={(event) => {
-                                    event.stopPropagation();
-                                    selectEdge(edge.id);
-                                }}
-                                onkeydown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        selectEdge(edge.id);
-                                    }
-                                }}
-                            />
-                            {#if edge.id === selectedEdgeId && !boardIsImmutable}
-                                {@const midX = (sourcePoint.x + targetPoint.x) / 2}
-                                {@const midY = (sourcePoint.y + targetPoint.y) / 2}
-                                <g
-                                    class="edge-delete"
-                                    role="button"
-                                    tabindex="0"
-                                    aria-label="Delete this link"
-                                    onmousedown={(event) => {
-                                        // ⚠️ Without this the canvas's mousedown
-                                        // runs FIRST and clears the selection, so
-                                        // the click that follows asks to remove
-                                        // the selected item and finds none — the
-                                        // button appeared to do nothing at all.
-                                        event.stopPropagation();
-                                    }}
-                                    onclick={(event) => {
-                                        event.stopPropagation();
-                                        removeSelectedItem();
-                                    }}
-                                    onkeydown={(event) => {
-                                        if (
-                                            event.key === "Enter" ||
-                                            event.key === " "
-                                        ) {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            removeSelectedItem();
-                                        }
-                                    }}
-                                >
-                                    <circle cx={midX} cy={midY} r="10" />
-                                    <path
-                                        d={`M ${midX - 3.5} ${midY - 3.5} L ${
-                                            midX + 3.5
-                                        } ${midY + 3.5} M ${midX + 3.5} ${
-                                            midY - 3.5
-                                        } L ${midX - 3.5} ${midY + 3.5}`}
-                                    />
-                                </g>
-                            {/if}
-                        {/if}
-                    {/each}
-                    {#if connectionDrag}
-                        {@const dragSourceNode = draftGraph.nodes.find(
-                            (node) => node.id === connectionDrag?.nodeId,
-                        )}
-                        {#if dragSourceNode}
-                            {@const dragSourcePoint = getPortPoint(
-                                dragSourceNode,
-                                connectionDrag.portId,
-                                "output",
-                            )}
-                            <path
-                                class="graph-edge graph-edge-drag"
-                                d={`M ${dragSourcePoint.x} ${dragSourcePoint.y} C ${
-                                    dragSourcePoint.x + 90
-                                } ${dragSourcePoint.y}, ${
-                                    connectionDrag.pointerGraphX - 90
-                                } ${connectionDrag.pointerGraphY}, ${
-                                    connectionDrag.pointerGraphX
-                                } ${connectionDrag.pointerGraphY}`}
-                            />
-                        {/if}
-                    {/if}
-                    </g>
-                </svg>
-
-                <div
-                    class="graph-stage"
-                    style={`transform: translate(${draftGraph.ui?.viewport?.x ?? 0}px, ${
-                        draftGraph.ui?.viewport?.y ?? 0
-                    }px) scale(${draftGraph.ui?.viewport?.zoom ?? 1});`}
-                >
-                    {#each draftGraph.nodes as node}
-                        <StreamGraphNodeCard
-                            {node}
-                            runtimeStatus={nodeRuntimeStatus(node.id)}
-                            {marbleAxisEndUs}
-                            {stripStyle}
-                            {backendNowUs}
-                            selected={selectedNodeIds.has(node.id)}
-                            invalid={nodeDiagnostics(node.id).length > 0}
-                            {pendingConnection}
-                            {inlineViewerChart}
-                            {inlineExperiment}
-                            boundExperimentLabel={boundExperimentView
-                                ? boundExperimentView.label ||
-                                  boundExperimentView.experiment_id
-                                : null}
-                            {streamDeviceNames}
-                            inputPortLabels={inputPortLabelsFor(node)}
-                            outputPortLabels={outputPortLabelsFor(node)}
-                            sourceLabel={node.kind === "viewer" ||
-                            node.kind === "sink"
-                                ? viewerSourceLabel(node)
-                                : undefined}
-                            markersPhantom={viewerMarkersPhantom(node)}
-                            onToggleMarkers={toggleViewerMarkers}
-                            onPortLayout={handlePortLayout}
-                            onResize={handleNodeResize}
-                            onToggleInlineGraph={setInlineViewerGraph}
-                            onToggleInlineExperiment={setInlineExperiment}
-                            onSelect={selectNode}
-                            onStartDrag={startNodeDrag}
-                            onPortClick={handlePortClick}
-                            onPortMouseDown={handlePortMouseDown}
-                            onExpand={handleNodeExpand}
-                            onParamValueChange={(nodeId, value) => {
-                                const paramNode = draftGraph.nodes.find(
-                                    (candidate) =>
-                                        candidate.id === nodeId &&
-                                        candidate.kind === "param",
-                                );
-                                if (paramNode && paramNode.kind === "param") {
-                                    applyParamValue(paramNode, value);
-                                }
-                            }}
-                        />
-                    {/each}
-
-                    <!-- Part C: per-edge topic badge at the link midpoint. -->
-                    {#each draftGraph.edges as edge (edge.id)}
-                        {@const sourceNode = draftGraph.nodes.find(
-                            (n) => n.id === edge.source_node_id,
-                        )}
-                        {@const targetNode = draftGraph.nodes.find(
-                            (n) => n.id === edge.target_node_id,
-                        )}
-                        {#if sourceNode && targetNode && edge.edge_kind !== "provenance"}
-                            {@const sp = getPortPoint(
-                                sourceNode,
-                                edge.source_port,
-                                "output",
-                            )}
-                            {@const tp = getPortPoint(
-                                targetNode,
-                                edge.target_port,
-                                "input",
-                            )}
-                            {@const topics = edgeChannelTopics(edge)}
-                            {#if topics.length > 0}
-                                {@const enabledCount = topics.filter(
-                                    (t) => !isEdgeTopicHidden(edge, t.type),
-                                ).length}
-                                <div
-                                    class="edge-badge-wrap"
-                                    style={`left:${(sp.x + tp.x) / 2}px; top:${
-                                        (sp.y + tp.y) / 2
-                                    }px;`}
-                                >
-                                    <button
-                                        type="button"
-                                        class="edge-badge"
-                                        class:multi={topics.length > 1}
-                                        class:filtered={enabledCount <
-                                            topics.length}
-                                        title={`${enabledCount} of ${
-                                            topics.length
-                                        } topic${
-                                            topics.length > 1 ? "s" : ""
-                                        } active on this link`}
-                                        onmousedown={(e) => e.stopPropagation()}
-                                        onclick={(e) => {
-                                            e.stopPropagation();
-                                            openBadgeEdgeId =
-                                                openBadgeEdgeId === edge.id
-                                                    ? null
-                                                    : edge.id;
-                                        }}
-                                    >
-                                        {enabledCount < topics.length
-                                            ? `${enabledCount}/${topics.length}`
-                                            : topics.length}
-                                    </button>
-                                    {#if openBadgeEdgeId === edge.id}
-                                        <div
-                                            class="edge-badge-menu"
-                                            onmousedown={(e) =>
-                                                e.stopPropagation()}
-                                            role="presentation"
-                                        >
-                                            <div class="edge-badge-hint">
-                                                Toggle which topics reach {targetNode.label ??
-                                                    targetNode.kind}
-                                            </div>
-                                            {#each topics as t}
-                                                {@const hidden = isEdgeTopicHidden(
-                                                    edge,
-                                                    t.type,
-                                                )}
-                                                <label
-                                                    class="edge-badge-row"
-                                                    class:row-hidden={hidden}
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={!hidden}
-                                                        onchange={() =>
-                                                            toggleEdgeTopic(
-                                                                edge.id,
-                                                                t.type,
-                                                            )}
-                                                    />
-                                                    <span
-                                                        class="badge-type badge-type-{t.type.toLowerCase()}"
-                                                    >
-                                                        {t.type}
-                                                    </span>
-                                                    <span class="badge-schema"
-                                                        >{t.schema || "—"}</span
-                                                    >
-                                                    {#if t.id}
-                                                        <span class="badge-id"
-                                                            >#{t.id}</span
-                                                        >
-                                                    {/if}
-                                                </label>
-                                            {/each}
-                                        </div>
-                                    {/if}
-                                </div>
-                            {/if}
-                        {/if}
-                    {/each}
-                </div>
-
-                {#if draftGraph.nodes.length === 0}
-                    <div class="canvas-empty">
-                        <Activity size={18} />
-                        <p>Right-click the board to add a source, transform, viewer, or sink.</p>
-                    </div>
-                {/if}
-
-                <!-- Compact time readout. pointer-events: none is deliberate —
-                     it floats over the canvas and must never swallow a drag,
-                     a right-click, or a node click. -->
-                <div class={`time-readout ${timeReadout.kind}`}>
-                    <span class="time-readout-badge">{timeReadout.label}</span>
-                    <span class="time-readout-clock" title="Wall-clock time">
-                        <Clock size={12} />
-                        {timeReadout.clock}
-                    </span>
-                    <span
-                        class="time-readout-elapsed"
-                        title="Time since this run started"
-                    >
-                        {timeReadout.elapsed}{#if timeReadout.total}<span
-                                class="time-readout-total"
-                                >/ {timeReadout.total}</span
-                            >{/if}
-                    </span>
-                    {#if timeReadout.detail}
-                        <span class="time-readout-detail">{timeReadout.detail}</span>
-                    {/if}
-                    {#if timeReadout.kind === "replay" && timeReadout.total}
-                        <span class="time-readout-track">
-                            <span
-                                class="time-readout-fill"
-                                style={`width:${(timeReadout.fraction * 100).toFixed(1)}%`}
-                            ></span>
-                        </span>
-                    {/if}
-                </div>
-            </div>
-
-            {#if showExperimentPanel}
-                <div class="graph-experiment-panel">
-                    <ExperimentPanel
-                        {experiments}
-                        {workspaces}
-                        {selectedWorkspaceId}
-                        {hardBlockReason}
-                        {calibrationWarning}
-                        bound={boundExperimentView}
-                        boardId={selectedGraphId}
-                        readOnly={boardIsImmutable}
-                        summary={boundExperimentSummary}
-                        recordedDevices={recordedDeviceIds}
-                        recording={sessionRecording &&
-                        boundExperimentView &&
-                        sessionRecording.experimentId ===
-                            boundExperimentView.experiment_id
-                            ? {
-                                  sessionId: sessionRecording.sessionId,
-                                  elapsedMs: sessionRecording.elapsedMs,
-                                  durationMs: sessionRecording.durationMs,
-                                  activeCue: activeSessionCue,
-                              }
-                            : null}
-                        recordingElsewhere={sessionRecording !== null &&
-                            sessionRecording.experimentId !==
-                                boundExperimentView?.experiment_id}
-                        message={sessionRecordMessage}
-                        instances={boundExperimentInstances}
-                        onDeleteInstance={deleteInstance}
-                        onBind={bindExperiment}
-                        onCreate={createExperiment}
-                        onPatch={patchBoundExperiment}
-                onEditProtocol={() => {
-                            designerInitialView = "list";
-                            showExperimentDesigner = true;
-                        }}
-                        onDelete={deleteBoundExperiment}
-                        onRecord={() =>
-                            boundExperimentView &&
-                            startSessionRecording(boundExperimentView)}
-                        onStop={() => finishSessionRecording(false)}
-                onContinue={continueSessionWait}
-                    />
-                </div>
-            {/if}
-
-            <div class="graph-inspector" class:panel-hidden={!showInspector}>
+     ⚠️ DECLARED AT TOP LEVEL, not beside the panel that uses it. A snippet is
+     only visible inside the block it is declared in; this sat three <div>s
+     deep at first and the detail view, a sibling further out, could not see
+     it at all — "inspectorBody is not defined", thrown during render and
+     swallowed, so the modal simply never appeared with no console error. -->
+<!-- The board-level section of the inspector. Split out from
+     inspectorBody so the node detail view (TEC-NATKIT-124) can render the
+     NODE's sections without the board's description, which belongs to the
+     graph rather than to any node. -->
+{#snippet inspectorGraphSection()}
                 <div class="inspector-section">
                     <p class="eyebrow">Graph</p>
                     <label>
@@ -6929,6 +5657,9 @@
                         ></textarea>
                     </label>
                 </div>
+{/snippet}
+
+{#snippet inspectorBody()}
 
                 {#if selectedInstance}
                     {@const rec = selectedInstance.recording}
@@ -8606,6 +7337,1270 @@
                     <p class="eyebrow">Generated JSON</p>
                     <pre>{graphJsonPreview}</pre>
                 </div>
+{/snippet}
+
+{#snippet streamRenderer(
+    streamId: string | null,
+    compact: boolean,
+    showMarkers: boolean = false,
+)}
+    {@const view = liveStreamView(streamId)}
+    {#if !streamId}
+        <p class="inline-note">Start the graph to see live data.</p>
+    {:else if !view.subscribed}
+        <p class="inline-note">Connecting…</p>
+    {:else if view.renderer === "muse"}
+        {#if view.latestMuse}
+            <MuseViewer sample={view.latestMuse} {formatNumber} />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
+    {:else if view.renderer === "marker"}
+        <MarkerViewer markers={view.markers} />
+    {:else if view.renderer === "classification"}
+        <ClassificationViewer samples={view.emgSamples} {formatNumber} />
+    {:else if view.renderer === "feature_vector"}
+        <FeatureVectorViewer samples={view.emgSamples} {formatNumber} />
+    {:else if view.renderer === "channel_frame"}
+        {#if view.emgSamples.length > 0}
+            <ChannelFrameViewer
+                samples={view.emgSamples}
+                markers={showMarkers ? view.markers : []}
+                {formatNumber}
+                {compact}
+            />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
+    {:else if view.renderer === "imu"}
+        {#if view.imuSamples.length > 0}
+            <ImuViewer samples={view.imuSamples} {formatNumber} {compact} />
+        {:else}
+            <p class="inline-note">Waiting for data…</p>
+        {/if}
+    {:else if view.descriptor}
+        <SchemaDescriptorInspector
+            descriptor={view.descriptor}
+            recordValue={view.recordValue}
+        />
+    {:else}
+        <p class="inline-note">Waiting for data on this stream…</p>
+    {/if}
+{/snippet}
+
+{#snippet inlineViewerChart(node: EditorGraphNode)}
+    {#if (node as { display_mode?: string }).display_mode === "imu_calibration"}
+        {@render calibrationReadout(node)}
+    {:else}
+        {@const streamId = viewableStreamId(node.id)}
+        {@render streamRenderer(
+            streamId,
+            true,
+            viewerShowsMarkers(node),
+        )}
+    {/if}
+{/snippet}
+
+<!-- Calibration quality of the upstream IMU while it is worn: the worst-case
+     status headline, then each sub-sensor. Colour language matches the IMU
+     Experiment tab so the two surfaces cannot disagree. -->
+{#snippet calibrationReadout(node: EditorGraphNode)}
+    {@const view = calibrationViewFor(node)}
+    <div class="calib-panel">
+        {#if !view.streamId}
+            <p class="inline-note">
+                {#if view.unresolvedReason === "unbound_source"}
+                    Pick a stream on the upstream Stream node to read its
+                    calibration.
+                {:else if view.unresolvedReason === "no_source"}
+                    Wire this to a Stream node to read its calibration.
+                {:else if view.unresolvedReason === "needs_worker"}
+                    Start the graph to read calibration — this reads through a
+                    transform, which needs the graph running.
+                {:else}
+                    Start the graph to read calibration.
+                {/if}
+            </p>
+        {:else if view.selectionMissing}
+            <p class="inline-note">
+                No IMU streams selected. Pick them under IMU Experiment → Stream
+                Selection (the choice lives in backend memory, so redo it after a
+                backend restart).
+            </p>
+        {:else if view.streamNotSelected}
+            <p class="inline-note">
+                This stream is not in the IMU selection — add it under IMU
+                Experiment → Stream Selection.
+            </p>
+        {:else}
+            <div class="calib-headline">
+                <span class={`calib-dot ${view.overallColor}`}></span>
+                <strong>{view.overallLabel}</strong>
+                {#if view.position !== "N/A"}
+                    <span class="calib-position">{view.position}</span>
+                {/if}
+            </div>
+            {#if view.parts.length > 0}
+                <div class="calib-parts">
+                    {#each view.parts as part}
+                        <div class="calib-part">
+                            <span class={`calib-dot ${part.color}`}></span>
+                            <span class="calib-part-label">{part.label}</span>
+                            <span class="calib-part-value">{part.text}</span>
+                        </div>
+                    {/each}
+                </div>
+            {:else}
+                <p class="inline-note">
+                    No accuracy reported for this stream yet.
+                </p>
+            {/if}
+        {/if}
+
+        <!-- Deliberately OUTSIDE the branches above: these talk to the sensor and
+             need nothing but its stream id. Nesting them under the "accuracy is
+             readable" branch made them vanish whenever the IMU selection was
+             missing -- which is exactly when you want to ask the device what it
+             thinks its calibration is. -->
+        {#if view.streamId}
+            <!-- Commands to the sensor itself, over the EXECUTION_COMMAND
+                 channel. "Save to device" matters because the hub only writes
+                 dynamic calibration to flash on a non-power-up reset, so a board
+                 that is simply switched off forgets what it learned. -->
+            {@const savePending =
+                deviceCommandPending[
+                    `${view.streamId}:calibrate.save_dcd`
+                ] === true}
+            {@const statusPending =
+                deviceCommandPending[`${view.streamId}:calibrate.status`] ===
+                true}
+            {@const result = deviceCommandResults[view.streamId]}
+            <div
+                class="calib-commands"
+                onmousedown={(e) => e.stopPropagation()}
+                role="presentation"
+            >
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={savePending}
+                    title="Persist the sensor's current calibration to its flash, so it survives a power cycle"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(
+                            view.streamId!,
+                            "calibrate.save_dcd",
+                        );
+                    }}
+                >
+                    {savePending ? "Saving…" : "Save to device"}
+                </button>
+                <button
+                    type="button"
+                    class="calib-command-btn"
+                    disabled={statusPending}
+                    title="Ask the sensor what calibration it has enabled and what accuracy it reports"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        sendDeviceCommand(view.streamId!, "calibrate.status");
+                    }}
+                >
+                    {statusPending ? "Reading…" : "Read config"}
+                </button>
+            </div>
+            {#if result}
+                <p
+                    class="calib-command-result"
+                    class:failed={!result.ok}
+                    title={result.command}
+                >
+                    {result.records.at(-1)?.message ??
+                        result.error ??
+                        (result.ok ? "Done." : "No answer.")}
+                </p>
+            {/if}
+        {/if}
+    </div>
+{/snippet}
+
+{#snippet instanceBranch(entry: { graph: StreamGraphDefinition; children: any[] }, depth: number)}
+    <!-- `data-graph-id` is an explicit, stable handle. The `title` below is the
+         run's MESSAGE when it has one, so keying on the title identifies a row
+         only for runs that finished cleanly — which is how a test looking for a
+         FAILED run concluded it was missing from the tree entirely
+         (TEC-NATKIT-80). -->
+    {@const status = entry.graph.recording?.status ?? "unknown"}
+    {@const rows = entry.graph.recording?.artifacts?.total_rows}
+    <button
+        type="button"
+        class="tree-instance"
+        class:selected={entry.graph.graph_id === selectedGraphId}
+        style={`padding-left: ${0.5 + depth * 0.7}rem`}
+        data-graph-id={entry.graph.graph_id}
+        title={entry.graph.recording?.message ?? entry.graph.graph_id}
+        onclick={() => selectGraph(entry.graph.graph_id)}
+    >
+        <span class="tree-instance-id">
+            {entry.graph.origin === "fork" ? "↳ " : ""}{entry.graph.instance_id}
+        </span>
+        <span class={`tree-instance-status ${status}`}>
+            {status === "complete"
+                ? `${rows ?? 0} rows`
+                : status === "failed"
+                  ? "failed"
+                  : status}
+        </span>
+    </button>
+    {#each entry.children as child}
+        {@render instanceBranch(child, depth + 1)}
+    {/each}
+{/snippet}
+
+{#snippet inlineExperiment(node: EditorGraphNode)}
+    {#if node.kind === "markers" || node.kind === "experiment"}
+        {@const view = experimentRunView()}
+        {#if view && boundExperimentView}
+            <ExperimentRunner
+                protocolLabel={view.protocolLabel}
+                protocol={view.protocol}
+                classes={view.classes}
+                recording={view.recording}
+                recordingElsewhere={view.recordingElsewhere}
+                elapsedMs={view.elapsedMs}
+                durationMs={view.durationMs}
+                activeCue={view.activeCue}
+                nextCue={view.nextCue}
+                totalReps={view.totalReps}
+                currentRep={view.currentRep}
+                holdsRemaining={view.holdsRemaining}
+                holdsTotal={view.holdsTotal}
+                summary={view.summary}
+                onRecord={() => startSessionRecording(boundExperimentView)}
+                onStop={() => finishSessionRecording(false)}
+                onContinue={continueSessionWait}
+            />
+        {:else}
+            <p class="inline-note">
+                No experiment bound to this board — bind one from the Experiment
+                panel to run a protocol.
+            </p>
+        {/if}
+    {/if}
+{/snippet}
+
+<div
+    class="graph-editor"
+    style={`--panel-top: ${toolbarHeight + 28}px`}
+>
+    <div class="graph-sidebar" class:panel-hidden={!showSidebar}>
+        <div class="sidebar-header">
+            <div>
+                <p class="eyebrow">Stream Graphs</p>
+                <h3>Boards</h3>
+            </div>
+            <div class="sidebar-actions">
+                <button type="button" class="icon-btn" onclick={createGraph}>
+                    <Plus size={16} />
+                </button>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    onclick={listStreamGraphs}
+                    title="Refresh saved graphs"
+                >
+                    <RefreshCw size={16} />
+                </button>
+            </div>
+        </div>
+
+        <div class="graph-list">
+            {#if boardDefinitions.length === 0}
+                <div class="empty-state">
+                    <Workflow size={18} />
+                    <p>No saved graphs yet.</p>
+                </div>
+            {:else}
+                {#each boardDefinitions as graph}
+                    <button
+                        type="button"
+                        class:selected={graph.graph_id === selectedGraphId}
+                        class="graph-list-item"
+                        onclick={() => selectGraph(graph.graph_id)}
+                    >
+                        <span class="graph-list-row">
+                            <span class="graph-list-title">{graph.label}</span>
+                            <span
+                                class={`run-pill ${graphRunStateClass(
+                                    graphStatuses[graph.graph_id]?.run_state,
+                                )}`}
+                            >
+                                {graphStatuses[graph.graph_id]?.run_state ??
+                                    "draft"}
+                            </span>
+                        </span>
+                        <span class="graph-list-meta">{graph.graph_id}</span>
+                    </button>
+                {/each}
+            {/if}
+        </div>
+
+        <div class="library-group">
+            <div class="library-header-row">
+                <span class="library-title">Experiments &amp; history</span>
+            </div>
+            <div class="library-actions">
+                {#if experimentTree.length === 0}
+                    <div class="empty-state">
+                        <p>
+                            No experiments yet. Bind one to a board from the header
+                            to start recording.
+                        </p>
+                    </div>
+                {:else}
+                    {#each experimentTree as branch}
+                        <div class="tree-experiment">
+                            <button
+                                type="button"
+                                class="tree-experiment-row"
+                                class:bound={branch.experiment.experiment_id ===
+                                    boundExperimentId}
+                                title={`Open this experiment's board (${branch.experiment.live_graph_id || "no board bound"})`}
+                                onclick={() =>
+                                    branch.experiment.live_graph_id &&
+                                    selectGraph(branch.experiment.live_graph_id)}
+                            >
+                                <FlaskConical size={13} />
+                                <span class="tree-experiment-label">
+                                    {branch.experiment.label ||
+                                        branch.experiment.experiment_id}
+                                </span>
+                                <span class="tree-count">
+                                    {branch.instances.length}
+                                </span>
+                            </button>
+                            {#each branch.instances as instance}
+                                {@render instanceBranch(instance, 1)}
+                            {/each}
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+        </div>
+
+        <div class="library-group">
+            <span class="library-title">Starter templates</span>
+            <div class="library-actions">
+                {#each STARTER_TEMPLATES as template}
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        title={template.description}
+                        onclick={() => loadStarterTemplate(template)}
+                    >
+                        <span class="graph-list-title">{template.label}</span>
+                        <span class="graph-list-meta">{template.description}</span>
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <div class="library-group">
+            <div class="library-header-row">
+                <span class="library-title">Profiles</span>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    onclick={saveCurrentAsProfile}
+                    title="Save the current saved graph as a profile"
+                >
+                    <UserPlus size={16} />
+                </button>
+            </div>
+            <div class="library-actions">
+                {#if profiles.length === 0}
+                    <div class="empty-state">
+                        <p>
+                            No profiles yet. Train a person's classifier, save the
+                            graph, then save it as a profile to resume later.
+                        </p>
+                    </div>
+                {:else}
+                    {#each profiles as profile}
+                        <div class="profile-row">
+                            <button
+                                type="button"
+                                class="graph-list-item profile-load"
+                                title={`Resume ${profile.display_name}'s classifier`}
+                                onclick={() => loadProfile(profile)}
+                            >
+                                <span class="graph-list-title"
+                                    >{profile.display_name}</span
+                                >
+                                <span class="graph-list-meta">
+                                    {profile.best_accuracy > 0
+                                        ? `${(profile.best_accuracy * 100).toFixed(0)}% · `
+                                        : ""}{profile.graph_id}
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                class="icon-btn"
+                                title={`Delete ${profile.display_name}`}
+                                onclick={() => removeProfile(profile)}
+                            >
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+        </div>
+
+        <div class="summary-card">
+            <div class="summary-row">
+                <span>Connection</span>
+                <strong>{connectionState}</strong>
+            </div>
+            <div class="summary-row">
+                <span>Run state</span>
+                <strong class={graphRunStateClass(selectedGraphStatus?.run_state)}>
+                    {selectedGraphStatus?.run_state ?? "stopped"}
+                </strong>
+            </div>
+            <div class="summary-row">
+                <span>Nodes</span>
+                <strong>{draftGraph.nodes.length}</strong>
+            </div>
+            <div class="summary-row">
+                <span>Edges</span>
+                <strong>{draftGraph.edges.length}</strong>
+            </div>
+        </div>
+
+        <div class="summary-card">
+            <p class="eyebrow">Node Library</p>
+            <div class="library-group">
+                <span class="library-title">Utility</span>
+                <div class="library-actions">
+                    {#each utilityCatalog as entry}
+                        <button
+                            type="button"
+                            class="graph-list-item"
+                            title={entry.description}
+                            onclick={() => addCatalogNode(entry)}
+                        >
+                            <span class="graph-list-title">{entry.label}</span>
+                            <span class="graph-list-meta">{entry.description}</span>
+                        </button>
+                    {/each}
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        title="A slider whose value drives a downstream transform's config field, live."
+                        onclick={() => addParamNode()}
+                    >
+                        <span class="graph-list-title">Param</span>
+                        <span class="graph-list-meta"
+                            >Slider bound to a transform config field</span
+                        >
+                    </button>
+                </div>
+            </div>
+
+            <div class="library-group">
+                <span class="library-title">Transforms</span>
+                <div class="library-actions">
+                    {#each transformCapabilities as capability}
+                        <button
+                            type="button"
+                            class="graph-list-item"
+                            onclick={() => addTransformNode(capability.kind)}
+                        >
+                            <span class="graph-list-title">{capability.label}</span>
+                            <span class="graph-list-meta">{capability.kind}</span>
+                        </button>
+                    {/each}
+                </div>
+            </div>
+
+            <div class="library-group">
+                <span class="library-title">Streams</span>
+                <div class="library-actions">
+                    <!-- ⚠️ ONE ENTRY, not one per live stream. The old palette
+                         changed shape with the rig, so a board could not be laid
+                         out before the hardware was on and the same board offered
+                         different nodes on different days. Which stream this
+                         carries is chosen in the inspector. -->
+                    <button
+                        type="button"
+                        class="graph-list-item"
+                        onclick={() => addSourceNode()}
+                    >
+                        <span class="graph-list-title">Stream</span>
+                        <span class="graph-list-meta">
+                            {availableStreams.length} available — pick one after
+                            adding
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="summary-card">
+            <div class="library-header">
+                <p class="eyebrow">Composites</p>
+                <div class="sidebar-actions">
+                    <button
+                        type="button"
+                        class="icon-btn"
+                        title="Import composites"
+                        onclick={() => compositeFileInput?.click()}
+                    >
+                        <Upload size={15} />
+                    </button>
+                </div>
+            </div>
+            <div class="library-actions">
+                {#if compositeTemplates.length === 0}
+                    <div class="empty-state">
+                        <Package size={16} />
+                        <p>No saved composites yet.</p>
+                    </div>
+                {:else}
+                    {#each compositeTemplates as template}
+                        <div class="composite-row">
+                            <button
+                                type="button"
+                                class="graph-list-item composite-add"
+                                onclick={() => addCompositeInstance(template)}
+                            >
+                                <span class="graph-list-title">{template.label}</span>
+                                <span class="graph-list-meta">
+                                    {template.nodes.length} nodes ·
+                                    {template.inputs.length} in /
+                                    {template.outputs.length} out
+                                </span>
+                            </button>
+                            <div class="composite-row-actions">
+                                <button
+                                    type="button"
+                                    class="icon-btn"
+                                    title="Export composite"
+                                    onclick={() => exportComposite(template)}
+                                >
+                                    <Download size={14} />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="icon-btn danger"
+                                    title="Delete composite"
+                                    onclick={() =>
+                                        removeCompositeTemplate(
+                                            template.composite_id,
+                                        )}
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        </div>
+                    {/each}
+                {/if}
+            </div>
+        </div>
+    </div>
+
+    <div class="graph-main">
+        <div class="graph-toolbar" bind:clientHeight={toolbarHeight}>
+            <div class="toolbar-group">
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showSidebar}
+                    onclick={() => (showSidebar = !showSidebar)}
+                    title={showSidebar ? "Hide boards & palette" : "Show boards & palette"}
+                    aria-pressed={showSidebar}
+                >
+                    <PanelLeft size={16} />
+                </button>
+                <!-- Workspace picker (TEC-NATKIT-56). First in the toolbar
+                     because it scopes everything to its right: which boards are
+                     listed, which experiments can be bound, whose names the
+                     participant roster offers. -->
+                <div class="workspace-picker">
+                    <FolderOpen size={14} />
+                    <select
+                        class="workspace-select"
+                        bind:value={workspaceSelectValue}
+                        onchange={(event) => {
+                            const picked = (
+                                event.currentTarget as HTMLSelectElement
+                            ).value;
+                            selectWorkspace(picked === "" ? null : picked);
+                        }}
+                        title="Workspace — scopes the boards, experiments and participant roster"
+                    >
+                        <!-- Unfiled is a real view, not a migration artifact:
+                             everything that predates workspaces lives here. -->
+                        <option value="">Unfiled</option>
+                        {#each workspaces as workspace}
+                            <option value={workspace.workspace_id}>
+                                {workspace.label || workspace.workspace_id}
+                            </option>
+                        {/each}
+                    </select>
+                    <button
+                        type="button"
+                        class="icon-btn"
+                        onclick={createWorkspace}
+                        title="New workspace"
+                    >
+                        <Plus size={14} />
+                    </button>
+                    {#if selectedWorkspace}
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            onclick={renameWorkspace}
+                            title="Rename this workspace"
+                        >
+                            <Pencil size={13} />
+                        </button>
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            onclick={removeWorkspace}
+                            title="Delete this workspace — its contents move to Unfiled"
+                        >
+                            <Trash2 size={13} />
+                        </button>
+                    {/if}
+                    <button
+                        type="button"
+                        class="icon-btn"
+                        onclick={downloadCohort}
+                        disabled={cohortDownload.status === "downloading"}
+                        title="Download every completed run in this workspace as one archive"
+                    >
+                        <Download size={13} />
+                    </button>
+                    {#if cohortDownload.status !== "idle"}
+                        <span
+                            class="cohort-status"
+                            class:failed={cohortDownload.status === "failed"}
+                            title={cohortDownload.message}
+                        >
+                            {cohortDownload.status === "downloading"
+                                ? "Collecting…"
+                                : cohortDownload.message}
+                        </span>
+                    {/if}
+                    {#if hiddenTotal > 0}
+                        <span
+                            class="workspace-hidden"
+                            title={`Filed in other workspaces: ${hiddenCounts.graphs} board(s), ${hiddenCounts.experiments} experiment(s), ${hiddenCounts.profiles} participant(s). Switch workspace to see them.`}
+                        >
+                            {hiddenTotal} elsewhere
+                        </span>
+                    {/if}
+                </div>
+                <SquareDashedMousePointer size={16} />
+                <input
+                    class="graph-title-input"
+                    value={draftGraph.label}
+                    oninput={(event) =>
+                        updateGraphMetadata(
+                            "label",
+                            (event.currentTarget as HTMLInputElement).value,
+                        )}
+                />
+                <span class="graph-id">{draftGraph.graph_id}</span>
+                {#if graphDirty}
+                    <span class="dirty-pill">Unsaved</span>
+                {/if}
+                {#if boardIsImmutable}
+                    <span class="immutable-pill" title="Recorded snapshot — read-only">
+                        Immutable
+                    </span>
+                {/if}
+                <button
+                    type="button"
+                    class="experiment-pill"
+                    class:bound={boundExperimentView !== null}
+                    onclick={() => (showExperimentPanel = !showExperimentPanel)}
+                    title="Bind an experiment, author its protocol, and record"
+                >
+                    <FlaskConical size={13} />
+                    {boundExperimentView
+                        ? boundExperimentView.label ||
+                          boundExperimentView.experiment_id
+                        : "No experiment"}
+                </button>
+                {#if sessionRecording}
+                    <span class="recording-pill">
+                        ● REC {(sessionRecording.elapsedMs / 1000).toFixed(0)}s
+                    </span>
+                {/if}
+                <span
+                    class="conn-pill {connectionState}"
+                    title={`Backend: ${connectionState}`}
+                >
+                    <span class="conn-dot"></span>
+                    {connectionState === "connected"
+                        ? "Connected"
+                        : connectionState === "connecting"
+                          ? "Connecting…"
+                          : "Disconnected"}
+                </span>
+                <!-- Next to the connection pill on purpose: "is the backend
+                     there?" and "is the rig there?" are the same question asked
+                     of two different things, and they are asked together. -->
+                <DeviceHealthPanel
+                    health={deviceHealth}
+                    {connectionState}
+                    {sendDeviceCommand}
+                    {deviceCommandPending}
+                    {deviceCommandResults}
+                />
+            </div>
+            <div class="toolbar-actions">
+                {#if boardIsImmutable}
+                    <!-- A sealed recording has no live input, so "Start" is
+                         meaningless here — but replaying it is exactly the
+                         equivalent action, so the primary button becomes that
+                         rather than a greyed-out control that does nothing. Mode
+                         and speed stay in the Instance panel. -->
+                    {#if replayForSelectedInstance}
+                        <button
+                            type="button"
+                            class="action-btn secondary"
+                            onclick={stopSelectedReplay}
+                            title="Stop replaying this recording"
+                        >
+                            <Square size={16} />
+                            Stop replay
+                        </button>
+                    {:else}
+                        <button
+                            type="button"
+                            class="action-btn secondary"
+                            onclick={replaySelectedInstance}
+                            disabled={!canReplaySelectedInstance}
+                            title={canReplaySelectedInstance
+                                ? "Replay this recording through the board's pipeline (mode and speed in the Instance panel)"
+                                : "This recording has no materialised data to replay"}
+                        >
+                            <Play size={16} />
+                            Replay
+                        </button>
+                    {/if}
+                {:else}
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        onclick={startSelectedGraph}
+                        disabled={selectedGraphStatus?.run_state === "starting"}
+                        title="Start this graph"
+                    >
+                        {#if selectedGraphStatus?.run_state === "starting"}
+                            <RefreshCw size={16} class="spin" />
+                            Starting…
+                        {:else}
+                            <Play size={16} />
+                            Start
+                        {/if}
+                    </button>
+                {/if}
+                <button
+                    type="button"
+                    class="action-btn secondary"
+                    onclick={stopSelectedGraph}
+                >
+                    <Square size={16} />
+                    Stop
+                </button>
+                <button type="button" class="action-btn secondary" onclick={runValidation}>
+                    <ScanSearch size={16} />
+                    Validate
+                </button>
+                <button
+                    type="button"
+                    class="action-btn secondary"
+                    onclick={() => (paletteOpen = true)}
+                    title="Add a node (⌘K / Ctrl+K)"
+                >
+                    <Plus size={16} />
+                    Add Node
+                </button>
+                <button
+                    type="button"
+                    class="action-btn secondary"
+                    onclick={createCompositeFromSelection}
+                    disabled={selectedNodeIds.size === 0}
+                    title="Group the selected nodes into a reusable composite"
+                >
+                    <Package size={16} />
+                    Group
+                </button>
+                {#if selectedIsComposite}
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        onclick={() => openCompositeInternals(selectedIsComposite)}
+                        title="View the nodes inside this composite"
+                    >
+                        <Eye size={16} />
+                        View internals
+                    </button>
+                    <button
+                        type="button"
+                        class="action-btn secondary"
+                        onclick={ungroupSelectedComposite}
+                        title="Expand this composite back into its nodes"
+                    >
+                        <Ungroup size={16} />
+                        Ungroup
+                    </button>
+                {/if}
+                <button type="button" class="action-btn" onclick={saveDraftGraph}>
+                    <Save size={16} />
+                    Save
+                </button>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showTimeline}
+                    onclick={() => (showTimeline = !showTimeline)}
+                    title={showTimeline ? "Hide timeline" : "Show timeline"}
+                    aria-pressed={showTimeline}
+                >
+                    <Clock size={16} />
+                </button>
+                <button
+                    type="button"
+                    class="icon-btn"
+                    class:active={showInspector}
+                    onclick={() => (showInspector = !showInspector)}
+                    title={showInspector ? "Hide inspector" : "Show inspector"}
+                    aria-pressed={showInspector}
+                >
+                    <PanelRight size={16} />
+                </button>
+            </div>
+        </div>
+
+        <div class="graph-workspace">
+            {#if connectionMessage}
+                <div class="connection-note">
+                    <span>{connectionMessage}</span>
+                    <button
+                        type="button"
+                        class="connection-note-dismiss"
+                        onclick={() => (connectionMessage = null)}
+                        aria-label="Dismiss">×</button
+                    >
+                </div>
+            {/if}
+            <!-- The board is a pan/zoom drawing surface: role="application" is the
+                 honest role and it needs focus for keyboard panning, but Svelte's
+                 checker only accepts tabindex/mouse handlers on widget roles. -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div
+                bind:this={canvasElement}
+                class="graph-canvas"
+                role="application"
+                tabindex="0"
+                aria-label="Stream graph canvas"
+                oncontextmenu={openContextMenu}
+                onmousedown={startPan}
+                onwheel={handleCanvasWheel}
+            >
+                <!-- contextmenu bubbles to .graph-canvas above, and openContextMenu
+                     reads only clientX/clientY — inner handlers would be redundant. -->
+                <div class="canvas-grid"></div>
+                <svg class="graph-edges">
+                    <g
+                        transform={`translate(${draftGraph.ui?.viewport?.x ?? 0}, ${
+                            draftGraph.ui?.viewport?.y ?? 0
+                        }) scale(${draftGraph.ui?.viewport?.zoom ?? 1})`}
+                    >
+                    {#each draftGraph.edges as edge}
+                        {@const sourceNode =
+                            draftGraph.nodes.find(
+                                (node) => node.id === edge.source_node_id,
+                            )}
+                        {@const targetNode =
+                            draftGraph.nodes.find(
+                                (node) => node.id === edge.target_node_id,
+                            )}
+                        {#if sourceNode && targetNode}
+                            {@const sourcePoint = getPortPoint(
+                                sourceNode,
+                                edge.source_port,
+                                "output",
+                            )}
+                            {@const targetPoint = getPortPoint(
+                                targetNode,
+                                edge.target_port,
+                                "input",
+                            )}
+                            {@const lines = edgeLines(edge, sourcePoint, targetPoint)}
+                            {#each lines as line, lineIndex}
+                                <path
+                                    class:selected={edge.id === selectedEdgeId}
+                                    class:edge-invalid={edgeDiagnostics(edge.id)
+                                        .length > 0}
+                                    class:edge-provenance={edge.edge_kind ===
+                                        "provenance"}
+                                    class:edge-running={selectedGraphStatus?.run_state ===
+                                        "running" && edge.edge_kind !== "provenance"}
+                                    class:edge-markers={line.type === "Marker"}
+                                    class="graph-edge"
+                                    d={line.d}
+                                />
+                            {/each}
+                            <!-- ⚠️ The CLICK TARGET is this invisible 18px-wide
+                                 path, not the 3px line above. Selecting an edge
+                                 was the only way to delete one and it needed a
+                                 pixel-perfect hit; edges were effectively
+                                 undeletable. Drawn after the visible lines so it
+                                 sits on top, and with no stroke of its own so it
+                                 never changes what is seen. -->
+                            <path
+                                class="graph-edge-hit"
+                                role="button"
+                                tabindex="0"
+                                aria-label={`Link ${edge.source_node_id} to ${edge.target_node_id}`}
+                                d={lines[0].d}
+                                onmousedown={(event) => event.stopPropagation()}
+                                onclick={(event) => {
+                                    event.stopPropagation();
+                                    selectEdge(edge.id);
+                                }}
+                                onkeydown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        selectEdge(edge.id);
+                                    }
+                                }}
+                            />
+                            {#if edge.id === selectedEdgeId && !boardIsImmutable}
+                                {@const midX = (sourcePoint.x + targetPoint.x) / 2}
+                                {@const midY = (sourcePoint.y + targetPoint.y) / 2}
+                                <g
+                                    class="edge-delete"
+                                    role="button"
+                                    tabindex="0"
+                                    aria-label="Delete this link"
+                                    onmousedown={(event) => {
+                                        // ⚠️ Without this the canvas's mousedown
+                                        // runs FIRST and clears the selection, so
+                                        // the click that follows asks to remove
+                                        // the selected item and finds none — the
+                                        // button appeared to do nothing at all.
+                                        event.stopPropagation();
+                                    }}
+                                    onclick={(event) => {
+                                        event.stopPropagation();
+                                        removeSelectedItem();
+                                    }}
+                                    onkeydown={(event) => {
+                                        if (
+                                            event.key === "Enter" ||
+                                            event.key === " "
+                                        ) {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            removeSelectedItem();
+                                        }
+                                    }}
+                                >
+                                    <circle cx={midX} cy={midY} r="10" />
+                                    <path
+                                        d={`M ${midX - 3.5} ${midY - 3.5} L ${
+                                            midX + 3.5
+                                        } ${midY + 3.5} M ${midX + 3.5} ${
+                                            midY - 3.5
+                                        } L ${midX - 3.5} ${midY + 3.5}`}
+                                    />
+                                </g>
+                            {/if}
+                        {/if}
+                    {/each}
+                    {#if connectionDrag}
+                        {@const dragSourceNode = draftGraph.nodes.find(
+                            (node) => node.id === connectionDrag?.nodeId,
+                        )}
+                        {#if dragSourceNode}
+                            {@const dragSourcePoint = getPortPoint(
+                                dragSourceNode,
+                                connectionDrag.portId,
+                                "output",
+                            )}
+                            <path
+                                class="graph-edge graph-edge-drag"
+                                d={`M ${dragSourcePoint.x} ${dragSourcePoint.y} C ${
+                                    dragSourcePoint.x + 90
+                                } ${dragSourcePoint.y}, ${
+                                    connectionDrag.pointerGraphX - 90
+                                } ${connectionDrag.pointerGraphY}, ${
+                                    connectionDrag.pointerGraphX
+                                } ${connectionDrag.pointerGraphY}`}
+                            />
+                        {/if}
+                    {/if}
+                    </g>
+                </svg>
+
+                <div
+                    class="graph-stage"
+                    style={`transform: translate(${draftGraph.ui?.viewport?.x ?? 0}px, ${
+                        draftGraph.ui?.viewport?.y ?? 0
+                    }px) scale(${draftGraph.ui?.viewport?.zoom ?? 1});`}
+                >
+                    {#each draftGraph.nodes as node}
+                        <StreamGraphNodeCard
+                            {node}
+                            runtimeStatus={nodeRuntimeStatus(node.id)}
+                            {marbleAxisEndUs}
+                            {backendNowUs}
+                            selected={selectedNodeIds.has(node.id)}
+                            invalid={nodeDiagnostics(node.id).length > 0}
+                            {pendingConnection}
+                            {inlineViewerChart}
+                            {inlineExperiment}
+                            boundExperimentLabel={boundExperimentView
+                                ? boundExperimentView.label ||
+                                  boundExperimentView.experiment_id
+                                : null}
+                            {streamDeviceNames}
+                            inputPortLabels={inputPortLabelsFor(node)}
+                            outputPortLabels={outputPortLabelsFor(node)}
+                            sourceLabel={node.kind === "viewer" ||
+                            node.kind === "sink"
+                                ? viewerSourceLabel(node)
+                                : undefined}
+                            markersPhantom={viewerMarkersPhantom(node)}
+                            onToggleMarkers={toggleViewerMarkers}
+                            onPortLayout={handlePortLayout}
+                            onResize={handleNodeResize}
+                            onToggleInlineGraph={setInlineViewerGraph}
+                            onToggleInlineExperiment={setInlineExperiment}
+                            onSelect={selectNode}
+                            onOpenDetail={openNodeDetail}
+                            onStartDrag={startNodeDrag}
+                            onPortClick={handlePortClick}
+                            onPortMouseDown={handlePortMouseDown}
+                            onExpand={handleNodeExpand}
+                            onParamValueChange={(nodeId, value) => {
+                                const paramNode = draftGraph.nodes.find(
+                                    (candidate) =>
+                                        candidate.id === nodeId &&
+                                        candidate.kind === "param",
+                                );
+                                if (paramNode && paramNode.kind === "param") {
+                                    applyParamValue(paramNode, value);
+                                }
+                            }}
+                        />
+                    {/each}
+
+                    <!-- Part C: per-edge topic badge at the link midpoint. -->
+                    {#each draftGraph.edges as edge (edge.id)}
+                        {@const sourceNode = draftGraph.nodes.find(
+                            (n) => n.id === edge.source_node_id,
+                        )}
+                        {@const targetNode = draftGraph.nodes.find(
+                            (n) => n.id === edge.target_node_id,
+                        )}
+                        {#if sourceNode && targetNode && edge.edge_kind !== "provenance"}
+                            {@const sp = getPortPoint(
+                                sourceNode,
+                                edge.source_port,
+                                "output",
+                            )}
+                            {@const tp = getPortPoint(
+                                targetNode,
+                                edge.target_port,
+                                "input",
+                            )}
+                            {@const topics = edgeChannelTopics(edge)}
+                            {#if topics.length > 0}
+                                {@const enabledCount = topics.filter(
+                                    (t) => !isEdgeTopicHidden(edge, t.type),
+                                ).length}
+                                <div
+                                    class="edge-badge-wrap"
+                                    style={`left:${(sp.x + tp.x) / 2}px; top:${
+                                        (sp.y + tp.y) / 2
+                                    }px;`}
+                                >
+                                    <button
+                                        type="button"
+                                        class="edge-badge"
+                                        class:multi={topics.length > 1}
+                                        class:filtered={enabledCount <
+                                            topics.length}
+                                        title={`${enabledCount} of ${
+                                            topics.length
+                                        } topic${
+                                            topics.length > 1 ? "s" : ""
+                                        } active on this link`}
+                                        onmousedown={(e) => e.stopPropagation()}
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            openBadgeEdgeId =
+                                                openBadgeEdgeId === edge.id
+                                                    ? null
+                                                    : edge.id;
+                                        }}
+                                    >
+                                        {enabledCount < topics.length
+                                            ? `${enabledCount}/${topics.length}`
+                                            : topics.length}
+                                    </button>
+                                    {#if openBadgeEdgeId === edge.id}
+                                        <div
+                                            class="edge-badge-menu"
+                                            onmousedown={(e) =>
+                                                e.stopPropagation()}
+                                            role="presentation"
+                                        >
+                                            <div class="edge-badge-hint">
+                                                Toggle which topics reach {targetNode.label ??
+                                                    targetNode.kind}
+                                            </div>
+                                            {#each topics as t}
+                                                {@const hidden = isEdgeTopicHidden(
+                                                    edge,
+                                                    t.type,
+                                                )}
+                                                <label
+                                                    class="edge-badge-row"
+                                                    class:row-hidden={hidden}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!hidden}
+                                                        onchange={() =>
+                                                            toggleEdgeTopic(
+                                                                edge.id,
+                                                                t.type,
+                                                            )}
+                                                    />
+                                                    <span
+                                                        class="badge-type badge-type-{t.type.toLowerCase()}"
+                                                    >
+                                                        {t.type}
+                                                    </span>
+                                                    <span class="badge-schema"
+                                                        >{t.schema || "—"}</span
+                                                    >
+                                                    {#if t.id}
+                                                        <span class="badge-id"
+                                                            >#{t.id}</span
+                                                        >
+                                                    {/if}
+                                                </label>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
+                            {/if}
+                        {/if}
+                    {/each}
+                </div>
+
+                {#if draftGraph.nodes.length === 0}
+                    <div class="canvas-empty">
+                        <Activity size={18} />
+                        <p>Right-click the board to add a source, transform, viewer, or sink.</p>
+                    </div>
+                {/if}
+
+                <!-- Compact time readout. pointer-events: none is deliberate —
+                     it floats over the canvas and must never swallow a drag,
+                     a right-click, or a node click. -->
+                <div class={`time-readout ${timeReadout.kind}`}>
+                    <span class="time-readout-badge">{timeReadout.label}</span>
+                    <span class="time-readout-clock" title="Wall-clock time">
+                        <Clock size={12} />
+                        {timeReadout.clock}
+                    </span>
+                    <span
+                        class="time-readout-elapsed"
+                        title="Time since this run started"
+                    >
+                        {timeReadout.elapsed}{#if timeReadout.total}<span
+                                class="time-readout-total"
+                                >/ {timeReadout.total}</span
+                            >{/if}
+                    </span>
+                    {#if timeReadout.detail}
+                        <span class="time-readout-detail">{timeReadout.detail}</span>
+                    {/if}
+                    {#if timeReadout.kind === "replay" && timeReadout.total}
+                        <span class="time-readout-track">
+                            <span
+                                class="time-readout-fill"
+                                style={`width:${(timeReadout.fraction * 100).toFixed(1)}%`}
+                            ></span>
+                        </span>
+                    {/if}
+                </div>
+            </div>
+
+            {#if showExperimentPanel}
+                <div class="graph-experiment-panel">
+                    <ExperimentPanel
+                        {experiments}
+                        {workspaces}
+                        {selectedWorkspaceId}
+                        {hardBlockReason}
+                        {calibrationWarning}
+                        bound={boundExperimentView}
+                        boardId={selectedGraphId}
+                        readOnly={boardIsImmutable}
+                        summary={boundExperimentSummary}
+                        recordedDevices={recordedDeviceIds}
+                        recording={sessionRecording &&
+                        boundExperimentView &&
+                        sessionRecording.experimentId ===
+                            boundExperimentView.experiment_id
+                            ? {
+                                  sessionId: sessionRecording.sessionId,
+                                  elapsedMs: sessionRecording.elapsedMs,
+                                  durationMs: sessionRecording.durationMs,
+                                  activeCue: activeSessionCue,
+                              }
+                            : null}
+                        recordingElsewhere={sessionRecording !== null &&
+                            sessionRecording.experimentId !==
+                                boundExperimentView?.experiment_id}
+                        message={sessionRecordMessage}
+                        instances={boundExperimentInstances}
+                        onDeleteInstance={deleteInstance}
+                        onBind={bindExperiment}
+                        onCreate={createExperiment}
+                        onPatch={patchBoundExperiment}
+                onEditProtocol={() => {
+                            designerInitialView = "list";
+                            showExperimentDesigner = true;
+                        }}
+                        onDelete={deleteBoundExperiment}
+                        onRecord={() =>
+                            boundExperimentView &&
+                            startSessionRecording(boundExperimentView)}
+                        onStop={() => finishSessionRecording(false)}
+                onContinue={continueSessionWait}
+                    />
+                </div>
+            {/if}
+
+            <div class="graph-inspector" class:panel-hidden={!showInspector}>
+                {@render inspectorGraphSection()}
+                {@render inspectorBody()}
             </div>
         </div>
 
@@ -8663,6 +8658,84 @@
             </div>
         {/if}
     </div>
+
+    <!-- NODE DETAIL VIEW (TEC-NATKIT-124). Double-click a node to work on it
+         full-screen instead of reading a ~1,700-line inspector through a narrow
+         right-hand rail.
+
+         ⚠️ It renders the SAME inspectorBody snippet the sidebar does, against
+         the SAME selectedNodeId — no second copy of the markup and no state of
+         its own, so the two can never disagree about what is being edited or
+         drift apart as the inspector grows. -->
+    {#if detailNode}
+        <div
+            class="node-detail-backdrop"
+            role="presentation"
+            onmousedown={closeNodeDetail}
+        >
+            <div
+                class="node-detail"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${detailNode.label || detailNode.id} details`}
+                onmousedown={(event) => event.stopPropagation()}
+            >
+                <header class="node-detail-header">
+                    <div class="node-detail-title">
+                        <strong>{detailNode.label || detailNode.id}</strong>
+                        <span class="node-detail-kind">{detailNode.kind}</span>
+                        {#if nodeRuntimeStatus(detailNode.id)}
+                            <span
+                                class={`node-runtime-badge ${graphRunStateClass(
+                                    nodeRuntimeStatus(detailNode.id)?.state ??
+                                        "draft",
+                                )}`}
+                            >
+                                {nodeRuntimeStatus(detailNode.id)?.state}
+                            </span>
+                        {/if}
+                    </div>
+                    <div class="node-detail-actions">
+                        <!-- The kinds that used to expand on double-click keep
+                             that action here, as a labelled button rather than a
+                             gesture that meant three different things depending
+                             on which node you happened to be over. -->
+                        {#if ["composite", "viewer", "stream_source", "markers", "experiment"].includes(detailNode.kind)}
+                            <button
+                                type="button"
+                                class="action-btn"
+                                onclick={() => {
+                                    const id = detailNode.id;
+                                    closeNodeDetail();
+                                    handleNodeExpand(id);
+                                }}
+                            >
+                                <Maximize2 size={14} />
+                                {detailNode.kind === "composite"
+                                    ? "Open internals"
+                                    : detailNode.kind === "markers" ||
+                                        detailNode.kind === "experiment"
+                                      ? "Open experiment"
+                                      : "Open data"}
+                            </button>
+                        {/if}
+                        <button
+                            type="button"
+                            class="icon-btn"
+                            onclick={closeNodeDetail}
+                            title="Close (Esc)"
+                            aria-label="Close node details"
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                </header>
+                <div class="node-detail-body">
+                    {@render inspectorBody()}
+                </div>
+            </div>
+        </div>
+    {/if}
 
     {#if contextMenu.open}
         <div
@@ -9185,25 +9258,6 @@
         color: #fbd88a;
     }
 
-    .strip-style-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.32rem;
-        padding: 0.3rem 0.55rem;
-        border-radius: 6px;
-        border: 1px solid rgba(110, 138, 255, 0.28);
-        background: rgba(20, 28, 52, 0.8);
-        color: #b9c6ee;
-        font-size: 0.72rem;
-        cursor: pointer;
-        white-space: nowrap;
-    }
-
-    .strip-style-btn:hover {
-        border-color: rgba(110, 138, 255, 0.5);
-        color: #e5ecff;
-    }
-
     .graph-toolbar {
         background: rgba(8, 13, 26, 0.9);
         border: 1px solid rgba(110, 138, 255, 0.18);
@@ -9211,6 +9265,96 @@
     }
 
     .graph-sidebar,
+    /* NODE DETAIL VIEW (TEC-NATKIT-124) */
+    .node-detail-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3vh 3vw;
+        background: rgba(4, 7, 16, 0.72);
+        backdrop-filter: blur(2px);
+    }
+
+    .node-detail {
+        display: flex;
+        flex-direction: column;
+        /* "Full-ish": big enough that the inspector stops being a rail, short of
+           edge-to-edge so the board stays visible behind it. */
+        width: min(1100px, 94vw);
+        height: min(880px, 94vh);
+        /* ⚠️ max-height as well as height. Without it the flex parent lets the
+           panel grow to its CONTENT: a 1,700-line inspector measured 1397px
+           tall inside a 950px viewport, and its own scroll area never engaged. */
+        max-height: 94vh;
+        max-width: 94vw;
+        border-radius: 12px;
+        border: 1px solid rgba(110, 138, 255, 0.28);
+        background: rgba(9, 14, 28, 0.98);
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
+        overflow: hidden;
+    }
+
+    .node-detail-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex: 0 0 auto;
+        padding: 0.7rem 0.9rem;
+        border-bottom: 1px solid rgba(110, 138, 255, 0.18);
+        background: rgba(14, 20, 38, 0.9);
+    }
+
+    .node-detail-title {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        min-width: 0;
+    }
+
+    .node-detail-title strong {
+        font-size: 0.95rem;
+        color: #e8eeff;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .node-detail-kind {
+        font-size: 0.66rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #7f92c4;
+    }
+
+    .node-detail-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex: 0 0 auto;
+    }
+
+    .node-detail-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 1.2rem 1.4rem;
+    }
+
+    /* ⚠️ ONE centred column, not two. CSS columns fill sequentially and an
+       .inspector-section cannot be broken across them, so the node's single
+       tall section landed entirely in the right column with the left one
+       empty — worse than the rail it replaced. A measured line length is also
+       simply easier to read than a wide one. */
+    .node-detail-body :global(.inspector-section) {
+        max-width: 680px;
+        margin: 0 auto 1rem;
+    }
+
+
     .graph-inspector {
         border-radius: 8px;
     }
