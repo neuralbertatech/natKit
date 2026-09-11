@@ -42,7 +42,12 @@
     const silent = $derived(row ? row.silent : layout.stale);
 </script>
 
-<div class="marble-row" class:stale={silent} class:is-input={row?.role === "input"}>
+<div
+    class="marble-row"
+    class:stale={silent}
+    class:is-input={row?.role === "input"}
+    class:is-rejected={row?.role === "rejected"}
+>
     <span class="marble-label" class:marker-lane={lane === "markers"}>{rowLabel}</span>
     <div
         class="marble-track"
@@ -105,6 +110,19 @@
 
     .marble-row.is-input .marble-track {
         margin-left: 0.3rem;
+    }
+
+    /* What the operator threw away, under what it kept. Dimmed because it is
+       context for the output row rather than a fault: a filter that drops most
+       of its input is doing its job, and the dropped row is how you see the
+       ratio at all. */
+    .marble-row.is-rejected {
+        opacity: 0.6;
+    }
+
+    .marble-row.is-rejected .marble-label,
+    .marble-row.is-rejected .marble-count {
+        color: #7f8faf;
     }
 
     /* ⚠️ A SILENT INPUT IS THE ONE THING THIS STRIP EXISTS TO SHOW. It is called
