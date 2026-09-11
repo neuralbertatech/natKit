@@ -105,6 +105,21 @@ export function sanitizeIdentifier(value: string): string {
 // absorbed into the existing slack.
 export const MARBLE_ROW_HEIGHT = 14;
 
+/**
+ * The port column's own vertical padding (0.55rem top + bottom), which the card
+ * height has to carry on top of the port ROWS themselves.
+ *
+ * ⚠️ Without it a two-input node reserved 11px less than its ports actually
+ * occupied, so the column spilled over the marble strips below it — the ports
+ * and the strips rendered on top of each other. The card was not too short
+ * overall (166px of height for 164px of content); the ROWS were under-counted.
+ *
+ * Deliberately separate from PORT_ROW_HEIGHT, which getPortPosition uses to
+ * place edge anchors: growing that would move every edge endpoint to fix a
+ * problem that is only about how tall the card is.
+ */
+export const PORT_COLUMN_PADDING = 18;
+
 export function getNodeHeight(
     node: EditorGraphNode,
     marbleRows = 0,
@@ -112,7 +127,7 @@ export function getNodeHeight(
     const inputRows = Math.max(node.input_port_ids?.length ?? 0, 0);
     const outputRows = Math.max(node.output_port_ids?.length ?? 0, 0);
     const rows = Math.max(inputRows, outputRows, 1);
-    let height = HEADER_HEIGHT + rows * PORT_ROW_HEIGHT + 22;
+    let height = HEADER_HEIGHT + rows * PORT_ROW_HEIGHT + PORT_COLUMN_PADDING + 22;
     if (node.kind === "viewer" && node.inline_graph) {
         height += INLINE_GRAPH_HEIGHT;
     }
@@ -214,13 +229,52 @@ export function getOutputDescriptorForNode(
 export function graphRunStateClass(
     state: string | undefined,
 ): "ok" | "error" | "muted" {
-    if (state === "running" || state === "valid") {
+    // ⚠️ "live" was missing, so every healthy TRANSFORM was styled muted while
+    // every healthy SOURCE was styled ok — on the same board, at the same time.
+    // Half of "a user can't tell whether things are healthy" was this one
+    // omission rather than a design choice.
+    if (state === "running" || state === "valid" || state === "live") {
         return "ok";
     }
-    if (state === "error" || state === "stalled") {
+    if (state === "error" || state === "stalled" || state === "blocked") {
         return "error";
     }
     return "muted";
+}
+
+/**
+ * One word per state, whatever kind of node reported it.
+ *
+ * The backend speaks two dialects: a source is `running`, a transform worker is
+ * `live`, and they mean the same thing to somebody looking at a board. Showing
+ * both taught users that the two node kinds have different health models, which
+ * they do not — so the canvas, the sidebar and the footer all read through
+ * this.
+ *
+ * Deliberately NOT a rename in the backend: `running` and `live` are produced
+ * by different subsystems for different reasons (a source is registered, a
+ * worker has emitted recently), and collapsing them at the source would lose a
+ * distinction the diagnostics still need.
+ */
+export function graphRunStateLabel(state: string | undefined): string {
+    switch (state) {
+        case "running":
+        case "live":
+        case "valid":
+            return "live";
+        case "stalled":
+            return "stalled";
+        case "error":
+            return "error";
+        case "blocked":
+            return "blocked";
+        case "starting":
+            return "starting";
+        case "stopped":
+            return "stopped";
+        default:
+            return state ?? "draft";
+    }
 }
 
 /**

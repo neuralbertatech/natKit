@@ -269,13 +269,13 @@ describe("operatorGlyph", () => {
 
     it("carries a threshold's level AND direction", () => {
         expect(operatorGlyph("threshold", { level: 0.5, direction: "either" })).toBe(
-            "0.5 ↕",
+            "cross 0.5 ↕",
         );
         expect(operatorGlyph("threshold", { level: 0.5, direction: "rising" })).toBe(
-            "0.5 ↑",
+            "cross 0.5 ↑",
         );
         expect(operatorGlyph("threshold", { level: 2, direction: "falling" })).toBe(
-            "2 ↓",
+            "cross 2 ↓",
         );
     });
 
@@ -368,7 +368,7 @@ describe("buildOperatorStrip", () => {
             10_000_000,
         );
         expect(strip!.rows.map((row) => row.label)).toEqual(["in", "markers"]);
-        expect(strip!.glyph).toBe("0.5 ↕");
+        expect(strip!.glyph).toBe("cross 0.5 ↕");
         // The ratio is the reading: 400 frames in, 3 crossings out.
         expect(strip!.rows[0].layout.total).toBe(400);
         expect(strip!.rows[1].layout.total).toBe(3);
