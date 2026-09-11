@@ -210,6 +210,9 @@
         nodeCatalog: NodeCatalogEntry[];
         graphDefinitions: StreamGraphDefinition[];
         graphStatuses: Record<string, StreamGraphStatusSummary>;
+        // The backend's wall clock at snapshot time, so a lane's heartbeat is
+        // compared against the clock that stamped it (TEC-NATKIT-123).
+        backendNowUs?: number;
         latestValidation: Record<string, StreamGraphDiagnostic[]>;
         latestEdgeValidation: Record<string, StreamGraphDiagnostic[]>;
         latestGraphDiagnostics: StreamGraphDiagnostic[];
@@ -363,6 +366,7 @@
         nodeCatalog,
         graphDefinitions,
         graphStatuses,
+        backendNowUs = 0,
         latestValidation,
         latestEdgeValidation,
         latestGraphDiagnostics,
@@ -6463,21 +6467,26 @@
                 <!-- Marble grammar (TEC-NATKIT-122). Rows read like a table
                      and compare rates across nodes; tracks draw what each
                      operator does. A switch rather than one choice, because the
-                     two answer different questions. -->
+                     two answer different questions.
+                     ⚠️ LABELLED, not an icon. As a bare icon next to the two
+                     panel toggles it read as a third panel button and Zach could
+                     not find it at all — "I am not seeing the toggle". The label
+                     also says which grammar is CURRENT, which an icon cannot. -->
                 <button
                     type="button"
-                    class="icon-btn"
-                    class:active={stripStyle === "tracks"}
+                    class="strip-style-btn"
                     onclick={toggleStripStyle}
                     title={stripStyle === "tracks"
-                        ? "Marble strips: tracks — click for compact rows"
-                        : "Marble strips: rows — click for operator tracks"}
-                    aria-pressed={stripStyle === "tracks"}
+                        ? "Marble strips: operator tracks — click for compact rows"
+                        : "Marble strips: compact rows — click for operator tracks"}
+                    aria-label={`Marble strips: ${stripStyle}. Click to switch.`}
                 >
                     {#if stripStyle === "tracks"}
-                        <Waypoints size={16} />
+                        <Waypoints size={14} />
+                        <span>Tracks</span>
                     {:else}
-                        <Rows3 size={16} />
+                        <Rows3 size={14} />
+                        <span>Rows</span>
                     {/if}
                 </button>
                 <button
@@ -6670,6 +6679,7 @@
                             runtimeStatus={nodeRuntimeStatus(node.id)}
                             {marbleAxisEndUs}
                             {stripStyle}
+                            {backendNowUs}
                             selected={selectedNodeIds.has(node.id)}
                             invalid={nodeDiagnostics(node.id).length > 0}
                             {pendingConnection}
@@ -9173,6 +9183,25 @@
         font-size: 0.7rem;
         line-height: 1.4;
         color: #fbd88a;
+    }
+
+    .strip-style-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.32rem;
+        padding: 0.3rem 0.55rem;
+        border-radius: 6px;
+        border: 1px solid rgba(110, 138, 255, 0.28);
+        background: rgba(20, 28, 52, 0.8);
+        color: #b9c6ee;
+        font-size: 0.72rem;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .strip-style-btn:hover {
+        border-color: rgba(110, 138, 255, 0.5);
+        color: #e5ecff;
     }
 
     .graph-toolbar {

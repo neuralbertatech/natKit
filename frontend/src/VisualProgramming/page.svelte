@@ -238,6 +238,10 @@
     let deviceCommandResults = $state<
         Record<string, DeviceCommandResultMessage>
     >({});
+    // The backend's wall clock, from the most recent status message. 0 until
+    // one arrives, and on an older backend that never sends it — which disables
+    // the absolute liveness test rather than guessing at it.
+    let backendNowUs = $state(0);
     let streamGraphStatuses = $state<Record<string, StreamGraphStatusSummary>>(
         {},
     );
@@ -1400,6 +1404,14 @@
                     ...streamGraphStatuses,
                     [message.graph_id]: message.status,
                 };
+                // The backend's clock at snapshot time (TEC-NATKIT-123). Held
+                // separately from the statuses because it is a property of the
+                // MESSAGE, not of any one graph, and the strips compare each
+                // lane's wall-clock heartbeat against it to tell "still
+                // running" from "stopped when everything else did".
+                if (message.now_us) {
+                    backendNowUs = Number(message.now_us);
+                }
             },
             onStreamGraphStarted: (message: StreamGraphStartedMessage) => {
                 streamGraphStatuses = {
@@ -1563,6 +1575,7 @@
         {nodeCatalog}
         graphDefinitions={visibleGraphs}
         graphStatuses={streamGraphStatuses}
+        {backendNowUs}
         latestValidation={latestStreamGraphNodeDiagnostics}
         latestEdgeValidation={latestStreamGraphEdgeDiagnostics}
         latestGraphDiagnostics={latestStreamGraphDiagnostics}
