@@ -8731,7 +8731,44 @@
                     </div>
                 </header>
                 <div class="node-detail-body">
-                    {@render inspectorBody()}
+                    <!-- The node exactly as it appears on the canvas, so the
+                         thing being edited is visible beside the fields editing
+                         it. ⚠️ The SAME component, in preview mode — a second
+                         rendering of "what a node looks like" would drift from
+                         the real card the first time either changed. -->
+                    <aside class="node-detail-preview">
+                        <p class="eyebrow">Node</p>
+                        <StreamGraphNodeCard
+                            node={detailNode}
+                            runtimeStatus={nodeRuntimeStatus(detailNode.id)}
+                            {marbleAxisEndUs}
+                            {backendNowUs}
+                            preview
+                            selected={false}
+                            invalid={nodeDiagnostics(detailNode.id).length > 0}
+                            pendingConnection={null}
+                            boundExperimentLabel={boundExperimentView
+                                ? boundExperimentView.label ||
+                                  boundExperimentView.experiment_id
+                                : null}
+                            {streamDeviceNames}
+                            inputPortLabels={inputPortLabelsFor(detailNode)}
+                            onSelect={() => {}}
+                            onStartDrag={() => {}}
+                            onPortClick={() => {}}
+                            onPortMouseDown={() => {}}
+                        />
+                        {#if nodeDiagnostics(detailNode.id).length > 0}
+                            <ul class="node-detail-diagnostics">
+                                {#each nodeDiagnostics(detailNode.id) as diagnostic}
+                                    <li>{diagnostic.message}</li>
+                                {/each}
+                            </ul>
+                        {/if}
+                    </aside>
+                    <div class="node-detail-fields">
+                        {@render inspectorBody()}
+                    </div>
                 </div>
             </div>
         </div>
@@ -9341,17 +9378,57 @@
         flex: 1 1 auto;
         min-height: 0;
         overflow-y: auto;
-        padding: 1.2rem 1.4rem;
+        padding: 0;
+        /* The node on the left, the fields editing it on the right.
+           ⚠️ A GRID, not CSS columns. Columns fill sequentially and an
+           .inspector-section cannot break across them, so an earlier cut put
+           the node's single tall section entirely in the right column with the
+           left one empty — worse than the rail it replaced. */
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        align-items: start;
     }
 
-    /* ⚠️ ONE centred column, not two. CSS columns fill sequentially and an
-       .inspector-section cannot be broken across them, so the node's single
-       tall section landed entirely in the right column with the left one
-       empty — worse than the rail it replaced. A measured line length is also
-       simply easier to read than a wide one. */
-    .node-detail-body :global(.inspector-section) {
+    .node-detail-preview {
+        position: sticky;
+        top: 0;
+        padding: 1.2rem 1rem 1.2rem 1.4rem;
+        border-right: 1px solid rgba(110, 138, 255, 0.14);
+    }
+
+    .node-detail-preview .eyebrow {
+        margin: 0 0 0.55rem;
+    }
+
+    .node-detail-diagnostics {
+        margin: 0.7rem 0 0;
+        padding-left: 1rem;
+        font-size: 0.72rem;
+        color: #e0a06a;
+    }
+
+    .node-detail-fields {
+        padding: 1.2rem 1.4rem;
+        min-width: 0;
+    }
+
+    .node-detail-fields :global(.inspector-section) {
         max-width: 680px;
-        margin: 0 auto 1rem;
+        margin: 0 0 1rem;
+    }
+
+    /* Narrow viewports: the preview stacks above the fields rather than
+       squeezing both. */
+    @media (max-width: 820px) {
+        .node-detail-body {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .node-detail-preview {
+            position: static;
+            border-right: none;
+            border-bottom: 1px solid rgba(110, 138, 255, 0.14);
+        }
     }
 
 
