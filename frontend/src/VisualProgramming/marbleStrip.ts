@@ -326,7 +326,11 @@ export function operatorGlyph(
   if (kind === "threshold") {
     const level = config?.level;
     const arrow = DIRECTION_ARROW[String(config?.direction ?? "either")] ?? "↕";
-    return level === undefined ? `threshold ${arrow}` : `${level} ${arrow}`;
+    // ⚠️ SAY WHAT THE NUMBER IS. "0.5 ↕" is unreadable to anyone who has not
+    // just configured this node: it could be a rate, a window, a tolerance.
+    // "cross 0.5 ↕" says the operation and the level together in two more
+    // characters.
+    return level === undefined ? `cross ${arrow}` : `cross ${level} ${arrow}`;
   }
   return kind.replace(/_/g, " ");
 }

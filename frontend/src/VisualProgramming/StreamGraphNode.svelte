@@ -17,6 +17,7 @@
     import {
         getNodeHeight,
         graphRunStateClass,
+        graphRunStateLabel,
         isProvenancePort,
         BOTH_LABEL,
     } from "./streamGraph";
@@ -240,11 +241,18 @@
     // A source node prefers the metadata device name (e.g. "emg01") over its raw
     // "Stream <id>" label, falling back to the stream id when no frame has named
     // it yet.
-    const displayLabel = $derived(
-        node.kind === "stream_source" && node.stream_id
-            ? (streamDeviceNames?.[node.stream_id] ?? node.label)
-            : node.label,
-    );
+    // ⚠️ A LABEL THE USER TYPED WINS OVER THE DEVICE NAME. The metadata name is
+    // often just the numeric device id, so preferring it turned a node
+    // deliberately called "Fast 400Hz" into "909…" — and both source nodes on a
+    // two-device board then read identically, which is exactly the case a name
+    // exists to distinguish. The device name is still the fallback for a node
+    // nobody has named, where "Stream 909001" is no better than the id.
+    const displayLabel = $derived.by(() => {
+        if (node.kind !== "stream_source" || !node.stream_id) return node.label;
+        const named = node.label && !/^Stream\s/i.test(node.label.trim());
+        if (named) return node.label;
+        return streamDeviceNames?.[node.stream_id] ?? node.label;
+    });
 
     let nodeEl = $state<HTMLElement | undefined>(undefined);
 
@@ -393,19 +401,22 @@
             {:else}
                 <GitBranch size={14} />
             {/if}
-            <span class="node-label" title={displayLabel}>{displayLabel}</span>
+            <span class="node-label" title={`${displayLabel} — ${node.kind === "stream_source" ? "source" : node.kind}`}>{displayLabel}</span>
         </div>
         <div class="node-header-meta">
             {#if runtimeStatus}
                 <span
                     class={`node-runtime-badge ${graphRunStateClass(runtimeStatus.state)}`}
                 >
-                    {runtimeStatus.state}
+                    {graphRunStateLabel(runtimeStatus.state)}
                 </span>
             {/if}
-            <span class="node-kind"
-                >{node.kind === "stream_source" ? "source" : node.kind}</span
-            >
+            <!-- ⚠️ THE TYPE CHIP IS GONE FROM THE HEADER. It was competing with
+                 the node's NAME for ~330px and losing on both counts: every
+                 header clipped ("Thresh…", "Combin…") and so did the chip
+                 itself ("SOURC", "MARKER_"), so neither could be read. The icon
+                 to the left already encodes the type, the detail view states it
+                 in full, and it is on the title attribute for a hover. -->
         </div>
     </button>
 
@@ -465,7 +476,10 @@
         </div>
         <div class="node-column node-meta">
             {#if node.kind === "stream_source"}
-                <span title={`Stream ${node.stream_id}`}>Stream {node.stream_id}</span>
+                <!-- The "Stream " prefix cost seven characters to say what the
+                     icon and the node type already say, and pushed the id
+                     itself into an ellipsis ("Stream 9…"). -->
+                <span title={`Stream ${node.stream_id}`}>#{node.stream_id}</span>
                 <span title={node.schema_name}>{node.schema_name ?? "Descriptor pending"}</span>
             {:else if node.kind === "transform"}
                 <span>{node.transform_kind}</span>
@@ -867,21 +881,6 @@
 
     .node-runtime-badge {
         flex-shrink: 0;
-    }
-
-    .node-kind {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    .node-kind {
-        display: flex;
-        align-items: center;
-        color: #88a0dd;
-        font-size: 0.74rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
     }
 
     .node-runtime-badge {

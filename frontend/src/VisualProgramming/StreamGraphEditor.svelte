@@ -138,6 +138,7 @@
         getOutputDescriptorForNode,
         getPortPosition,
         graphRunStateClass,
+        graphRunStateLabel,
         isProvenancePort,
         BOTH_LABEL,
         sanitizeIdentifier,
@@ -1015,6 +1016,20 @@
     // sidebar does, against the SAME selectedNodeId. Opening it selects the
     // node, so the sidebar and the detail view can never disagree about which
     // node is being edited.
+    // Type-to-filter for the Add Node palette (TEC-NATKIT-127 item 6).
+    // Seventeen transforms in one flat column is a list you scan, not a menu
+    // you use. Matches the label AND the kind, because somebody who knows the
+    // kind (`bandpass_iir`) should not have to remember its prose label.
+    let paletteFilter = $state("");
+
+    function paletteMatches(...fields: (string | undefined | null)[]): boolean {
+        const needle = paletteFilter.trim().toLowerCase();
+        if (!needle) return true;
+        return fields.some((field) =>
+            (field ?? "").toLowerCase().includes(needle),
+        );
+    }
+
     let detailNodeId = $state<string | null>(null);
     const detailNode = $derived(
         detailNodeId
@@ -1552,16 +1567,89 @@
     // e.g. "instance-id::inner-id") backend ids, not the draft graph's
     // top-level node ids, so we can't always resolve a friendly label —
     // fall back to the raw id, which at least identifies the node.
+    // Kinds whose silence is NORMAL. A gap detector emits only when data drops
+    // out, a filter only when something matches — so "no output for 3s" is not a
+    // fault for these, it is the healthy case. Without this exception, adding a
+    // gap detector to a board would permanently park a warning in Diagnostics
+    // (TEC-NATKIT-116 is the same problem in the status layer).
+    const SILENCE_IS_NORMAL_KINDS = [
+        "gap_detect",
+        "marker_filter",
+        "marker_take_until",
+        "marker_debounce",
+    ];
+
+    // ⚠️ A LABEL THAT CONTRADICTS THE CONFIG. A combine called "Combine (zip)"
+    // while configured `combine latest` tells the canvas one story and the
+    // runtime another — and the label is what everybody reads. Surfaced rather
+    // than auto-corrected, because renaming somebody's node behind their back
+    // is worse than telling them.
+    const labelMismatches = $derived.by(() => {
+        const out: { label: string; message: string }[] = [];
+        for (const node of draftGraph.nodes) {
+            if (node.kind !== "combine") continue;
+            const policy = String(
+                (node.config as Record<string, unknown> | undefined)
+                    ?.join_policy ?? "zip",
+            );
+            const label = (node.label ?? "").toLowerCase();
+            const policyWords: Record<string, string> = {
+                zip: "zip",
+                combine_latest: "combine latest",
+                with_latest_from: "with latest from",
+                sample: "sample",
+            };
+            // Only complain when the label names a DIFFERENT policy, not when
+            // it names none — most labels say what the node is for, not how it
+            // joins, and nagging about those would make this useless.
+            const named = Object.entries(policyWords).find(
+                ([key, words]) =>
+                    label.includes(words) || label.includes(key.replace(/_/g, "")),
+            );
+            if (named && named[0] !== policy) {
+                out.push({
+                    label: node.label || node.id,
+                    message: `Labelled "${named[1]}" but configured "${policyWords[policy] ?? policy}".`,
+                });
+            }
+        }
+        return out;
+    });
+
     const runtimeIssues = $derived.by(() => {
-        const nodeLabelById = new Map(
-            draftGraph.nodes.map((node) => [node.id, node.label || node.id]),
-        );
+        const nodeById = new Map(draftGraph.nodes.map((node) => [node.id, node]));
         return Object.entries(selectedGraphStatus?.node_statuses ?? {})
-            .filter(([, status]) => status.state === "error" || status.state === "blocked")
-            .map(([nodeId, status]) => ({
-                label: nodeLabelById.get(nodeId) ?? nodeId,
-                message: status.message ?? `Node is ${status.state}.`,
-            }));
+            .filter(([nodeId, status]) => {
+                if (status.state === "error" || status.state === "blocked") {
+                    return true;
+                }
+                // ⚠️ STALLED BELONGS HERE. Diagnostics said "No validation
+                // issues yet" while a node on the same board read STALLED,
+                // because this filter only looked for error/blocked — so the
+                // one panel meant to answer "is anything wrong" was the one
+                // place that never mentioned it.
+                if (status.state !== "stalled") return false;
+                const kind = nodeById.get(nodeId)?.kind ?? "";
+                return !SILENCE_IS_NORMAL_KINDS.includes(kind);
+            })
+            .map(([nodeId, status]) => {
+                const node = nodeById.get(nodeId);
+                const label = node?.label || nodeId;
+                if (status.state === "stalled") {
+                    return {
+                        label,
+                        // Say WHY, not just the state. "Stalled" on its own
+                        // sends people to the logs; the threshold that decided
+                        // it is the thing they need.
+                        message:
+                            "No output for over 3s — the upstream input may have stopped.",
+                    };
+                }
+                return {
+                    label,
+                    message: status.message ?? `Node is ${status.state}.`,
+                };
+            });
     });
 
     function markDraftChanged(nextGraph: EditorGraphDefinition) {
@@ -1909,6 +1997,10 @@
     }
 
     function closeContextMenu() {
+        // Never reopen pre-filtered: a palette that opens showing three of
+        // seventeen nodes, because of something typed a minute ago, reads as
+        // a broken palette rather than a remembered search.
+        paletteFilter = "";
         contextMenu = {
             ...contextMenu,
             open: false,
@@ -5077,7 +5169,15 @@
         for (const portId of node.input_port_ids ?? []) {
             const kind = inputChannelKind(node.id, portId);
             if (kind !== "empty") {
-                labels[portId] = kind;
+                // ⚠️ THE PORT ID, and only the port id. Replacing it with the
+                // channel kind made both of combine's inputs read "data" while
+                // the marble strips directly beneath them read "in1"/"in2" —
+                // the same two ports under two names, six pixels apart.
+                // Appending the kind ("in1 · data") fixed the naming and broke
+                // the layout: the pill is too narrow, so it wrapped onto two
+                // lines and overlapped the strips. The dot's colour already
+                // carries the channel kind, and the detail view states it.
+                labels[portId] = portId;
             }
         }
         return Object.keys(labels).length > 0 ? labels : undefined;
@@ -5645,13 +5745,24 @@
      where 'what this node IS and what it is doing' belongs — leaving the
      right pane as purely the fields you edit. The sidebar renders it in its
      original position. -->
+{#snippet inspectorGeneratedJson()}
+    <!-- ⚠️ COLLAPSED, and LAST. This sat at the top of the panel in a small box
+         with two scrollbars, pushing the Inspector and Diagnostics — the things
+         somebody actually reads — below the fold. It is a debugging aid, so it
+         is a <details> that remembers nothing and starts shut. -->
+    <details class="inspector-section json-section">
+        <summary class="eyebrow">Generated JSON</summary>
+        <pre>{graphJsonPreview}</pre>
+    </details>
+{/snippet}
+
 {#snippet inspectorRuntimeCard()}
                         {#if selectedNodeRuntimeStatus}
                             <div class="runtime-card">
                                 <div class="summary-row">
                                     <span>Runtime</span>
                                     <strong class={graphRunStateClass(selectedNodeRuntimeStatus.state)}>
-                                        {selectedNodeRuntimeStatus.state}
+                                        {graphRunStateLabel(selectedNodeRuntimeStatus.state)}
                                     </strong>
                                 </div>
                                 {#if selectedNodeRuntimeStatus.output_stream_id}
@@ -5712,10 +5823,6 @@
 {/snippet}
 
 {#snippet inspectorGraphSection()}
-                <div class="inspector-section">
-                    <p class="eyebrow">Generated JSON</p>
-                    <pre>{graphJsonPreview}</pre>
-                </div>
                 <div class="inspector-section">
                     <p class="eyebrow">Graph</p>
                     <label>
@@ -7313,10 +7420,10 @@
 
                 <div class="inspector-section">
                     <p class="eyebrow">Diagnostics</p>
-                    {#if graphValidationCount === 0}
+                    {#if graphValidationCount === 0 && runtimeIssues.length === 0 && labelMismatches.length === 0}
                         <div class="diagnostic success">
                             <Check size={14} />
-                            <span>No validation issues yet.</span>
+                            <span>No issues.</span>
                         </div>
                     {/if}
                     {#each latestGraphDiagnostics as diagnostic}
@@ -7332,6 +7439,17 @@
                         </div>
                     {/each}
                 </div>
+
+                {#if labelMismatches.length > 0}
+                    <div class="inspector-section">
+                        <p class="eyebrow">Naming</p>
+                        {#each labelMismatches as { label, message }}
+                            <div class="diagnostic warn">
+                                <span><strong>{label}</strong> — {message}</span>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
 
                 {#if runtimeIssues.length > 0}
                     <div class="inspector-section">
@@ -8007,7 +8125,7 @@
                             class="workspace-hidden"
                             title={`Filed in other workspaces: ${hiddenCounts.graphs} board(s), ${hiddenCounts.experiments} experiment(s), ${hiddenCounts.profiles} participant(s). Switch workspace to see them.`}
                         >
-                            {hiddenTotal} elsewhere
+                            {hiddenTotal} in other workspaces
                         </span>
                     {/if}
                 </div>
@@ -8448,6 +8566,9 @@
                                         type="button"
                                         class="edge-badge"
                                         class:multi={topics.length > 1}
+                                        class:quiet={topics.length === 1 &&
+                                            enabledCount === topics.length &&
+                                            openBadgeEdgeId !== edge.id}
                                         class:filtered={enabledCount <
                                             topics.length}
                                         title={`${enabledCount} of ${
@@ -8610,6 +8731,7 @@
                 {@render inspectorGraphSection()}
                 {@render inspectorBody()}
                 {@render inspectorRuntimeCard()}
+                {@render inspectorGeneratedJson()}
             </div>
         </div>
 
@@ -8700,7 +8822,7 @@
                                         "draft",
                                 )}`}
                             >
-                                {nodeRuntimeStatus(detailNode.id)?.state}
+                                {graphRunStateLabel(nodeRuntimeStatus(detailNode.id)?.state)}
                             </span>
                         {/if}
                     </div>
@@ -8795,20 +8917,47 @@
             style={`left:${contextMenu.x}px; top:${contextMenu.y}px;`}
             onmousedown={(event) => event.stopPropagation()}
         >
-            <div class="context-group">
-                <span class="context-title">Streams</span>
+            <!-- A titled, searchable, closable palette. It had none of the
+                 three: no heading saying what it was, no way to filter
+                 seventeen transforms, and no close control except clicking
+                 away. -->
+            <div class="context-header">
+                <span class="context-heading">Add node</span>
                 <button
                     type="button"
-                    class="context-item"
-                    onclick={() => addSourceNode()}
+                    class="context-close"
+                    title="Close (Esc)"
+                    aria-label="Close the node palette"
+                    onclick={closeContextMenu}
                 >
-                    <span>Stream</span>
-                    <small>pick the stream in the inspector</small>
+                    <X size={14} />
                 </button>
             </div>
+            <input
+                class="context-search"
+                type="search"
+                placeholder="Search nodes…"
+                aria-label="Filter nodes"
+                bind:value={paletteFilter}
+                onkeydown={(event) => event.stopPropagation()}
+            />
+            {#if paletteMatches("stream", "source")}
+                <div class="context-group">
+                    <span class="context-title">Streams</span>
+                    <button
+                        type="button"
+                        class="context-item"
+                        onclick={() => addSourceNode()}
+                    >
+                        <span>Stream</span>
+                        <small>pick the stream in the inspector</small>
+                    </button>
+                </div>
+            {/if}
+            {#if transformCapabilities.some((c) => paletteMatches(c.label, c.kind))}
             <div class="context-group">
                 <span class="context-title">Transforms</span>
-                {#each transformCapabilities as capability}
+                {#each transformCapabilities.filter((c) => paletteMatches(c.label, c.kind)) as capability}
                     <button
                         type="button"
                         class="context-item"
@@ -8819,9 +8968,11 @@
                     </button>
                 {/each}
             </div>
+            {/if}
+            {#if utilityCatalog.some((e) => paletteMatches(e.label, e.description, e.kind))}
             <div class="context-group">
                 <span class="context-title">Utility</span>
-                {#each utilityCatalog as entry}
+                {#each utilityCatalog.filter((e) => paletteMatches(e.label, e.description, e.kind)) as entry}
                     <button
                         type="button"
                         class="context-item"
@@ -8832,6 +8983,7 @@
                     </button>
                 {/each}
             </div>
+            {/if}
             {#if compositeTemplates.length > 0}
                 <div class="context-group">
                     <span class="context-title">Composites</span>
@@ -9432,6 +9584,24 @@
     .node-detail-fields :global(.library-actions) {
         max-height: none;
         overflow: visible;
+    }
+
+    .json-section summary {
+        cursor: pointer;
+        list-style: none;
+    }
+
+    .json-section summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .json-section summary::before {
+        content: "▸ ";
+        color: #6d7fae;
+    }
+
+    .json-section[open] summary::before {
+        content: "▾ ";
     }
 
     .node-detail-preview :global(.runtime-card) {
@@ -10128,6 +10298,24 @@
         justify-content: center;
         transition: background 0.12s ease, border-color 0.12s ease;
     }
+    /* ⚠️ A badge reading "1" on every edge is six identical circles competing
+       with the graph, and it says nothing: one topic is the normal case. It
+       fades to a small dot and only becomes a readable badge on hover, on
+       focus, or when it actually has something to report (more than one topic,
+       or some of them hidden). */
+    .edge-badge.quiet {
+        opacity: 0.28;
+        color: transparent;
+        transform: scale(0.55);
+    }
+
+    .edge-badge.quiet:hover,
+    .edge-badge.quiet:focus-visible {
+        opacity: 1;
+        color: inherit;
+        transform: none;
+    }
+
     .edge-badge:hover {
         background: #16303c;
         border-color: #89f4ff;
@@ -10954,6 +11142,10 @@
         color: #b5f4d0;
     }
 
+    .diagnostic.warn {
+        color: #e0a06a;
+    }
+
     pre {
         margin: 0;
         padding: 0.8rem;
@@ -10983,6 +11175,88 @@
         display: flex;
         flex-direction: column;
         gap: 0.45rem;
+    }
+
+    /* ⚠️ STATUS IS NOT A BUTTON. `Unfiled`, `Unsaved`, `Connected`, `Rig …`,
+       `No experiment` and the board id all rendered as the same rounded chip,
+       so nothing distinguished the three you can press from the four that are
+       only reporting. Status now reads as flat text on the bar — no border, no
+       fill, no hover — and the pressable ones keep the chip. */
+    .graph-id,
+    .dirty-pill,
+    .immutable-pill,
+    .workspace-hidden,
+    .conn-pill,
+    .rig-pill {
+        border: none !important;
+        background: none !important;
+        box-shadow: none !important;
+        cursor: default;
+    }
+
+    .graph-id,
+    .workspace-hidden {
+        color: #93a5cf;
+    }
+
+    .context-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        padding: 0.1rem 0.15rem 0.4rem;
+        border-bottom: 1px solid rgba(110, 138, 255, 0.16);
+        margin-bottom: 0.4rem;
+    }
+
+    .context-heading {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #e2e9ff;
+    }
+
+    .context-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.15rem;
+        border: none;
+        background: none;
+        color: #8fa4d8;
+        cursor: pointer;
+        border-radius: 4px;
+    }
+
+    .context-close:hover {
+        color: #e5ecff;
+        background: rgba(110, 138, 255, 0.14);
+    }
+
+    .context-search {
+        width: 100%;
+        box-sizing: border-box;
+        margin-bottom: 0.45rem;
+        padding: 0.32rem 0.5rem;
+        border-radius: 5px;
+        border: 1px solid rgba(110, 138, 255, 0.24);
+        background: rgba(6, 10, 22, 0.85);
+        color: #e2e9ff;
+        font-size: 0.74rem;
+    }
+
+    .context-search:focus {
+        outline: none;
+        border-color: rgba(110, 138, 255, 0.55);
+    }
+
+    /* ⚠️ CONTRAST. Secondary text sat at #6d7fae on a near-navy ground, which
+       is roughly 3:1 — under the 4.5:1 that small text needs, and the critique
+       called it out as "low-contrast blue-on-navy". Lifted a step across the
+       secondary scale rather than per-component, so it cannot drift back.  */
+    .graph-list-meta,
+    .muted-text,
+    .context-item small {
+        color: #93a5cf;
     }
 
     .context-title {
