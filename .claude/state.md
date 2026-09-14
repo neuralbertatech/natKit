@@ -2,9 +2,75 @@
 
 > This file is maintained by Claude Code. Read on session start, update before session end.
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-14
 
 ## Where things stand
+
+**TEC-NATKIT-116 shipped: a node's health now depends on whether it is being
+FED, not only on whether it is emitting.** Merged and pushed:
+
+```
+natKit     origin/trunk  365ce23   (merges zach/625; dd0bf51 bumped the submodule)
+libnatkit  origin/trunk  e9e28cd   (merges zach/625)
+```
+
+⚠️ **The bug was seven kinds, not the one the ticket named.** Every operator
+whose output is EVENT-DRIVEN rather than one-out-per-one-in stamps its heartbeat
+on the emit path only — `gap_detect`, `threshold`, `gate` and all four marker
+operators — so each reads `stalled` on a healthy stream given the right config,
+and `derived_run_state` ("any stalled node → the board is stalled") means each
+one alone marks a whole healthy board unhealthy. `gap_detect` was simply the one
+silent on a healthy board BY DESIGN, so it was the one somebody noticed.
+
+⚠️ **The catalog flag the ticket ranked first would have reopened
+TEC-NATKIT-123.** "Skip the heartbeat test for these kinds" reports `live`
+forever for a detector whose upstream has died. Not being fed is a stall for
+every kind, because it is true for every kind. `WorkerLiveness.hpp` now owns the
+decision, pure and now-injected. The signal it reads (`lastSeenWallUs` per input
+lane) only existed because TEC-NATKIT-119 shipped — which is what demoted the
+option the ticket called "the bigger change" to the cheap one.
+
+**Two more bugs fell out of it**, both fixed in the same commit: a node read
+`stalled` for the first three seconds of every run (no startup grace at that call
+site), and `derived_run_state` did not count `live` as running, so a graph of
+healthy transforms could derive `stopped` while data flowed.
+
+**Board moved 2026-09-14, on Zach's greenlight:** TEC-NATKIT-119, 120, 121, 123,
+124, 125, 126, 128, 129 → **Done**, plus both Briefs (118 #627, 127 #637).
+**TEC-NATKIT-122 closed without doing** — the tracks grammar was built
+(`52f231b`) and dropped (`89836d2`); Zach: *"we tried it and I did not like it"*.
+**TEC-NATKIT-116 is in Verification** awaiting a greenlight.
+
+⚠️ **TEC-NATKIT-127 was already complete** when this session started, and state.md
+did not say so. Six of its eight items shipped in `653771b`; items 4 and 7 became
+#638/#639. Verified against the tree item by item before concluding it.
+
+### New, and worth running
+
+- **`libnatkit/scripts/natkit_liveness_verify.py`** — does a node's state track
+  whether it is being fed? Owns the synthetic feed, so the "stopped" half is real
+  rather than simulated. ⚠️ It asserts BOTH directions on purpose: checking only
+  the healthy one passes just as happily against the naive per-kind exemption.
+- **`frontend/e2e/97-node-liveness.spec.ts`** — the same invariant as evidence.
+  Evidence set: `~/natkit-verification/dd0bf51/`. ⚠️ Its MANIFEST's "dirty tree"
+  banner is a false alarm — the only uncommitted path was `natKit-IMU`'s
+  untracked `embeded/components/`, which nothing here touches. Noted inline.
+
+### Filed from this session
+
+- **TEC-NATKIT-130 (#643)** — a source node reports `LIVE` with its feed dead,
+  because it is not a worker and never reaches the classifier. Visible in 116's
+  third screenshot: operators stalled, the source above them still LIVE. Now the
+  one node on a board still reporting health it cannot vouch for, and the first
+  one somebody looks at when asking whether the rig is feeding them.
+
+⚠️ **`npm run check` was NOT clean at the start of this session**, contrary to
+what this file claimed on 2026-09-10. Two real type errors (`node.config` on the
+`EditorGraphNode` union; a nullable `selectedNode`) were fixed in their own
+commit, deliberately separate from the bug fix, because a red gate makes every
+other verification unfalsifiable. One a11y warning remains and is pre-existing.
+
+## Where things stood before 2026-09-14
 
 **An Rx-style stream algebra for Visual Programming, built out over one session.**
 Zach's observation was that VP is hard to formalize because messages arrive at
