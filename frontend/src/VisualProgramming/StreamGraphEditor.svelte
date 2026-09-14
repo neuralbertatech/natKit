@@ -1069,14 +1069,43 @@
             : null,
     );
 
+    // The detail view is a modal, so focus has to MOVE INTO it and come back
+    // out again. Without that, opening the panel left focus on whatever was
+    // behind it: a keyboard user tabbed through the canvas underneath while the
+    // dialog covered it, and a screen reader never announced the thing that had
+    // just opened. Escape worked regardless because it is handled on the window,
+    // which is exactly what made this easy to miss by clicking around.
+    let detailPanel = $state<HTMLElement | null>(null);
+    let focusBeforeDetail: HTMLElement | null = null;
+
     function openNodeDetail(nodeId: string) {
+        focusBeforeDetail =
+            document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
         selectNode(nodeId);
         detailNodeId = nodeId;
     }
 
     function closeNodeDetail() {
         detailNodeId = null;
+        // Back where it came from -- the node card, usually -- rather than to
+        // the top of the document, which is where focus lands when a focused
+        // element is removed and nobody says otherwise.
+        focusBeforeDetail?.focus();
+        focusBeforeDetail = null;
     }
+
+    // ⚠️ KEYED ON detailNodeId AND detailPanel, both of which are stable while
+    // the panel is open. Reading `detailNode` here instead would refire on every
+    // status poll -- it is derived from draftGraph.nodes, so its identity changes
+    // whenever the graph does -- and focus would jump back to the panel while
+    // somebody was typing in a field inside it.
+    $effect(() => {
+        if (detailNodeId && detailPanel) {
+            detailPanel.focus();
+        }
+    });
 
     // The shared right-hand edge for every marble strip on the canvas
     // (TEC-NATKIT-106): the newest event ANY lane in the graph has seen, on the
@@ -8983,11 +9012,17 @@
             role="presentation"
             onmousedown={closeNodeDetail}
         >
+            <!-- ⚠️ tabindex="-1", not 0. The panel has to be focusable
+                 PROGRAMMATICALLY so focus can be placed inside it on open,
+                 without also inserting the container into the tab order ahead
+                 of its own fields. -->
             <div
                 class="node-detail"
                 role="dialog"
                 aria-modal="true"
                 aria-label={`${detailNode.label || detailNode.id} details`}
+                bind:this={detailPanel}
+                tabindex="-1"
                 onmousedown={(event) => event.stopPropagation()}
             >
                 <header class="node-detail-header">
