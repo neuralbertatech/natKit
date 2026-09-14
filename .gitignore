@@ -153,3 +153,17 @@ natVR/firmware/main/DevConfig.hpp
 
 # Machine-local environment context for LLMs/agents (not project state)
 ENVIRONMENT.html
+
+# ⚠️ CAPTURES ARE NOT SOURCE. A 132.5 MB fitted model
+# (natVR/captures/model-selection/random-forest-model.joblib) was committed on
+# this branch and made it unpushable: GitHub rejects any file over 100 MB, so
+# the whole branch — 20 commits of Convention EMG quick-start work — could not
+# leave this machine. It was stripped from history on 2026-09-14.
+#
+# trunk has carried this rule since before the branch was pushed; the branch
+# predates it, which is how the file got in. Keeping the two in step here so a
+# merge cannot reintroduce the problem.
+#
+# Fitted models and recorded captures are build artifacts: reproducible from
+# training, and belonging in object storage rather than in git.
+natVR/captures/
