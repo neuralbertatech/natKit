@@ -5825,7 +5825,7 @@
                                         {selectedNodeRuntimeStatus.message}
                                     </p>
                                 {/if}
-                                {#if selectedNode.kind === "viewer" &&
+                                {#if selectedNode?.kind === "viewer" &&
                                     selectedNodeRuntimeStatus.output_stream_id}
                                     <button
                                         type="button"
