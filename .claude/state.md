@@ -51,6 +51,11 @@ did not say so. Six of its eight items shipped in `653771b`; items 4 and 7 becam
   whether it is being fed? Owns the synthetic feed, so the "stopped" half is real
   rather than simulated. ⚠️ It asserts BOTH directions on purpose: checking only
   the healthy one passes just as happily against the naive per-kind exemption.
+- **`frontend/e2e/94-detail-focus.spec.ts`** — focus moves into the node detail
+  view and comes back out. ⚠️ It asserts focus returns to the CARD, not to the
+  header the test focuses first: the double-click moves focus to the card root,
+  so that is what the panel captures. Expecting the header back would be
+  asserting a bug.
 - **`frontend/e2e/97-node-liveness.spec.ts`** — the same invariant as evidence.
   Evidence set: `~/natkit-verification/dd0bf51/`. ⚠️ Its MANIFEST's "dirty tree"
   banner is a false alarm — the only uncommitted path was `natKit-IMU`'s
@@ -64,11 +69,22 @@ did not say so. Six of its eight items shipped in `653771b`; items 4 and 7 becam
   one node on a board still reporting health it cannot vouch for, and the first
   one somebody looks at when asking whether the rig is feeding them.
 
-⚠️ **`npm run check` was NOT clean at the start of this session**, contrary to
-what this file claimed on 2026-09-10. Two real type errors (`node.config` on the
-`EditorGraphNode` union; a nullable `selectedNode`) were fixed in their own
-commit, deliberately separate from the bug fix, because a red gate makes every
-other verification unfalsifiable. One a11y warning remains and is pre-existing.
+### `npm run check` is 0 errors, 0 warnings — it was 2 + 1
+
+⚠️ **It was NOT clean at the start of this session**, contrary to what this file
+claimed on 2026-09-10. All three were real:
+
+- Two type errors (`node.config` read off the `EditorGraphNode` union, which only
+  `StreamGraphNode` has; a nullable `selectedNode`), fixed in `071feab`,
+  deliberately separate from the bug fix they were blocking — a red gate makes
+  every other verification unfalsifiable.
+- The a11y warning was **TEC-NATKIT-131 (#644)**, shipped in `552d883`: the node
+  detail view is a modal that never took focus, so a keyboard user went on
+  tabbing through the canvas behind the backdrop. ⚠️ Escape worked throughout
+  (it is handled on the window, not the panel), which is what made it invisible
+  to anyone checking with a mouse. `tabindex="-1"` alone satisfies svelte-check
+  and changes nothing — `e2e/94-detail-focus.spec.ts` was checked against exactly
+  that shape and fails on it.
 
 ## Where things stood before 2026-09-14
 
