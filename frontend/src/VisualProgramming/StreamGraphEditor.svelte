@@ -148,7 +148,7 @@
         PROVENANCE_PORT_MODEL,
         type GraphStreamOption,
     } from "./streamGraph";
-    import { resolveAxisEndUs } from "./marbleStrip";
+    import { laneIsSilent, resolveAxisEndUs } from "./marbleStrip";
     import {
         extractCompositeFromSelection,
         flattenGraph,
@@ -1599,18 +1599,6 @@
     // e.g. "instance-id::inner-id") backend ids, not the draft graph's
     // top-level node ids, so we can't always resolve a friendly label —
     // fall back to the raw id, which at least identifies the node.
-    // Kinds whose silence is NORMAL. A gap detector emits only when data drops
-    // out, a filter only when something matches — so "no output for 3s" is not a
-    // fault for these, it is the healthy case. Without this exception, adding a
-    // gap detector to a board would permanently park a warning in Diagnostics
-    // (TEC-NATKIT-116 is the same problem in the status layer).
-    const SILENCE_IS_NORMAL_KINDS = [
-        "gap_detect",
-        "marker_filter",
-        "marker_take_until",
-        "marker_debounce",
-    ];
-
     // ⚠️ A LABEL THAT CONTRADICTS THE CONFIG. A combine called "Combine (zip)"
     // while configured `combine latest` tells the canvas one story and the
     // runtime another — and the label is what everybody reads. Surfaced rather
@@ -1660,21 +1648,44 @@
                 // because this filter only looked for error/blocked — so the
                 // one panel meant to answer "is anything wrong" was the one
                 // place that never mentioned it.
-                if (status.state !== "stalled") return false;
-                const kind = nodeById.get(nodeId)?.kind ?? "";
-                return !SILENCE_IS_NORMAL_KINDS.includes(kind);
+                // ⚠️ NO PER-KIND EXCEPTION HERE ANY MORE. This used to skip
+                // the kinds whose silence is normal, because the backend
+                // reported a healthy gap detector as stalled and the warning
+                // was noise. TEC-NATKIT-116 fixed that at the source — the
+                // classifier now reads the node's INPUT — so a silence-is-
+                // normal node only reaches `stalled` when nothing is arriving
+                // at it, which is a genuine fault and belongs in Diagnostics.
+                // Keeping the list would have turned it into the opposite lie:
+                // a gap detector whose upstream died, reported nowhere.
+                return status.state === "stalled";
             })
             .map(([nodeId, status]) => {
                 const node = nodeById.get(nodeId);
                 const label = node?.label || nodeId;
                 if (status.state === "stalled") {
+                    // Say WHY, not just the state. "Stalled" on its own sends
+                    // people to the logs; and now that the classifier reads the
+                    // node's INPUT (TEC-NATKIT-116) the two causes are genuinely
+                    // distinguishable, so naming the wrong one would send them
+                    // to the wrong node. Fed-but-silent is this node's fault;
+                    // nothing-arriving is its upstream's.
+                    const nowWallUs = Date.now() * 1000;
+                    // ⚠️ A lane that has NEVER recorded is not "being fed".
+                    // laneIsSilent answers false for a missing stamp on purpose
+                    // — a missing signal must never invent silence on a strip —
+                    // so the no-stamp case is excluded here rather than relied
+                    // on, mirroring how the backend classifier ignores it.
+                    const inputs = status.input_activities ?? [];
+                    const beingFed = inputs.some(
+                        (input) =>
+                            Number(input.last_seen_wall_us ?? 0) > 0 &&
+                            !laneIsSilent(input, nowWallUs),
+                    );
                     return {
                         label,
-                        // Say WHY, not just the state. "Stalled" on its own
-                        // sends people to the logs; the threshold that decided
-                        // it is the thing they need.
-                        message:
-                            "No output for over 3s — the upstream input may have stopped.",
+                        message: beingFed
+                            ? "Input is arriving but nothing has come out for over 3s."
+                            : "Nothing has arrived for over 3s — the upstream input has stopped.",
                     };
                 }
                 return {
@@ -5814,7 +5825,7 @@
                                         {selectedNodeRuntimeStatus.message}
                                     </p>
                                 {/if}
-                                {#if selectedNode.kind === "viewer" &&
+                                {#if selectedNode?.kind === "viewer" &&
                                     selectedNodeRuntimeStatus.output_stream_id}
                                     <button
                                         type="button"

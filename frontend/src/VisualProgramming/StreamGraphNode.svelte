@@ -217,7 +217,11 @@
         ].includes(node.kind);
         return buildOperatorStrip(
             node.kind,
-            node.config as Record<string, unknown> | undefined,
+            // EditorGraphNode is a union, and only StreamGraphNode carries a
+            // config — a composite instance and a param node do not. Reading
+            // through the union rather than asserting one arm keeps this
+            // `undefined` for those two instead of claiming a field they lack.
+            (node as { config?: Record<string, unknown> }).config,
             inputs,
             emitsMarkers
                 ? runtimeStatus?.marker_activity
